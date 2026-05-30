@@ -95,10 +95,10 @@ const activeOverlays = computed(() => store.overlays);
 }
 
 .solid-line {
-  border-top: 2px solid #3b82f6;
+  border-top: 2px solid #3498db;
 }
 
 .dashed-line {
-  border-top: 2px dashed #8b5cf6;
+  border-top: 2px dashed #9b59b6;
 }
 </style>

@@ -29,7 +29,6 @@
 
 <script setup lang="ts">
 import { Map as MapIcon, Globe, Mountain } from 'lucide-vue-next';
-import { forceRepaint } from '../utils/repaint';
 
 const props = defineProps<{
   modelValue: 'street' | 'satellite' | 'terrain'
@@ -39,7 +38,6 @@ const emit = defineEmits(['update:modelValue']);
 
 const switchLayer = (layer: 'street' | 'satellite' | 'terrain') => {
   emit('update:modelValue', layer);
-  forceRepaint();
 };
 </script>
 

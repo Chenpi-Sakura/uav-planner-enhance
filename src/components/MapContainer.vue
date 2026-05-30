@@ -242,7 +242,6 @@ onUnmounted(() => {
 }
 :deep(.leaflet-container) {
   background-color: #0b0f19;
-  transform: translate3d(0, 0, 0); /* Force hardware acceleration to prevent repaint bug */
 }
 
 /* Marker Styling */

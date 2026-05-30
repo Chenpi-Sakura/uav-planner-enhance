@@ -110,13 +110,11 @@
 import { ref, reactive } from 'vue';
 import { ChevronLeft, ChevronRight, Clock, Navigation, Layers, Send, Plus, X, Crosshair } from 'lucide-vue-next';
 import { store } from '../store';
-import { forceRepaint } from '../utils/repaint';
 
 const isCollapsed = ref(false);
 
 const toggleSidebar = () => {
   isCollapsed.value = !isCollapsed.value;
-  forceRepaint();
 };
 
 const form = reactive({
@@ -439,7 +437,5 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 select option {
   background-color: #0f172a;
   color: white;
-}
-</style>
 }
 </style>

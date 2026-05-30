@@ -34,26 +34,24 @@
 import { ref, onMounted, onUnmounted, shallowRef } from 'vue';
 import { ChevronDown, ChevronUp, Activity } from 'lucide-vue-next';
 import * as echarts from 'echarts';
-import { forceRepaint } from '../utils/repaint';
 
 const isCollapsed = ref(false);
 
 const toggleChart = () => {
   isCollapsed.value = !isCollapsed.value;
-  forceRepaint();
 };
 const chartRef = ref<HTMLElement | null>(null);
 const chartInstance = shallowRef<echarts.ECharts | null>(null);
 
 // Updated legend based on requirement
 const legends = ref([
-  { name: '地面海拔高度', color: '#3b82f6' },
-  { name: '无人机相对高度', color: '#8b5cf6' },
-  { name: 'TKE (x10)', color: '#22d3ee' },
-  { name: 'EDR (x100)', color: '#10b981' },
-  { name: '温度 (°C)', color: '#f59e0b' },
-  { name: '湿度 (%)', color: '#6366f1' },
-  { name: '降雨量 (x10)', color: '#ec4899' }
+  { name: '地面海拔高度', color: '#3498db' },
+  { name: '无人机相对高度', color: '#9b59b6' },
+  { name: 'TKE (x10)', color: '#1abc9c' },
+  { name: 'EDR (x100)', color: '#2ecc71' },
+  { name: '温度 (°C)', color: '#f39c12' },
+  { name: '湿度 (%)', color: '#8e44ad' },
+  { name: '降雨量 (x10)', color: '#e74c3c' }
 ]);
 
 const initChart = () => {
@@ -108,11 +106,11 @@ const initChart = () => {
         smooth: true,
         symbol: 'none',
         yAxisIndex: 0,
-        itemStyle: { color: '#3b82f6' },
+        itemStyle: { color: '#3498db' },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(59, 130, 246, 0.4)' },
-            { offset: 1, color: 'rgba(59, 130, 246, 0)' }
+            { offset: 0, color: 'rgba(52, 152, 219, 0.4)' },
+            { offset: 1, color: 'rgba(52, 152, 219, 0)' }
           ])
         },
         data: [120, 200, 450, 600, 580, 720, 450, 300]
@@ -123,7 +121,7 @@ const initChart = () => {
         smooth: true,
         symbol: 'none',
         yAxisIndex: 0,
-        itemStyle: { color: '#8b5cf6' },
+        itemStyle: { color: '#9b59b6' },
         lineStyle: { type: 'dashed' },
         data: [170, 250, 500, 650, 630, 770, 500, 350]
       },
@@ -133,7 +131,7 @@ const initChart = () => {
         smooth: true,
         symbol: 'none',
         yAxisIndex: 1,
-        itemStyle: { color: '#22d3ee' },
+        itemStyle: { color: '#1abc9c' },
         lineStyle: { width: 2 },
         data: [2, 4, 8, 12, 9, 5, 3, 2]
       },
@@ -143,7 +141,7 @@ const initChart = () => {
         smooth: true,
         symbol: 'none',
         yAxisIndex: 1,
-        itemStyle: { color: '#10b981' },
+        itemStyle: { color: '#2ecc71' },
         data: [10, 30, 60, 80, 70, 40, 20, 10]
       },
       {
@@ -152,7 +150,7 @@ const initChart = () => {
         smooth: true,
         symbol: 'none',
         yAxisIndex: 1,
-        itemStyle: { color: '#f59e0b' },
+        itemStyle: { color: '#f39c12' },
         data: [22, 21, 18.5, 17, 17.5, 16, 18, 19]
       },
       {
@@ -161,7 +159,7 @@ const initChart = () => {
         smooth: true,
         symbol: 'none',
         yAxisIndex: 1,
-        itemStyle: { color: '#6366f1' },
+        itemStyle: { color: '#8e44ad' },
         data: [40, 45, 55, 60, 58, 65, 50, 45]
       },
       {
@@ -170,7 +168,7 @@ const initChart = () => {
         smooth: true,
         symbol: 'none',
         yAxisIndex: 1,
-        itemStyle: { color: '#ec4899' },
+        itemStyle: { color: '#e74c3c' },
         data: [0, 0, 0, 50, 20, 0, 0, 0]
       }
     ]
@@ -306,9 +304,6 @@ onUnmounted(() => {
 .echarts-area {
   flex: 1;
   height: 100%;
-  padding: 10px;
-}
-</style>
   padding: 10px;
 }
 </style>
