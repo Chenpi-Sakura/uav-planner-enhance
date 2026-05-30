@@ -16,6 +16,7 @@ const mapElement = ref<HTMLElement | null>(null);
 let map: L.Map | null = null;
 let markersLayer = L.layerGroup();
 let mockOverlaysLayer = L.layerGroup();
+let pathLayer = L.layerGroup(); // <--- layer for the planned route line
 
 // Map Layers
 const layers: Record<string, L.TileLayer> = {
@@ -50,6 +51,7 @@ onMounted(() => {
   currentLayer.addTo(map);
   markersLayer.addTo(map);
   mockOverlaysLayer.addTo(map);
+  pathLayer.addTo(map); // <--- Add path layer
 
   // Handle clicks for point selection
   map.on('click', (e: L.LeafletMouseEvent) => {
@@ -76,6 +78,13 @@ onMounted(() => {
     
     // Auto-disable selection mode after picking
     store.selectingMode = null;
+  });
+
+  // Re-fetch overlays when map is moved or zoomed
+  map.on('moveend', () => {
+    if (store.overlays.length > 0) {
+      renderRealOverlays();
+    }
   });
 });
 
@@ -135,63 +144,52 @@ const renderMarkers = () => {
   }
 };
 
-const drawMockOverlays = () => {
+const renderPlannedPath = () => {
+  if (!map) return;
+  pathLayer.clearLayers();
+  
+  if (store.plannedPath && store.plannedPath.length > 0) {
+    const latlngs: L.LatLngExpression[] = store.plannedPath.map(p => [Number(p.lat), Number(p.lng)]);
+    
+    // Draw the main route line
+    L.polyline(latlngs, {
+      color: '#3498db',
+      weight: 4,
+      opacity: 0.8,
+      dashArray: '10, 10'
+    }).addTo(pathLayer);
+    
+    // Optionally zoom map to fit the path
+    const bounds = L.latLngBounds(latlngs);
+    map.fitBounds(bounds, { padding: [50, 50] });
+  }
+};
+
+const renderRealOverlays = () => {
   if (!map) return;
   mockOverlaysLayer.clearLayers();
   
   if (store.overlays.length === 0) return;
 
-  // Smooth Heatmap Mock (Multiple gradient steps)
-  const drawGradientHeatmap = (lat: number, lng: number, maxRadius: number) => {
-    const steps = 20;
-    for (let i = steps; i > 0; i--) {
-      const r = (maxRadius / steps) * i;
-      const ratio = i / steps; // 1 = edge, 0 = center
-      let red, green;
-      if (ratio > 0.5) {
-        red = Math.round((1 - ratio) * 2 * 255);
-        green = 255;
-      } else {
-        red = 255;
-        green = Math.round(ratio * 2 * 255);
-      }
-      L.circle([lat, lng], { 
-        radius: r, 
-        color: 'transparent', 
-        fillColor: `rgb(${red}, ${green}, 0)`, 
-        fillOpacity: 0.04 
-      }).addTo(mockOverlaysLayer);
-    }
-  };
-
-  drawGradientHeatmap(29.65, 91.1, 3000);
-  drawGradientHeatmap(29.68, 91.14, 2000);
-  drawGradientHeatmap(29.63, 91.07, 1500);
-  drawGradientHeatmap(29.64, 91.12, 1000);
+  const bounds = map.getBounds();
+  const min_lat = bounds.getSouth();
+  const max_lat = bounds.getNorth();
+  const min_lon = bounds.getWest();
+  const max_lon = bounds.getEast();
   
-  // Dense Isoline Mock (Concentric wavy rings)
-  const drawIsolines = (centerLat: number, centerLng: number, rings: number, maxRadiusDegree: number) => {
-    for (let ring = 1; ring <= rings; ring++) {
-      const points: L.LatLngTuple[] = [];
-      const radius = (maxRadiusDegree / rings) * ring;
-      for (let angle = 0; angle <= Math.PI * 2; angle += 0.1) {
-        // Add pseudo-random waves
-        const rModifier = 1 + Math.sin(angle * 5) * 0.08 + Math.cos(angle * 8 + ring) * 0.04;
-        const lat = centerLat + Math.sin(angle) * radius * rModifier;
-        const lng = centerLng + Math.cos(angle) * radius * rModifier;
-        points.push([lat, lng]);
-      }
-      L.polyline(points, { 
-        color: ring % 2 === 0 ? '#3b82f6' : '#8b5cf6', 
-        dashArray: ring > rings * 0.6 ? '4,4' : '', 
-        weight: 1.5, 
-        opacity: 0.8 
-      }).addTo(mockOverlaysLayer);
-    }
-  };
+  // Create bounds for the ImageOverlay
+  const imageBounds: L.LatLngBoundsExpression = [[min_lat, min_lon], [max_lat, max_lon]];
 
-  drawIsolines(29.65, 91.1, 15, 0.06);
-  drawIsolines(29.68, 91.05, 8, 0.03);
+  store.overlays.forEach(layer => {
+    // Add timestamp to prevent caching when panning
+    const url = `http://localhost:8000/api/weather/overlay?min_lat=${min_lat}&max_lat=${max_lat}&min_lon=${min_lon}&max_lon=${max_lon}&layer=${layer}&t=${Date.now()}`;
+    
+    L.imageOverlay(url, imageBounds, {
+      opacity: 0.8,
+      interactive: false,
+      crossOrigin: true
+    }).addTo(mockOverlaysLayer);
+  });
 };
 
 watch(() => props.activeLayer, (newLayer) => {
@@ -206,8 +204,12 @@ watch(() => [store.start, store.end, store.waypoints], () => {
   renderMarkers();
 }, { deep: true });
 
+watch(() => store.plannedPath, () => {
+  renderPlannedPath();
+}, { deep: true });
+
 watch(() => store.overlays, () => {
-  drawMockOverlays();
+  renderRealOverlays();
 }, { deep: true });
 
 onUnmounted(() => {

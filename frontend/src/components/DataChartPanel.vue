@@ -31,9 +31,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, shallowRef } from 'vue';
+import { ref, onMounted, onUnmounted, shallowRef, watch } from 'vue';
 import { ChevronDown, ChevronUp, Activity } from 'lucide-vue-next';
 import * as echarts from 'echarts';
+import { store } from '../store';
 
 const isCollapsed = ref(false);
 
@@ -176,6 +177,58 @@ const initChart = () => {
   
   chartInstance.value.setOption(option);
 };
+
+const fetchProfileData = async () => {
+  if (!store.plannedPath || store.plannedPath.length === 0) return;
+  
+  try {
+    const response = await fetch('http://localhost:8000/api/weather/profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        waypoints: store.plannedPath.map(wp => ({
+          lat: Number(wp.lat),
+          lon: Number(wp.lng)
+        }))
+      })
+    });
+    
+    if (!response.ok) throw new Error('Network response was not ok');
+    const result = await response.json();
+    
+    if (result && result.data && chartInstance.value) {
+      updateChartWithData(result.data);
+    }
+  } catch (error) {
+    console.error('Failed to fetch weather profile:', error);
+  }
+};
+
+const updateChartWithData = (data: any[]) => {
+  if (!chartInstance.value) return;
+  
+  const xAxisData = data.map(d => `${d.distance_from_start}km`);
+  const tkeData = data.map(d => d.tke);
+  const edrData = data.map(d => d.edr);
+  const tempData = data.map(d => Number((d.t2 > 100 ? d.t2 - 273.15 : d.t2).toFixed(1))); 
+  
+  chartInstance.value.setOption({
+    xAxis: { data: xAxisData },
+    series: [
+      { name: '地面海拔高度', data: [] }, 
+      { name: '无人机相对高度', data: [] }, 
+      { name: 'TKE (x10)', data: tkeData },
+      { name: 'EDR (x100)', data: edrData },
+      { name: '温度 (°C)', data: tempData },
+      { name: '湿度 (%)', data: [] }, 
+      { name: '降雨量 (x10)', data: [] } 
+    ]
+  });
+};
+
+watch(() => store.plannedPath, () => {
+  fetchProfileData();
+}, { deep: true });
 
 const handleResize = () => {
   chartInstance.value?.resize();

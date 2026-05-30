@@ -1,0 +1,10 @@
+xarray
+netcdf4
+numpy
+scipy
+networkx
+fastapi
+uvicorn
+pydantic
+aiofiles
+matplotlib

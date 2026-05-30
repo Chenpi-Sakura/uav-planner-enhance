@@ -12,5 +12,6 @@ export const store = reactive({
   start: { lat: '', lng: '', alt: '' } as Point,
   end: { lat: '', lng: '', alt: '' } as Point,
   waypoints: [] as Point[],
+  plannedPath: [] as Point[], // <--- added for dense planned path
   overlays: [] as string[]
 });

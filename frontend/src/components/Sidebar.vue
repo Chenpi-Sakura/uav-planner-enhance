@@ -151,8 +151,38 @@ const selectPointOnMap = (mode: 'start' | 'end' | 'waypoint', idx: number = -1) 
   }
 };
 
-const handlePlan = () => {
-  console.log('Planning path with:', store);
+const handlePlan = async () => {
+  if (!store.start.lat || !store.start.lng || !store.end.lat || !store.end.lng) {
+    alert("请先设置起点和终点！");
+    return;
+  }
+  
+  try {
+    const response = await fetch('http://localhost:8000/api/route/plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        start: { lat: Number(store.start.lat), lon: Number(store.start.lng) },
+        end: { lat: Number(store.end.lat), lon: Number(store.end.lng) }
+      })
+    });
+    
+    if (!response.ok) throw new Error("规划失败");
+    
+    const result = await response.json();
+    if (result && result.path) {
+      // Set the planned path to global store
+      store.plannedPath = result.path.map((p: any) => ({
+        lat: p.lat,
+        lng: p.lon,
+        alt: store.start.alt // keep same alt for 2D for now
+      }));
+      console.log("规划成功，总距离:", result.total_distance);
+    }
+  } catch (error) {
+    console.error("规划请求失败:", error);
+    alert("路径规划失败，请确保后端服务已启动");
+  }
 };
 </script>
 
