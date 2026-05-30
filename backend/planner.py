@@ -1,9 +1,10 @@
 import math
 import heapq
+import numpy as np
 from typing import List, Tuple
 from data_loader import data_loader
 from config import settings
-from schemas import Point
+from schemas import Point, PlanRequest
 
 def heuristic(a: Tuple[float, float], b: Tuple[float, float]) -> float:
     # simple euclidean distance for heuristic
@@ -22,26 +23,23 @@ def get_neighbors(node: Tuple[float, float], resolution: float) -> List[Tuple[fl
         (lat - resolution, lon + resolution),
     ]
 
-def plan_path(start: Point, end: Point, tke_thresh: float, edr_thresh: float) -> List[Point]:
+def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_str, initial_g_score, speed_kmh):
     """
-    A* path planning algorithm on a 2D grid.
-    Cost incorporates distance, TKE, and EDR.
+    A* path planning algorithm on a 2D grid, with dynamic time progression.
     """
-    start_node = (round(start.lat, 2), round(start.lon, 2))
-    end_node = (round(end.lat, 2), round(end.lon, 2))
-    
     open_set = []
     heapq.heappush(open_set, (0, start_node))
     came_from = {}
     
-    g_score = {start_node: 0}
-    f_score = {start_node: heuristic(start_node, end_node)}
+    g_score = {start_node: initial_g_score}
+    f_score = {start_node: heuristic(start_node, end_node) * 111.0}
     
     resolution = settings.GRID_RESOLUTION_DEG
 
-    # Basic timeout/max_iterations to prevent infinite loops in dummy space
     max_iter = 5000
     iterations = 0
+    
+    base_time = np.datetime64(start_time_str)
 
     while open_set and iterations < max_iter:
         iterations += 1
@@ -51,18 +49,25 @@ def plan_path(start: Point, end: Point, tke_thresh: float, edr_thresh: float) ->
         if heuristic(current, end_node) < resolution * 1.5:
             # Reconstruct path
             path = [Point(lat=end_node[0], lon=end_node[1])]
+            final_g = g_score[current] + heuristic(current, end_node) * 111.0
             while current in came_from:
                 path.append(Point(lat=current[0], lon=current[1]))
                 current = came_from[current]
             path.append(Point(lat=start_node[0], lon=start_node[1]))
             path.reverse()
-            return path
+            return path, final_g
             
         for neighbor in get_neighbors(current, resolution):
             neighbor = (round(neighbor[0], 2), round(neighbor[1], 2))
             
-            # Get meteorology for neighbor
-            meteo = data_loader.get_meteorology_at_point(neighbor[0], neighbor[1])
+            dist_km = heuristic(current, neighbor) * 111.0
+            
+            # Predict the absolute time when UAV reaches this neighbor
+            elapsed_hours = (g_score[current] + dist_km) / speed_kmh
+            current_time = base_time + np.timedelta64(int(elapsed_hours * 3600), 's')
+            
+            # Get real-time meteorology for that specific future moment
+            meteo = data_loader.get_meteorology_at_point(neighbor[0], neighbor[1], date=str(current_time))
             tke = meteo['tke']
             edr = meteo['edr']
             
@@ -70,18 +75,66 @@ def plan_path(start: Point, end: Point, tke_thresh: float, edr_thresh: float) ->
             if tke > tke_thresh or edr > edr_thresh:
                 continue # Obstacle
                 
-            # Calculate cost (Distance + Penalty)
-            dist = heuristic(current, neighbor)
             # Soft constraints/penalties: encourage paths with lower TKE/EDR
             penalty = (tke * 2.0) + (edr * 10.0) 
-            tentative_g_score = g_score[current] + dist + penalty
+            tentative_g_score = g_score[current] + dist_km + penalty
             
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g_score
-                f_score[neighbor] = tentative_g_score + heuristic(neighbor, end_node)
-                # Just pushing to heap without checking if it's already there (standard A* simplification)
+                f_score[neighbor] = tentative_g_score + heuristic(neighbor, end_node) * 111.0
                 heapq.heappush(open_set, (f_score[neighbor], neighbor))
                 
     # If path not found or max iterations reached, return straight line as fallback
-    return [start, end]
+    fallback_g = initial_g_score + heuristic(start_node, end_node) * 111.0
+    return [Point(lat=start_node[0], lon=start_node[1]), Point(lat=end_node[0], lon=end_node[1])], fallback_g
+
+
+def plan_path(req: PlanRequest) -> tuple[List[Point], float, float, float]:
+    """
+    Plan a full route connecting start -> waypoints -> end.
+    """
+    targets = [req.start] + req.waypoints + [req.end]
+    full_path = []
+    
+    start_time_str = f"{req.date}T{req.start_time}:00" if len(req.start_time) <= 5 else req.start_time
+    current_g_score = 0.0
+    
+    for i in range(len(targets) - 1):
+        s = targets[i]
+        e = targets[i+1]
+        
+        s_node = (round(s.lat, 2), round(s.lon, 2))
+        e_node = (round(e.lat, 2), round(e.lon, 2))
+        
+        segment_path, current_g_score = plan_path_segment(
+            s_node, e_node, 
+            req.tke_threshold, req.edr_threshold,
+            start_time_str, current_g_score, req.speed
+        )
+        
+        if i > 0 and len(segment_path) > 0:
+            segment_path = segment_path[1:] # Avoid duplicating the overlapping waypoint
+            
+        full_path.extend(segment_path)
+
+    # Calculate post-planning stats accurately along the stitched path
+    total_dist = 0.0
+    max_tke = 0.0
+    max_edr = 0.0
+    
+    base_time = np.datetime64(start_time_str)
+    
+    for i in range(len(full_path)):
+        if i > 0:
+            dist = math.hypot(full_path[i].lon - full_path[i-1].lon, full_path[i].lat - full_path[i-1].lat) * 111.0
+            total_dist += dist
+            
+        elapsed_hours = total_dist / req.speed
+        current_time = base_time + np.timedelta64(int(elapsed_hours * 3600), 's')
+        
+        meteo = data_loader.get_meteorology_at_point(full_path[i].lat, full_path[i].lon, date=str(current_time))
+        if meteo['tke'] > max_tke: max_tke = meteo['tke']
+        if meteo['edr'] > max_edr: max_edr = meteo['edr']
+
+    return full_path, total_dist, max_tke, max_edr

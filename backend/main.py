@@ -49,32 +49,17 @@ async def get_weather_profile(req: ProfileRequest):
     return ProfileResponse(data=data_points)
 
 @app.post("/api/route/plan", response_model=PlanResponse)
-async def plan_uav_route(req: PlanRequest):
+async def plan_route(request: PlanRequest):
     """
-    Calculate optimal 2D route avoiding high TKE and EDR.
+    Plan a 4D path from start to end via waypoints using A*.
+    Returns the path points, total distance, max TKE, and max EDR along the route.
     """
-    tke_th = req.tke_threshold if req.tke_threshold is not None else settings.TKE_THRESHOLD_HIGH
-    edr_th = req.edr_threshold if req.edr_threshold is not None else settings.EDR_THRESHOLD_HIGH
-    
-    path = plan_path(req.start, req.end, tke_th, edr_th)
-    
-    # Calculate simple stats for the path
-    total_dist = 0.0
-    max_tke = 0.0
-    max_edr = 0.0
-    
-    for i in range(len(path)):
-        meteo = data_loader.get_meteorology_at_point(path[i].lat, path[i].lon)
-        if meteo['tke'] > max_tke:
-            max_tke = meteo['tke']
-        if meteo['edr'] > max_edr:
-            max_edr = meteo['edr']
-            
-        if i > 0:
-            # simple euclidean dist, convert to rough km if we multiply by 111
-            dist_deg = math.hypot(path[i].lat - path[i-1].lat, path[i].lon - path[i-1].lon)
-            total_dist += dist_deg * 111.0 # rough approximation
-            
+    # Defaults
+    if request.tke_threshold is None: request.tke_threshold = 15.0
+    if request.edr_threshold is None: request.edr_threshold = 0.5
+
+    path, total_dist, max_tke, max_edr = plan_path(request)
+
     return PlanResponse(
         path=path,
         total_distance=total_dist,
@@ -85,11 +70,12 @@ async def plan_uav_route(req: PlanRequest):
 from fastapi.responses import Response
 
 @app.get("/api/weather/overlay")
-async def get_weather_overlay(min_lat: float, max_lat: float, min_lon: float, max_lon: float, layer: str = 'tke'):
+async def get_weather_overlay(min_lat: float, max_lat: float, min_lon: float, max_lon: float, layer: str = 'tke', date: str = '2022-05-30', start_time: str = '08:00'):
     """
-    Generate a transparent heatmap PNG for the given bounding box.
+    Generate a transparent heatmap PNG for the given bounding box and time.
     """
-    image_bytes = data_loader.get_overlay_image(min_lat, max_lat, min_lon, max_lon, layer)
+    time_str = f"{date}T{start_time}:00" if len(start_time) <= 5 else start_time
+    image_bytes = data_loader.get_overlay_image(min_lat, max_lat, min_lon, max_lon, layer, time_str)
     return Response(content=image_bytes, media_type="image/png")
 
 if __name__ == "__main__":

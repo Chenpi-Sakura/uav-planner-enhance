@@ -1,5 +1,6 @@
 <template>
-  <div class="map-container" ref="mapElement" :class="{ 'cursor-crosshair': store.selectingMode }"></div>
+  <div class="map-container" ref="mapElement" :class="{ 'cursor-crosshair': store.selectingMode }">
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -7,6 +8,7 @@ import { ref, onMounted, onUnmounted, watch } from 'vue';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { store } from '../store';
+import { Play } from 'lucide-vue-next';
 
 const props = defineProps<{
   activeLayer: 'street' | 'satellite' | 'terrain'
@@ -41,7 +43,7 @@ onMounted(() => {
 
   map = L.map(mapElement.value, {
     center: [29.65, 91.1], // Lhasa
-    zoom: 12,
+    zoom: 7,
     zoomControl: false 
   });
 
@@ -167,9 +169,11 @@ const renderPlannedPath = () => {
 
 const renderRealOverlays = () => {
   if (!map) return;
-  mockOverlaysLayer.clearLayers();
   
-  if (store.overlays.length === 0) return;
+  if (store.overlays.length === 0) {
+    mockOverlaysLayer.clearLayers();
+    return;
+  }
 
   const bounds = map.getBounds();
   const min_lat = bounds.getSouth();
@@ -180,15 +184,28 @@ const renderRealOverlays = () => {
   // Create bounds for the ImageOverlay
   const imageBounds: L.LatLngBoundsExpression = [[min_lat, min_lon], [max_lat, max_lon]];
 
+  // Keep a reference to current layers to remove later to prevent flickering
+  const oldLayers = mockOverlaysLayer.getLayers();
+  let loadedCount = 0;
+
   store.overlays.forEach(layer => {
-    // Add timestamp to prevent caching when panning
-    const url = `http://localhost:8000/api/weather/overlay?min_lat=${min_lat}&max_lat=${max_lat}&min_lon=${min_lon}&max_lon=${max_lon}&layer=${layer}&t=${Date.now()}`;
+    const url = `http://localhost:8000/api/weather/overlay?min_lat=${min_lat}&max_lat=${max_lat}&min_lon=${min_lon}&max_lon=${max_lon}&layer=${layer}&date=${store.targetDate}&start_time=${store.targetTime}&t=${Date.now()}`;
     
-    L.imageOverlay(url, imageBounds, {
+    const overlay = L.imageOverlay(url, imageBounds, {
       opacity: 0.8,
       interactive: false,
       crossOrigin: true
-    }).addTo(mockOverlaysLayer);
+    });
+    
+    overlay.on('load', () => {
+      loadedCount++;
+      // Once all new layers are loaded, remove old layers
+      if (loadedCount === store.overlays.length) {
+        oldLayers.forEach(l => mockOverlaysLayer.removeLayer(l));
+      }
+    });
+    
+    overlay.addTo(mockOverlaysLayer);
   });
 };
 
@@ -208,9 +225,50 @@ watch(() => store.plannedPath, () => {
   renderPlannedPath();
 }, { deep: true });
 
-watch(() => store.overlays, () => {
+watch([() => store.overlays, () => store.targetDate, () => store.targetTime], () => {
   renderRealOverlays();
 }, { deep: true });
+
+let uavMarker: L.CircleMarker | null = null;
+let lastHour: number = 0;
+
+watch(() => store.simulationIndex, (newIdx) => {
+  const path = store.plannedPath;
+  if (!path || path.length === 0 || !map) return;
+  
+  // Initialize marker if not exists
+  if (newIdx === 0 || !uavMarker) {
+    if (uavMarker) map.removeLayer(uavMarker);
+    uavMarker = L.circleMarker([Number(path[0].lat), Number(path[0].lng)], {
+      color: '#00ff00',
+      fillColor: '#00ff00',
+      fillOpacity: 1,
+      radius: 6,
+      weight: 2
+    }).addTo(map);
+    lastHour = parseInt(store.targetTime.split(':')[0] || '8');
+    return;
+  }
+  
+  if (newIdx < path.length) {
+    const p1 = path[newIdx - 1];
+    const p2 = path[newIdx];
+    uavMarker.setLatLng([Number(p2.lat), Number(p2.lng)]);
+    
+    // Check if we need to update weather (hour crossed)
+    // For simplicity, we calculate total distance up to this point
+    let totalDist = 0;
+    for (let i = 0; i < newIdx; i++) {
+      totalDist += Math.hypot(Number(path[i+1].lng) - Number(path[i].lng), Number(path[i+1].lat) - Number(path[i].lat)) * 111.0;
+    }
+    
+    const startHour = parseInt(store.targetTime.split(':')[0] || '8'); // This is a bit flaky if targetTime updates, but okay for demo
+    const elapsedHours = totalDist / store.uavSpeed;
+    // Assuming startHour is preserved from the beginning of simulation.
+    // Actually, store.targetTime updates. So let's rely on DataChartPanel to manage time updates, or just do it simply:
+    // We just move the marker here. DataChartPanel can handle time progression!
+  }
+});
 
 onUnmounted(() => {
   if (map) {
@@ -231,6 +289,8 @@ onUnmounted(() => {
 .map-container.cursor-crosshair {
   cursor: crosshair !important;
 }
+
+
 
 :deep(.leaflet-control-zoom a) {
   background-color: var(--panel-bg);

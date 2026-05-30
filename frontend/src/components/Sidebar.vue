@@ -1,8 +1,8 @@
 <template>
-  <div class="sidebar-container" :class="{ 'collapsed': isCollapsed }">
+  <div class="sidebar-container" :class="{ 'collapsed': store.sidebarCollapsed }">
     <!-- Toggle Button -->
-    <button class="toggle-btn" @click="toggleSidebar">
-      <ChevronLeft v-if="!isCollapsed" :size="20" />
+    <button class="toggle-btn" @click="store.sidebarCollapsed = !store.sidebarCollapsed">
+      <ChevronLeft v-if="!store.sidebarCollapsed" :size="20" />
       <ChevronRight v-else :size="20" />
     </button>
 
@@ -14,14 +14,17 @@
         <h3 class="section-title"><Clock :size="16" /> 时间选择相关</h3>
         <div class="form-group">
           <label>具体日期</label>
-          <input type="date" class="capsule-input full-width" v-model="form.date" />
+          <input type="date" class="capsule-input full-width" v-model="store.targetDate" />
         </div>
-        <div class="form-group">
-          <label>时间段</label>
-          <select class="capsule-input full-width" v-model="form.timeSlot">
-            <option value="morning">早八点 - 晚八点</option>
-            <option value="night">晚八点 - 早八点</option>
-          </select>
+        <div class="input-row">
+          <div class="form-group" style="flex:1">
+            <label>起飞时间</label>
+            <input type="time" step="3600" class="capsule-input full-width" v-model="store.targetTime" />
+          </div>
+          <div class="form-group" style="flex:1">
+            <label>速度 (km/h)</label>
+            <input type="number" class="capsule-input full-width" v-model="store.uavSpeed" />
+          </div>
         </div>
       </section>
 
@@ -84,8 +87,9 @@
           </div>
 
           <div class="action-row">
-            <button class="capsule-btn full-width" @click="handlePlan">
-              <Send :size="16" /> 开始规划
+            <button class="capsule-btn full-width" @click="handlePlan" :disabled="isPlanning" :class="{'disabled-btn': isPlanning}">
+              <span v-if="isPlanning" class="loading-icon"><Loader :size="16" class="spin"/> 正在玩命计算 4D 航线...</span>
+              <span v-else style="display:flex; align-items:center; gap:8px;"><Send :size="16" /> 开始规划</span>
             </button>
           </div>
         </section>
@@ -108,19 +112,10 @@
 
 <script setup lang="ts">
 import { ref, reactive } from 'vue';
-import { ChevronLeft, ChevronRight, Clock, Navigation, Layers, Send, Plus, X, Crosshair } from 'lucide-vue-next';
+import { ChevronLeft, ChevronRight, Clock, Navigation, Layers, Send, Plus, X, Crosshair, Loader } from 'lucide-vue-next';
 import { store } from '../store';
 
-const isCollapsed = ref(false);
-
-const toggleSidebar = () => {
-  isCollapsed.value = !isCollapsed.value;
-};
-
-const form = reactive({
-  date: new Date().toISOString().split('T')[0],
-  timeSlot: 'morning'
-});
+const isPlanning = ref(false);
 
 const overlayOptions = [
   { id: 'tke', label: 'TKE (湍动能)' },
@@ -157,13 +152,18 @@ const handlePlan = async () => {
     return;
   }
   
+  isPlanning.value = true;
   try {
     const response = await fetch('http://localhost:8000/api/route/plan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         start: { lat: Number(store.start.lat), lon: Number(store.start.lng) },
-        end: { lat: Number(store.end.lat), lon: Number(store.end.lng) }
+        end: { lat: Number(store.end.lat), lon: Number(store.end.lng) },
+        waypoints: store.waypoints.map(wp => ({ lat: Number(wp.lat), lon: Number(wp.lng) })),
+        date: store.targetDate,
+        start_time: store.targetTime,
+        speed: Number(store.uavSpeed)
       })
     });
     
@@ -178,10 +178,18 @@ const handlePlan = async () => {
         alt: store.start.alt // keep same alt for 2D for now
       }));
       console.log("规划成功，总距离:", result.total_distance);
+      
+      // Auto toggle layout
+      store.sidebarCollapsed = true;
+      store.chartCollapsed = false;
+      store.isSimulating = false; // Reset simulation
+      store.simulationIndex = 0;
     }
   } catch (error) {
     console.error("规划请求失败:", error);
     alert("路径规划失败，请确保后端服务已启动");
+  } finally {
+    isPlanning.value = false;
   }
 };
 </script>
@@ -467,5 +475,21 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 select option {
   background-color: #0f172a;
   color: white;
+}
+
+.disabled-btn {
+  opacity: 0.7;
+  cursor: not-allowed !important;
+}
+.loading-icon {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.spin {
+  animation: spin 1.5s linear infinite;
+}
+@keyframes spin {
+  100% { transform: rotate(360deg); }
 }
 </style>

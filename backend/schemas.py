@@ -7,11 +7,14 @@ class Point(BaseModel):
 
 class ProfileRequest(BaseModel):
     waypoints: List[Point]
+    date: str = '2022-05-30'
+    start_time: str = '08:00'
 
 class ProfileDataPoint(BaseModel):
     lat: float
     lon: float
-    distance_from_start: float = 0.0  # 方便前端折线图作为X�?    u10: float
+    distance_from_start: float = 0.0  # 方便前端折线图作为X轴
+    u10: float
     v10: float
     t2: float
     tke: float
@@ -23,6 +26,10 @@ class ProfileResponse(BaseModel):
 class PlanRequest(BaseModel):
     start: Point
     end: Point
+    waypoints: List[Point] = []
+    date: str = '2022-05-30'
+    start_time: str = '08:00'
+    speed: float = 60.0  # UAV speed in km/h
     # Optional constraints or thresholds
     tke_threshold: Optional[float] = None
     edr_threshold: Optional[float] = None
