@@ -217,11 +217,14 @@ const renderPlannedPath = () => {
   }
 };
 
+let lastRenderState = '';
+
 const renderRealOverlays = () => {
   if (!map) return;
   
   if (store.overlays.length === 0) {
     mockOverlaysLayer.clearLayers();
+    lastRenderState = '';
     return;
   }
 
@@ -231,6 +234,15 @@ const renderRealOverlays = () => {
   const min_lon = bounds.getWest();
   const max_lon = bounds.getEast();
   
+  const currentHour = parseInt(store.targetTime.split(':')[0] || '8');
+  // State guard to prevent flickering: only re-fetch if layers, date, HOUR, or map bounds change
+  const currentStateStr = `${store.overlays.join(',')}_${store.targetDate}_${currentHour}_${min_lat.toFixed(4)}_${max_lat.toFixed(4)}_${min_lon.toFixed(4)}_${max_lon.toFixed(4)}`;
+  
+  if (currentStateStr === lastRenderState) {
+    return; // Skip redundant updates! (e.g. simulation minute ticking)
+  }
+  lastRenderState = currentStateStr;
+
   // Create bounds for the ImageOverlay
   const imageBounds: L.LatLngBoundsExpression = [[min_lat, min_lon], [max_lat, max_lon]];
 
@@ -239,7 +251,9 @@ const renderRealOverlays = () => {
   let loadedCount = 0;
 
   store.overlays.forEach(layer => {
-    const url = `http://localhost:8000/api/weather/overlay?min_lat=${min_lat}&max_lat=${max_lat}&min_lon=${min_lon}&max_lon=${max_lon}&layer=${layer}&date=${store.targetDate}&start_time=${store.targetTime}&t=${Date.now()}`;
+    const hourStr = currentHour.toString().padStart(2, '0') + ':00';
+    // Removed t=Date.now() to allow browser caching and explicitly use hourStr
+    const url = `http://localhost:8000/api/weather/overlay?min_lat=${min_lat}&max_lat=${max_lat}&min_lon=${min_lon}&max_lon=${max_lon}&layer=${layer}&date=${store.targetDate}&start_time=${hourStr}`;
     
     const overlay = L.imageOverlay(url, imageBounds, {
       opacity: 0.8,

@@ -15,14 +15,6 @@
       </template>
     </div>
     
-    <!-- Isoline legend (Black contour lines rendered by backend) -->
-    <div class="legend-section mt-2">
-      <div class="section-label">等值线 (轮廓)</div>
-      <div class="isoline-item">
-        <div class="line contour-line"></div>
-        <span>等高数值密度</span>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -84,8 +76,8 @@ const legendConfigs: Record<string, any> = {
   bottom: 20px;
   left: 20px;
   z-index: 800; /* Below sidebar (1000) and chart (900) */
-  padding: 16px;
-  width: 240px;
+  padding: 14px;
+  width: 200px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -105,12 +97,6 @@ const legendConfigs: Record<string, any> = {
   gap: 6px;
 }
 
-.mt-2 {
-  margin-top: 8px;
-  border-top: 1px dashed rgba(255,255,255,0.1);
-  padding-top: 8px;
-}
-
 .section-label {
   font-size: 12px;
   color: var(--text-primary);
@@ -118,9 +104,8 @@ const legendConfigs: Record<string, any> = {
 }
 
 .color-scale {
-  height: 10px;
+  height: 8px;
   border-radius: 4px;
-  border: 1px solid rgba(255,255,255,0.1);
 }
 
 .scale-labels {
