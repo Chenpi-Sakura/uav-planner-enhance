@@ -5,6 +5,8 @@ from data_loader import data_loader
 from planner import plan_path
 from config import settings
 import math
+import urllib.request
+import json
 
 app = FastAPI(title="UAV Planner Backend")
 
@@ -25,6 +27,28 @@ async def get_weather_profile(req: ProfileRequest):
     data_points = []
     total_dist = 0.0
     
+    # 1. Fetch Elevation Data from OpenTopoData API (SRTM 90m)
+    elevations = []
+    try:
+        chunk_size = 100
+        for i in range(0, len(req.waypoints), chunk_size):
+            chunk = req.waypoints[i:i+chunk_size]
+            loc_str = "|".join([f"{wp.lat},{wp.lon}" for wp in chunk])
+            url = f"https://api.opentopodata.org/v1/srtm90m?locations={loc_str}"
+            
+            api_req = urllib.request.Request(url, headers={'User-Agent': 'UAV-Planner/1.0'})
+            with urllib.request.urlopen(api_req, timeout=10) as response:
+                api_data = json.loads(response.read().decode())
+                for res in api_data.get('results', []):
+                    val = res.get('elevation')
+                    elevations.append(val if val is not None else 3650.0)
+    except Exception as e:
+        print(f"Elevation fetch error: {e}")
+        elevations = [3650.0] * len(req.waypoints)
+
+    while len(elevations) < len(req.waypoints):
+        elevations.append(3650.0)
+        
     for i, wp in enumerate(req.waypoints):
         meteo = data_loader.get_meteorology_at_point(wp.lat, wp.lon)
         
@@ -38,6 +62,7 @@ async def get_weather_profile(req: ProfileRequest):
             lat=wp.lat,
             lon=wp.lon,
             distance_from_start=round(total_dist, 2),
+            elevation=elevations[i],
             u=meteo['u'],
             v=meteo['v'],
             w=meteo['w'],

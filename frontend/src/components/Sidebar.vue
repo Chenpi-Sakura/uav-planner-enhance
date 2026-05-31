@@ -11,7 +11,7 @@
       
       <!-- 1. Time Selection (Fixed at Top) -->
       <section class="time-section">
-        <h3 class="section-title"><Clock :size="16" /> 时间选择相关</h3>
+        <h3 class="section-title"><Clock :size="16" /> 时间选择</h3>
         <div class="form-group">
           <label>具体日期</label>
           <input type="date" class="capsule-input full-width" v-model="store.targetDate" />
@@ -32,7 +32,7 @@
       <div class="scroll-area">
         <!-- 2. Path Planning -->
         <section class="control-section">
-          <h3 class="section-title"><Navigation :size="16" /> 路径规划相关</h3>
+          <h3 class="section-title"><Navigation :size="16" /> 路径规划</h3>
           
           <!-- Quick Bases -->
           <div class="quick-bases">
@@ -49,10 +49,15 @@
                 <Crosshair :size="14" /> 取点
               </button>
             </div>
+            <div class="input-labels">
+              <span>经度</span>
+              <span>纬度</span>
+              <span>相对高度</span>
+            </div>
             <div class="input-row">
               <input type="number" placeholder="经度" class="capsule-input mini" v-model="store.start.lng" />
               <input type="number" placeholder="纬度" class="capsule-input mini" v-model="store.start.lat" />
-              <input type="number" placeholder="海拔" class="capsule-input mini" v-model="store.start.alt" />
+              <input type="number" placeholder="相对高度" class="capsule-input mini" v-model="store.start.alt" />
             </div>
           </div>
 
@@ -67,10 +72,15 @@
                 <button class="remove-btn" @click="removeWaypoint(idx)" title="删除"><X :size="14" /></button>
               </div>
             </div>
+            <div class="input-labels">
+              <span>经度</span>
+              <span>纬度</span>
+              <span>相对高度</span>
+            </div>
             <div class="input-row">
               <input type="number" placeholder="经度" class="capsule-input mini" v-model="wp.lng" />
               <input type="number" placeholder="纬度" class="capsule-input mini" v-model="wp.lat" />
-              <input type="number" placeholder="海拔" class="capsule-input mini" v-model="wp.alt" />
+              <input type="number" placeholder="相对高度" class="capsule-input mini" v-model="wp.alt" />
             </div>
           </div>
           
@@ -86,16 +96,21 @@
                 <Crosshair :size="14" /> 取点
               </button>
             </div>
+            <div class="input-labels">
+              <span>经度</span>
+              <span>纬度</span>
+              <span>相对高度</span>
+            </div>
             <div class="input-row">
               <input type="number" placeholder="经度" class="capsule-input mini" v-model="store.end.lng" />
               <input type="number" placeholder="纬度" class="capsule-input mini" v-model="store.end.lat" />
-              <input type="number" placeholder="海拔" class="capsule-input mini" v-model="store.end.alt" />
+              <input type="number" placeholder="相对高度" class="capsule-input mini" v-model="store.end.alt" />
             </div>
           </div>
 
           <div class="action-row">
             <button class="capsule-btn full-width" @click="handlePlan" :disabled="isPlanning" :class="{'disabled-btn': isPlanning}">
-              <span v-if="isPlanning" class="loading-icon"><Loader :size="16" class="spin"/> 正在玩命计算 4D 航线...</span>
+              <span v-if="isPlanning" class="loading-icon"><Loader :size="16" class="spin"/> 正在计算 4D 航线...</span>
               <span v-else style="display:flex; align-items:center; gap:8px;"><Send :size="16" /> 开始规划</span>
             </button>
           </div>
@@ -104,7 +119,7 @@
 
       <!-- 3. Overlays (Fixed at Bottom) -->
       <section class="overlay-section">
-        <h3 class="section-title"><Layers :size="16" /> 多种叠加层</h3>
+        <h3 class="section-title"><Layers :size="16" /> 叠加层</h3>
         <div class="checkbox-grid">
           <label class="custom-checkbox" v-for="layer in overlayOptions" :key="layer.id">
             <input type="checkbox" v-model="store.overlays" :value="layer.id" />
@@ -201,11 +216,15 @@ const handlePlan = async () => {
     
     const result = await response.json();
     if (result && result.path) {
-      // Set the planned path to global store
-      store.plannedPath = result.path.map((p: any) => ({
+      const startAlt = Number(store.start.alt || 600);
+      const endAlt = Number(store.end.alt || 600);
+      const n = result.path.length;
+      
+      // Set the planned path to global store with interpolated relative altitude
+      store.plannedPath = result.path.map((p: any, i: number) => ({
         lat: p.lat,
         lng: p.lon,
-        alt: store.start.alt // keep same alt for 2D for now
+        alt: n > 1 ? startAlt + (endAlt - startAlt) * (i / (n - 1)) : startAlt
       }));
       console.log("规划成功，总距离:", result.total_distance);
       
@@ -363,6 +382,18 @@ const handlePlan = async () => {
   display: flex;
   gap: 6px;
   margin-bottom: 12px;
+}
+
+.input-labels {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.input-labels span {
+  flex: 1;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 
 .waypoint-header {

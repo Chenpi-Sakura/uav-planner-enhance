@@ -56,12 +56,12 @@ const chartInstance = shallowRef<echarts.ECharts | null>(null);
 // Updated legend based on requirement
 const legends = ref([
   { name: '地面海拔高度', color: '#3498db' },
-  { name: '无人机相对高度', color: '#9b59b6' },
-  { name: 'TKE (x10)', color: '#1abc9c' },
-  { name: 'EDR (x1000)', color: '#2ecc71' },
+  { name: '无人机飞行海拔', color: '#9b59b6' },
+  { name: 'TKE (x50)', color: '#1abc9c' },
+  { name: 'EDR (x5000)', color: '#2ecc71' },
   { name: '温度 (°C)', color: '#f39c12' },
   { name: '相对湿度 (%)', color: '#8e44ad' },
-  { name: '水汽混合比 (g/kg)', color: '#e74c3c' }
+  { name: '水汽混合比 (x10)', color: '#e74c3c' }
 ]);
 
 const initChart = () => {
@@ -126,7 +126,7 @@ const initChart = () => {
         data: [120, 200, 450, 600, 580, 720, 450, 300]
       },
       {
-        name: '无人机相对高度',
+        name: '无人机飞行海拔',
         type: 'line',
         smooth: true,
         symbol: 'none',
@@ -136,7 +136,7 @@ const initChart = () => {
         data: [170, 250, 500, 650, 630, 770, 500, 350]
       },
       {
-        name: 'TKE (x10)',
+        name: 'TKE (x50)',
         type: 'line',
         smooth: true,
         symbol: 'none',
@@ -146,7 +146,7 @@ const initChart = () => {
         data: [2, 4, 8, 12, 9, 5, 3, 2]
       },
       {
-        name: 'EDR (x1000)',
+        name: 'EDR (x5000)',
         type: 'line',
         smooth: true,
         symbol: 'none',
@@ -173,7 +173,7 @@ const initChart = () => {
         data: [40, 45, 55, 60, 58, 65, 50, 45]
       },
       {
-        name: '水汽混合比 (g/kg)',
+        name: '水汽混合比 (x10)',
         type: 'line',
         smooth: true,
         symbol: 'none',
@@ -185,6 +185,31 @@ const initChart = () => {
   };
   
   chartInstance.value.setOption(option);
+  
+  // Enable dragging/scrubbing on the chart canvas
+  let isDragging = false;
+  chartInstance.value.getZr().on('mousedown', () => { isDragging = true; pauseSimulation(); });
+  chartInstance.value.getZr().on('mouseup', () => { isDragging = false; });
+  
+  const handleChartInteraction = (params: any) => {
+    if (store.plannedPath.length > 0 && chartInstance.value) {
+      const pointInPixel = [params.offsetX, params.offsetY];
+      if (chartInstance.value.containPixel('grid', pointInPixel)) {
+        const pointInGrid = chartInstance.value.convertFromPixel({ seriesIndex: 0 }, pointInPixel) as number[];
+        const xIndex = Math.max(0, Math.min(store.plannedPath.length - 1, Math.round(pointInGrid[0])));
+        store.simulationIndex = xIndex;
+        updateChartMarkLine(store.simulationIndex);
+        updateTimeForIndex(store.simulationIndex);
+      }
+    }
+  };
+
+  chartInstance.value.getZr().on('mousemove', (params: any) => {
+    if (isDragging) handleChartInteraction(params);
+  });
+  chartInstance.value.getZr().on('click', (params: any) => {
+    handleChartInteraction(params);
+  });
 };
 
 const fetchProfileData = async () => {
@@ -218,29 +243,41 @@ const fetchProfileData = async () => {
 const updateChartWithData = (data: any[]) => {
   if (!chartInstance.value) return;
   
-  const xAxisData = data.map(d => `${d.distance_from_start.toFixed(1)}km`);
-  const tkeData = data.map(d => Number((d.tke * 10).toFixed(2)));
-  const edrData = data.map(d => Number((d.edr * 1000).toFixed(2)));
+  const originalHour = parseInt(store.targetTime.split(':')[0] || '8');
+  const xAxisData = data.map(d => {
+    const elapsedHours = d.distance_from_start / store.uavSpeed;
+    const currentHour = Math.floor(originalHour + elapsedHours);
+    const m = Math.floor((elapsedHours % 1) * 60);
+    const hStr = (currentHour % 24).toString().padStart(2, '0');
+    const mStr = m.toString().padStart(2, '0');
+    return `${d.distance_from_start.toFixed(1)}km\n${hStr}:${mStr}`;
+  });
+  
+  // Dramatically increase scaling factors so these values are visible on a 0-100 scale (driven by Humidity)
+  const tkeData = data.map(d => Number((d.tke * 50).toFixed(2))); // x50
+  const edrData = data.map(d => Number((d.edr * 5000).toFixed(2))); // x5000
   const tempData = data.map(d => Number((d.tc > 100 ? d.tc - 273.15 : d.tc).toFixed(1)));
   
-  // Mock elev/alt data since DEM is not available
-  const elevData = data.map((d, i) => 3650 + Math.sin(i * 0.5) * 500); 
-  const relAltData = data.map(() => 500);
+  // Use REAL elevation data from backend (SRTM90m API)
+  const elevData = data.map(d => Number((d.elevation).toFixed(1))); 
+  // Drone altitude = Ground Elevation + User-defined Relative Altitude
+  const relAltData = data.map((d, i) => Number(store.plannedPath[i]?.alt || 600));
+  const absAltData = elevData.map((elev, i) => elev + relAltData[i]);
   
   // Real humidity and qvapor data
   const humData = data.map(d => Number((d.rh).toFixed(1)));
-  const qvaporData = data.map(d => Number((d.qvapor * 1000).toFixed(2)));
+  const qvaporData = data.map(d => Number((d.qvapor * 1000 * 10).toFixed(2))); // x10
   
   chartInstance.value.setOption({
     xAxis: { data: xAxisData },
     series: [
       { name: '地面海拔高度', data: elevData }, 
-      { name: '无人机相对高度', data: relAltData }, 
-      { name: 'TKE (x10)', data: tkeData },
-      { name: 'EDR (x1000)', data: edrData },
+      { name: '无人机飞行海拔', data: absAltData }, 
+      { name: 'TKE (x50)', data: tkeData },
+      { name: 'EDR (x5000)', data: edrData },
       { name: '温度 (°C)', data: tempData },
       { name: '相对湿度 (%)', data: humData }, 
-      { name: '水汽混合比 (g/kg)', data: qvaporData } 
+      { name: '水汽混合比 (x10)', data: qvaporData } 
     ]
   });
 };
@@ -260,12 +297,32 @@ const toggleSimulation = () => {
 const startSimulation = () => {
   if (store.plannedPath.length === 0) return;
   
+  // If we are at the end, reset to start automatically
+  if (store.simulationIndex >= store.plannedPath.length - 1) {
+    store.simulationIndex = 0;
+  }
+  
   if (store.simulationIndex === 0) {
     originalStartHour = parseInt(store.targetTime.split(':')[0] || '8');
   }
   
   store.isSimulating = true;
   runSimulationStep();
+};
+
+const updateTimeForIndex = (index: number) => {
+  let totalDist = 0;
+  for (let i = 0; i < index; i++) {
+    const dx = Number(store.plannedPath[i+1].lng) - Number(store.plannedPath[i].lng);
+    const dy = Number(store.plannedPath[i+1].lat) - Number(store.plannedPath[i].lat);
+    totalDist += Math.hypot(dx, dy) * 111.0;
+  }
+  const elapsedHours = totalDist / store.uavSpeed;
+  const currentHour = Math.floor(originalStartHour + elapsedHours);
+  const m = Math.floor((elapsedHours % 1) * 60);
+  const hStr = (currentHour % 24).toString().padStart(2, '0');
+  const mStr = m.toString().padStart(2, '0');
+  store.targetTime = `${hStr}:${mStr}`;
 };
 
 const runSimulationStep = () => {
@@ -277,19 +334,7 @@ const runSimulationStep = () => {
     if (store.simulationIndex < store.plannedPath.length - 1) {
       store.simulationIndex++;
       updateChartMarkLine(store.simulationIndex);
-      
-      // Update targetTime based on distance
-      let totalDist = 0;
-      for (let i = 0; i < store.simulationIndex; i++) {
-        totalDist += Math.hypot(Number(store.plannedPath[i+1].lng) - Number(store.plannedPath[i].lng), Number(store.plannedPath[i+1].lat) - Number(store.plannedPath[i].lat)) * 111.0;
-      }
-      const elapsedHours = totalDist / store.uavSpeed;
-      const currentHour = Math.floor(originalStartHour + elapsedHours);
-      const lastHour = parseInt(store.targetTime.split(':')[0]);
-      if (currentHour > lastHour) {
-        let newH = currentHour % 24;
-        store.targetTime = `${newH.toString().padStart(2, '0')}:00`;
-      }
+      updateTimeForIndex(store.simulationIndex);
       
       runSimulationStep();
     } else {
@@ -321,10 +366,12 @@ const updateChartMarkLine = (index: number) => {
   }
   
   chartInstance.value.setOption({
+    animationDurationUpdate: 0, // Force 0ms animation duration for immediate update
     series: [
       {
         name: '地面海拔高度', // Attach markLine to first series
         markLine: {
+          animation: false, // Disable markLine animation
           symbol: ['none', 'none'],
           label: { show: false },
           lineStyle: { color: '#00ff00', width: 2, type: 'dashed' },

@@ -35,8 +35,8 @@ export interface StoreState {
 export const store = reactive<StoreState>({
   selectingMode: null,
   selectingIndex: -1,
-  start: { lat: '29.650000', lng: '91.130000', alt: '3650' },
-  end: { lat: '29.660000', lng: '94.360000', alt: '3000' },
+  start: { lat: '29.650000', lng: '91.130000', alt: '600' },
+  end: { lat: '29.660000', lng: '94.360000', alt: '600' },
   waypoints: [],
   plannedPath: [],
   overlays: [],
@@ -49,9 +49,9 @@ export const store = reactive<StoreState>({
   simulationSpeed: 500,
   simulationIndex: 0,
   bases: [
-    { name: '拉萨', lat: '29.650000', lng: '91.130000', alt: '3650' },
-    { name: '日喀则', lat: '29.270000', lng: '88.880000', alt: '3800' },
-    { name: '林芝', lat: '29.660000', lng: '94.360000', alt: '3000' },
-    { name: '昌都', lat: '31.150000', lng: '97.180000', alt: '3200' }
+    { name: '拉萨', lat: '29.650000', lng: '91.130000', alt: '600' },
+    { name: '日喀则', lat: '29.270000', lng: '88.880000', alt: '600' },
+    { name: '林芝', lat: '29.660000', lng: '94.360000', alt: '600' },
+    { name: '昌都', lat: '31.150000', lng: '97.180000', alt: '600' }
   ]
 });
