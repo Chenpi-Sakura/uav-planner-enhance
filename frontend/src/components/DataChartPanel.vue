@@ -284,7 +284,7 @@ const updateChartWithData = (data: any[]) => {
 
 // --- Simulation Logic ---
 let simInterval: number | null = null;
-let originalStartHour = 8; // Track original start hour
+let originalStartTimeMinutes = 8 * 60; // Track original start time in minutes
 
 const toggleSimulation = () => {
   if (store.isSimulating) {
@@ -300,10 +300,14 @@ const startSimulation = () => {
   // If we are at the end, reset to start automatically
   if (store.simulationIndex >= store.plannedPath.length - 1) {
     store.simulationIndex = 0;
-  }
-  
-  if (store.simulationIndex === 0) {
-    originalStartHour = parseInt(store.targetTime.split(':')[0] || '8');
+    const hStr = Math.floor(originalStartTimeMinutes / 60).toString().padStart(2, '0');
+    const mStr = (originalStartTimeMinutes % 60).toString().padStart(2, '0');
+    store.targetTime = `${hStr}:${mStr}`;
+  } else if (store.simulationIndex === 0) {
+    const parts = store.targetTime.split(':');
+    const h = parseInt(parts[0] || '8');
+    const m = parseInt(parts[1] || '0');
+    originalStartTimeMinutes = h * 60 + m;
   }
   
   store.isSimulating = true;
@@ -318,8 +322,9 @@ const updateTimeForIndex = (index: number) => {
     totalDist += Math.hypot(dx, dy) * 111.0;
   }
   const elapsedHours = totalDist / store.uavSpeed;
-  const currentHour = Math.floor(originalStartHour + elapsedHours);
-  const m = Math.floor((elapsedHours % 1) * 60);
+  const totalMinutes = originalStartTimeMinutes + Math.round(elapsedHours * 60);
+  const currentHour = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
   const hStr = (currentHour % 24).toString().padStart(2, '0');
   const mStr = m.toString().padStart(2, '0');
   store.targetTime = `${hStr}:${mStr}`;
@@ -353,8 +358,9 @@ const stopSimulation = () => {
   store.simulationIndex = 0;
   updateChartMarkLine(-1);
   if (store.plannedPath.length > 0) {
-    let newH = originalStartHour % 24;
-    store.targetTime = `${newH.toString().padStart(2, '0')}:00`;
+    const hStr = Math.floor(originalStartTimeMinutes / 60).toString().padStart(2, '0');
+    const mStr = (originalStartTimeMinutes % 60).toString().padStart(2, '0');
+    store.targetTime = `${hStr}:${mStr}`;
   }
 };
 

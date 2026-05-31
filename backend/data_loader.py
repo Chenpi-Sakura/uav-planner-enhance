@@ -192,7 +192,7 @@ class DataLoader:
                     data = u_vals
                 
                 # Apply Gaussian filter to smooth the contour lines (avoid jagged polygons)
-                data = ndimage.gaussian_filter(data, sigma=1.2)
+                data = ndimage.gaussian_filter(data, sigma=1.0)
             except Exception as e:
                 print(f"Error subsetting real data: {e}")
                 lons = np.linspace(min_lon, max_lon, 200)
@@ -220,7 +220,7 @@ class DataLoader:
         
         levels = np.linspace(vmin, vmax, 50)
         cf = ax.contourf(Lons, Lats, data, levels=levels, cmap=cmap_name, alpha=0.55, extend='both')
-        ax.contour(Lons, Lats, data, levels=15, colors='black', linewidths=0.3, alpha=0.3)
+        ax.contour(Lons, Lats, data, levels=15, colors='black', linewidths=0.3, alpha=0.8)
         
         buf = io.BytesIO()
         plt.savefig(buf, format='png', transparent=True)

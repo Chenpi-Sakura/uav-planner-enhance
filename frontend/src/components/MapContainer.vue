@@ -205,9 +205,9 @@ const renderPlannedPath = () => {
     
     // Draw the main route line
     L.polyline(latlngs, {
-      color: '#3498db',
-      weight: 4,
-      opacity: 0.8,
+      color: '#FF3300', // Bright red-orange
+      weight: 6,
+      opacity: 1.0,
       dashArray: '10, 10'
     }).addTo(pathLayer);
     
