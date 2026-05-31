@@ -6,9 +6,20 @@ from data_loader import data_loader
 from config import settings
 from schemas import Point, PlanRequest
 
-def heuristic(a: Tuple[float, float], b: Tuple[float, float]) -> float:
-    # simple euclidean distance for heuristic
-    return math.hypot(b[0] - a[0], b[1] - a[1])
+def heuristic(a: Tuple[float, float], b: Tuple[float, float], start: Tuple[float, float] = None) -> float:
+    # Octile distance for 8-way grid heuristic
+    dx = abs(b[0] - a[0])
+    dy = abs(b[1] - a[1])
+    h = (max(dx, dy) + (math.sqrt(2) - 1) * min(dx, dy))
+    # Tie-breaker to prefer paths closer to the straight line from start to end
+    if start is not None:
+        dx1 = a[0] - b[0]
+        dy1 = a[1] - b[1]
+        dx2 = start[0] - b[0]
+        dy2 = start[1] - b[1]
+        cross = abs(dx1*dy2 - dx2*dy1)
+        h += cross * 0.01
+    return h
 
 def get_neighbors(node: Tuple[float, float], resolution: float) -> List[Tuple[float, float]]:
     lat, lon = node
@@ -69,7 +80,8 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
         for neighbor in get_neighbors(current, resolution):
             neighbor = (round(neighbor[0], 2), round(neighbor[1], 2))
             
-            dist_km = heuristic(current, neighbor) * 111.0
+            # Actual distance between current and neighbor without tie-breaker
+            dist_km = math.hypot(neighbor[0] - current[0], neighbor[1] - current[1]) * 111.0
             
             # Predict the absolute time when UAV reaches this neighbor
             elapsed_hours = (g_score[current] + dist_km) / speed_kmh
@@ -86,7 +98,6 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
                 edr = edr_grid[idx_time, idx_lat, idx_lon]
             
             # Check thresholds (Hard constraints and Terrain)
-            import math
             if math.isnan(tke) or math.isnan(edr):
                 continue # Terrain obstacle (NaN means underground)
                 
@@ -109,7 +120,7 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g_score
-                f_score[neighbor] = tentative_g_score + heuristic(neighbor, end_node) * 111.0
+                f_score[neighbor] = tentative_g_score + heuristic(neighbor, end_node, start=start_node) * 111.0
                 heapq.heappush(open_set, (f_score[neighbor], neighbor))
                 
     # If path not found or max iterations reached, return straight line as fallback
