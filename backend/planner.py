@@ -36,10 +36,19 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
     
     resolution = settings.GRID_RESOLUTION_DEG
 
-    max_iter = 5000
+    max_iter = 20000
     iterations = 0
     
     base_time = np.datetime64(start_time_str)
+    
+    # Pre-fetch vectorized weather grid for the bounding box
+    pad = 2.0 # degrees
+    min_lat = min(start_node[0], end_node[0]) - pad
+    max_lat = max(start_node[0], end_node[0]) + pad
+    min_lon = min(start_node[1], end_node[1]) - pad
+    max_lon = max(start_node[1], end_node[1]) + pad
+    
+    tke_grid, edr_grid, lats, lons, times_arr = data_loader.get_meteorology_grid(min_lat, max_lat, min_lon, max_lon, date=start_time_str)
 
     while open_set and iterations < max_iter:
         iterations += 1
@@ -66,14 +75,23 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
             elapsed_hours = (g_score[current] + dist_km) / speed_kmh
             current_time = base_time + np.timedelta64(int(elapsed_hours * 3600), 's')
             
-            # Get real-time meteorology for that specific future moment
-            meteo = data_loader.get_meteorology_at_point(neighbor[0], neighbor[1], date=str(current_time))
-            tke = meteo['tke']
-            edr = meteo['edr']
+            # Fast O(1) vectorized array lookup
+            tke, edr = float('nan'), float('nan')
+            if tke_grid is not None and lats is not None and lons is not None and times_arr is not None:
+                # Find nearest indices
+                idx_time = np.abs(times_arr - current_time).argmin()
+                idx_lat = np.abs(lats - neighbor[0]).argmin()
+                idx_lon = np.abs(lons - neighbor[1]).argmin()
+                tke = tke_grid[idx_time, idx_lat, idx_lon]
+                edr = edr_grid[idx_time, idx_lat, idx_lon]
             
-            # Check thresholds (Hard constraints)
+            # Check thresholds (Hard constraints and Terrain)
+            import math
+            if math.isnan(tke) or math.isnan(edr):
+                continue # Terrain obstacle (NaN means underground)
+                
             if tke > tke_thresh or edr > edr_thresh:
-                continue # Obstacle
+                continue # Severe turbulence obstacle
                 
             # Soft constraints/penalties: severely penalize moderate turbulence
             penalty = 0.0

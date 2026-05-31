@@ -40,7 +40,7 @@ export const store = reactive<StoreState>({
   waypoints: [],
   plannedPath: [],
   overlays: [],
-  targetDate: '2022-05-30',
+  targetDate: '2022-07-01',
   targetTime: '08:00',
   uavSpeed: 60,
   sidebarCollapsed: false,

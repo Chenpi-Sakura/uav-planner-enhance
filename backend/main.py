@@ -68,7 +68,7 @@ async def plan_route(request: PlanRequest):
 from fastapi.responses import Response
 
 @app.get("/api/weather/overlay")
-async def get_weather_overlay(min_lat: float, max_lat: float, min_lon: float, max_lon: float, layer: str = 'tke', date: str = '2022-05-30', start_time: str = '08:00'):
+async def get_weather_overlay(min_lat: float, max_lat: float, min_lon: float, max_lon: float, layer: str = 'tke', date: str = '2022-07-01', start_time: str = '08:00'):
     """
     Generate a transparent heatmap PNG for the given bounding box and time.
     """

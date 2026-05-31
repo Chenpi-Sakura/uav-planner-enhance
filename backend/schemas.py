@@ -7,7 +7,7 @@ class Point(BaseModel):
 
 class ProfileRequest(BaseModel):
     waypoints: List[Point]
-    date: str = '2022-05-30'
+    date: str = '2022-07-01'
     start_time: str = '08:00'
 
 class ProfileDataPoint(BaseModel):
@@ -28,7 +28,7 @@ class PlanRequest(BaseModel):
     start: Point
     end: Point
     waypoints: List[Point] = []
-    date: str = '2022-05-30'
+    date: str = '2022-07-01'
     start_time: str = '08:00'
     speed: float = 60.0  # UAV speed in km/h
     # Optional constraints or thresholds

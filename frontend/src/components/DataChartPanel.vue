@@ -221,7 +221,7 @@ const updateChartWithData = (data: any[]) => {
   const xAxisData = data.map(d => `${d.distance_from_start.toFixed(1)}km`);
   const tkeData = data.map(d => Number((d.tke * 10).toFixed(2)));
   const edrData = data.map(d => Number((d.edr * 100).toFixed(2)));
-  const tempData = data.map(d => Number((d.t2 > 100 ? d.t2 - 273.15 : d.t2).toFixed(1))); 
+  const tempData = data.map(d => Number((d.tc > 100 ? d.tc - 273.15 : d.tc).toFixed(1)));
   
   // Mock missing data
   const elevData = data.map((d, i) => 3650 + Math.sin(i * 0.5) * 500); 

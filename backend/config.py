@@ -13,9 +13,8 @@ class Settings(BaseModel):
 
     # thresholds for path planning (can be updated dynamically if needed, or via API)
     TKE_THRESHOLD_HIGH: float = 1.0 
-    EDR_THRESHOLD_HIGH: float = 0.3 
+    EDR_THRESHOLD_HIGH: float = 0.3
     
-    # Grid search parameters
-    GRID_RESOLUTION_DEG: float = 0.1 # Approximate resolution for A* grid
+    GRID_RESOLUTION_DEG: float = 0.045 # Approximate resolution for A* grid (~5km)
 
 settings = Settings()

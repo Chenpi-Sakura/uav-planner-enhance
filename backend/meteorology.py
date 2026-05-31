@@ -10,8 +10,9 @@ def calculate_tke(u: float, v: float, w: float) -> float:
     # Wind speed squared (3D)
     wind_speed_sq = u**2 + v**2 + w**2
     # Empirical constant for parameterization
-    # Assuming TKE is roughly 10% of mean flow kinetic energy in turbulent conditions
-    tke = 0.1 * 0.5 * wind_speed_sq
+    # Assuming TKE parameterization needs to fit strict aviation thresholds (e.g. > 1.0 is danger)
+    # We use a 0.01 coefficient so that a 10m/s wind gives a TKE of 0.5 (Moderate), and 15m/s gives 1.125 (Danger)
+    tke = 0.01 * 0.5 * wind_speed_sq
     return float(tke)
 
 def calculate_edr(tke: float) -> float:

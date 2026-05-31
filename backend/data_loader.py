@@ -34,7 +34,7 @@ class DataLoader:
         except FileNotFoundError as e:
             print(f"Warning: Data file not found. {e}")
 
-    def get_meteorology_at_point(self, lat: float, lon: float, date: str = '2022-05-30', time_slot: str = 'morning'):
+    def get_meteorology_at_point(self, lat: float, lon: float, date: str = '2022-07-01', time_slot: str = 'morning'):
         """
         Interpolate data to a specific lat/lon point.
         """
@@ -65,6 +65,46 @@ class DataLoader:
             "tke": tke,
             "edr": edr
         }
+
+    def get_meteorology_grid(self, min_lat: float, max_lat: float, min_lon: float, max_lon: float, date: str = '2022-07-01'):
+        """
+        Pre-fetch a 2D grid of meteorology data for fast A* lookup.
+        """
+        if not self._loaded:
+            self.load_data()
+            
+        if self.ds_u is None:
+            return None, None, None, None
+            
+        target_time = np.datetime64(date) if 'T' in date else np.datetime64(f"{date}T08:00:00")
+        end_time = target_time + np.timedelta64(24, 'h')
+        time_slice = slice(target_time, end_time)
+        
+        # Ensure lat slice bounds are in correct order for monotonic coordinates
+        lat_slice = slice(min_lat, max_lat)
+        lon_slice = slice(min_lon, max_lon)
+        
+        # We use .sel() for time, lat, and lon slicing
+        try:
+            # Slicing the sub-region and extracting raw numpy arrays
+            u_grid = self.ds_u.u.sel(time=time_slice).sel(lev=500).sel(lat=lat_slice, lon=lon_slice).values
+            v_grid = self.ds_v.v.sel(time=time_slice).sel(lev=500).sel(lat=lat_slice, lon=lon_slice).values
+            w_grid = self.ds_w.w.sel(time=time_slice).sel(lev=500).sel(lat=lat_slice, lon=lon_slice).values
+            
+            lats = self.ds_u.lat.sel(lat=lat_slice).values
+            lons = self.ds_u.lon.sel(lon=lon_slice).values
+            times = self.ds_u.time.sel(time=time_slice).values
+            
+            # Vectorized calculation for the entire grid instantly
+            wind_speed_sq = u_grid**2 + v_grid**2 + w_grid**2
+            tke_grid = 0.01 * 0.5 * wind_speed_sq
+            edr_grid = 0.5 * (tke_grid ** 1.5) / 100.0
+            
+            return tke_grid, edr_grid, lats, lons, times
+        except Exception as e:
+            print(f"Error fetching meteorology grid: {e}")
+            return None, None, None, None, None
+
 
     def get_overlay_image(self, min_lat: float, max_lat: float, min_lon: float, max_lon: float, layer_type: str, date: str = '2022-05-30', time_slot: str = 'morning') -> bytes:
         """
