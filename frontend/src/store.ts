@@ -6,6 +6,13 @@ export interface Point {
   alt: number | string;
 }
 
+export interface BaseStation {
+  name: string;
+  lat: string;
+  lng: string;
+  alt: string;
+}
+
 export interface StoreState {
   selectingMode: 'start' | 'waypoint' | 'end' | null;
   selectingIndex: number;
@@ -22,13 +29,14 @@ export interface StoreState {
   isSimulating: boolean;
   simulationSpeed: number;
   simulationIndex: number;
+  bases: BaseStation[];
 }
 
 export const store = reactive<StoreState>({
   selectingMode: null,
   selectingIndex: -1,
-  start: { lat: '', lng: '', alt: '' },
-  end: { lat: '', lng: '', alt: '' },
+  start: { lat: '29.650000', lng: '91.130000', alt: '3650' },
+  end: { lat: '29.660000', lng: '94.360000', alt: '3000' },
   waypoints: [],
   plannedPath: [],
   overlays: [],
@@ -39,5 +47,11 @@ export const store = reactive<StoreState>({
   chartCollapsed: true,
   isSimulating: false,
   simulationSpeed: 500,
-  simulationIndex: 0
+  simulationIndex: 0,
+  bases: [
+    { name: '拉萨', lat: '29.650000', lng: '91.130000', alt: '3650' },
+    { name: '日喀则', lat: '29.270000', lng: '88.880000', alt: '3800' },
+    { name: '林芝', lat: '29.660000', lng: '94.360000', alt: '3000' },
+    { name: '昌都', lat: '31.150000', lng: '97.180000', alt: '3200' }
+  ]
 });

@@ -18,7 +18,8 @@ const mapElement = ref<HTMLElement | null>(null);
 let map: L.Map | null = null;
 let markersLayer = L.layerGroup();
 let mockOverlaysLayer = L.layerGroup();
-let pathLayer = L.layerGroup(); // <--- layer for the planned route line
+let pathLayer = L.layerGroup(); // layer for the planned route line
+let basesLayer = L.layerGroup(); // layer for city bases
 
 // Map Layers
 const layers: Record<string, L.TileLayer> = {
@@ -51,9 +52,10 @@ onMounted(() => {
 
   currentLayer = layers[props.activeLayer];
   currentLayer.addTo(map);
+  basesLayer.addTo(map); // Add bases layer
   markersLayer.addTo(map);
   mockOverlaysLayer.addTo(map);
-  pathLayer.addTo(map); // <--- Add path layer
+  pathLayer.addTo(map);
 
   // Handle clicks for point selection
   map.on('click', (e: L.LeafletMouseEvent) => {
@@ -81,6 +83,9 @@ onMounted(() => {
     // Auto-disable selection mode after picking
     store.selectingMode = null;
   });
+
+  // Render fixed city bases
+  renderBases();
 
   // Re-fetch overlays when map is moved or zoomed
   map.on('moveend', () => {
@@ -144,6 +149,51 @@ const renderMarkers = () => {
       store.end.lng = pos.lng.toFixed(6);
     });
   }
+};
+
+const renderBases = () => {
+  if (!map) return;
+  basesLayer.clearLayers();
+  
+  const createBaseIcon = (name: string) => L.divIcon({
+    className: 'base-marker',
+    html: `<div class="base-icon">🏰</div><div class="base-label">${name}</div>`,
+    iconSize: [40, 40],
+    iconAnchor: [20, 20]
+  });
+
+  store.bases.forEach(base => {
+    const m = L.marker([Number(base.lat), Number(base.lng)], { 
+      icon: createBaseIcon(base.name),
+      interactive: true,
+      zIndexOffset: -100 // keep behind active draggable markers
+    }).addTo(basesLayer);
+
+    m.on('click', () => {
+      // If user is in selection mode, pick this base
+      if (store.selectingMode) {
+        if (store.selectingMode === 'start') {
+          store.start.lat = base.lat;
+          store.start.lng = base.lng;
+          store.start.alt = base.alt;
+        } else if (store.selectingMode === 'end') {
+          store.end.lat = base.lat;
+          store.end.lng = base.lng;
+          store.end.alt = base.alt;
+        } else if (store.selectingMode === 'waypoint') {
+          if (store.selectingIndex >= 0 && store.selectingIndex < store.waypoints.length) {
+            store.waypoints[store.selectingIndex].lat = base.lat;
+            store.waypoints[store.selectingIndex].lng = base.lng;
+            store.waypoints[store.selectingIndex].alt = base.alt;
+          }
+        }
+        store.selectingMode = null;
+      } else {
+        // Just pan to it
+        map!.flyTo([Number(base.lat), Number(base.lng)], 9);
+      }
+    });
+  });
 };
 
 const renderPlannedPath = () => {
@@ -329,4 +379,32 @@ onUnmounted(() => {
 :deep(.start-marker .marker-dot) { background-color: var(--success-color); }
 :deep(.end-marker .marker-dot) { background-color: var(--danger-color); }
 :deep(.waypoint-marker .marker-dot) { background-color: var(--accent-color); }
+
+:deep(.base-marker) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer !important;
+}
+:deep(.base-marker .base-icon) {
+  font-size: 18px;
+  background: rgba(255,255,255,0.8);
+  border-radius: 50%;
+  padding: 4px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+  transition: transform 0.2s;
+}
+:deep(.base-marker:hover .base-icon) {
+  transform: scale(1.2);
+  background: white;
+}
+:deep(.base-marker .base-label) {
+  margin-top: 4px;
+  font-size: 14px;
+  font-weight: 800;
+  color: white;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,0.8);
+  white-space: nowrap;
+}
 </style>

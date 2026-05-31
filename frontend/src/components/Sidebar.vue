@@ -34,6 +34,13 @@
         <section class="control-section">
           <h3 class="section-title"><Navigation :size="16" /> 路径规划相关</h3>
           
+          <!-- Quick Bases -->
+          <div class="quick-bases">
+            <span class="base-chip" v-for="b in store.bases" :key="b.name" @click="handleBaseClick(b)" title="点击取点后再点击此处快速填入">
+              <MapPin :size="12" /> {{ b.name }}
+            </span>
+          </div>
+
           <!-- Start -->
           <div class="waypoint-group">
             <div class="waypoint-header space-between">
@@ -112,8 +119,8 @@
 
 <script setup lang="ts">
 import { ref, reactive } from 'vue';
-import { ChevronLeft, ChevronRight, Clock, Navigation, Layers, Send, Plus, X, Crosshair, Loader } from 'lucide-vue-next';
-import { store } from '../store';
+import { ChevronLeft, ChevronRight, Clock, Navigation, Layers, Send, Plus, X, Crosshair, Loader, MapPin } from 'lucide-vue-next';
+import { store, BaseStation } from '../store';
 
 const isPlanning = ref(false);
 
@@ -143,6 +150,29 @@ const selectPointOnMap = (mode: 'start' | 'end' | 'waypoint', idx: number = -1) 
   } else {
     store.selectingMode = mode;
     store.selectingIndex = idx;
+  }
+};
+
+const handleBaseClick = (base: BaseStation) => {
+  if (store.selectingMode) {
+    if (store.selectingMode === 'start') {
+      store.start.lat = base.lat;
+      store.start.lng = base.lng;
+      store.start.alt = base.alt;
+    } else if (store.selectingMode === 'end') {
+      store.end.lat = base.lat;
+      store.end.lng = base.lng;
+      store.end.alt = base.alt;
+    } else if (store.selectingMode === 'waypoint') {
+      if (store.selectingIndex >= 0) {
+        store.waypoints[store.selectingIndex].lat = base.lat;
+        store.waypoints[store.selectingIndex].lng = base.lng;
+        store.waypoints[store.selectingIndex].alt = base.alt;
+      }
+    }
+    store.selectingMode = null;
+  } else {
+    alert('请先点击下方的“取点”按钮激活选择模式，再点击城市名称快速填入！');
   }
 };
 
@@ -291,6 +321,30 @@ const handlePlan = async () => {
   font-size: 13px;
   margin-bottom: 6px;
   color: #cbd5e1;
+}
+
+.quick-bases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.base-chip {
+  background: rgba(52, 152, 219, 0.15);
+  border: 1px solid rgba(52, 152, 219, 0.3);
+  color: #3498db;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.base-chip:hover {
+  background: #3498db;
+  color: white;
 }
 
 .full-width {
