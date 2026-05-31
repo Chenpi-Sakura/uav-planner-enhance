@@ -42,6 +42,8 @@ async def get_weather_profile(req: ProfileRequest):
             v=meteo['v'],
             w=meteo['w'],
             tc=meteo['tc'],
+            rh=meteo['rh'],
+            qvapor=meteo['qvapor'],
             tke=meteo['tke'],
             edr=meteo['edr']
         )

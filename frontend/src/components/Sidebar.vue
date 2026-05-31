@@ -127,10 +127,10 @@ const isPlanning = ref(false);
 const overlayOptions = [
   { id: 'tke', label: 'TKE (湍动能)' },
   { id: 'edr', label: 'EDR (耗散率)' },
-  { id: 'flow', label: '高端流区' },
+  { id: 'flow', label: '综合风速' },
   { id: 'temp', label: '温度' },
-  { id: 'humidity', label: '湿度' },
-  { id: 'rain', label: '降雨量' },
+  { id: 'humidity', label: '相对湿度' },
+  { id: 'qvapor', label: '水汽混合比' },
 ];
 
 const addWaypoint = () => {

@@ -16,6 +16,8 @@ class DataLoader:
         self.ds_v = None
         self.ds_w = None
         self.ds_tc = None
+        self.ds_rh = None
+        self.ds_q = None
         self._loaded = False
 
     def load_data(self):
@@ -23,12 +25,15 @@ class DataLoader:
         v_path = os.path.join(settings.DATA_DIR, settings.V_FILE)
         w_path = os.path.join(settings.DATA_DIR, settings.W_FILE)
         tc_path = os.path.join(settings.DATA_DIR, settings.TC_FILE)
+        rh_path = os.path.join(settings.DATA_DIR, settings.RH_FILE)
 
         try:
             self.ds_u = xr.open_dataset(u_path)
             self.ds_v = xr.open_dataset(v_path)
             self.ds_w = xr.open_dataset(w_path)
             self.ds_tc = xr.open_dataset(tc_path)
+            self.ds_rh = xr.open_dataset(rh_path)
+            self.ds_q = xr.open_dataset(os.path.join(settings.DATA_DIR, settings.Q_FILE))
             self._loaded = True
             print("Data loaded successfully.")
         except FileNotFoundError as e:
@@ -51,8 +56,10 @@ class DataLoader:
                 v = float(self.ds_v.sel(lat=lat, lon=lon, method='nearest').v.sel(time=target_time, method='nearest').sel(lev=500).values)
                 w = float(self.ds_w.sel(lat=lat, lon=lon, method='nearest').w.sel(time=target_time, method='nearest').sel(lev=500).values)
                 tc = float(self.ds_tc.sel(lat=lat, lon=lon, method='nearest').tc.sel(time=target_time, method='nearest').sel(lev=500).values)
+                rh = float(self.ds_rh.sel(lat=lat, lon=lon, method='nearest').rh.sel(time=target_time, method='nearest').sel(lev=500).values)
+                qvapor = float(self.ds_q.sel(lat=lat, lon=lon, method='nearest').qvapor.sel(time=target_time, method='nearest').sel(lev=500).values)
             except Exception as e:
-                u, v, w, tc = 5.0, 5.0, 0.0, 280.0
+                u, v, w, tc, rh, qvapor = 5.0, 5.0, 0.0, 280.0, 50.0, 0.005
 
         tke = calculate_tke(u, v, w)
         edr = calculate_edr(tke)
@@ -62,6 +69,8 @@ class DataLoader:
             "v": v,
             "w": w,
             "tc": tc,
+            "rh": rh,
+            "qvapor": qvapor,
             "tke": tke,
             "edr": edr
         }
@@ -150,17 +159,35 @@ class DataLoader:
                     w_sub_raw = self.ds_w.sel(lat=slice(min_lat - pad, max_lat + pad), lon=slice(min_lon - pad, max_lon + pad))
                     w_subset = w_sub_raw.isel(lat=slice(None, None, lat_step), lon=slice(None, None, lon_step))
                     w_vals = w_subset.w.sel(time=target_time, method='nearest').sel(lev=500).values.squeeze()
-                    data = 0.1 * 0.5 * (u_vals**2 + v_vals**2 + w_vals**2)
+                    data = 0.01 * 0.5 * (u_vals**2 + v_vals**2 + w_vals**2)
                 elif layer_type == 'edr':
                     w_sub_raw = self.ds_w.sel(lat=slice(min_lat - pad, max_lat + pad), lon=slice(min_lon - pad, max_lon + pad))
                     w_subset = w_sub_raw.isel(lat=slice(None, None, lat_step), lon=slice(None, None, lon_step))
                     w_vals = w_subset.w.sel(time=target_time, method='nearest').sel(lev=500).values.squeeze()
-                    tke = 0.1 * 0.5 * (u_vals**2 + v_vals**2 + w_vals**2)
+                    tke = 0.01 * 0.5 * (u_vals**2 + v_vals**2 + w_vals**2)
                     data = 0.5 * (tke ** 1.5) / 100.0
                 elif layer_type == 'temp':
                     tc_sub_raw = self.ds_tc.sel(lat=slice(min_lat - pad, max_lat + pad), lon=slice(min_lon - pad, max_lon + pad))
                     tc_subset = tc_sub_raw.isel(lat=slice(None, None, lat_step), lon=slice(None, None, lon_step))
-                    data = tc_subset.tc.sel(time=target_time, method='nearest').sel(lev=500).values.squeeze() - 273.15
+                    data = tc_subset.tc.sel(time=target_time, method='nearest').sel(lev=500).values.squeeze()
+                elif layer_type == 'humidity':
+                    rh_sub_raw = self.ds_rh.sel(lat=slice(min_lat - pad, max_lat + pad), lon=slice(min_lon - pad, max_lon + pad))
+                    rh_subset = rh_sub_raw.isel(lat=slice(None, None, lat_step), lon=slice(None, None, lon_step))
+                    data = rh_subset.rh.sel(time=target_time, method='nearest').sel(lev=500).values.squeeze()
+                elif layer_type == 'qvapor':
+                    q_sub_raw = self.ds_q.sel(lat=slice(min_lat - pad, max_lat + pad), lon=slice(min_lon - pad, max_lon + pad))
+                    q_subset = q_sub_raw.isel(lat=slice(None, None, lat_step), lon=slice(None, None, lon_step))
+                    data = q_subset.qvapor.sel(time=target_time, method='nearest').sel(lev=500).values.squeeze() * 1000.0 # Convert kg/kg to g/kg
+                elif layer_type == 'flow':
+                    v_sub_raw = self.ds_v.sel(lat=slice(min_lat - pad, max_lat + pad), lon=slice(min_lon - pad, max_lon + pad))
+                    v_subset = v_sub_raw.isel(lat=slice(None, None, lat_step), lon=slice(None, None, lon_step))
+                    v_vals = v_subset.v.sel(time=target_time, method='nearest').sel(lev=500).values.squeeze()
+                    
+                    w_sub_raw = self.ds_w.sel(lat=slice(min_lat - pad, max_lat + pad), lon=slice(min_lon - pad, max_lon + pad))
+                    w_subset = w_sub_raw.isel(lat=slice(None, None, lat_step), lon=slice(None, None, lon_step))
+                    w_vals = w_subset.w.sel(time=target_time, method='nearest').sel(lev=500).values.squeeze()
+                    
+                    data = np.sqrt(u_vals**2 + v_vals**2 + w_vals**2)
                 else:
                     data = u_vals
                 
@@ -174,11 +201,25 @@ class DataLoader:
                 data = np.zeros_like(Lons)
                 
         cmap_name = 'jet'
-        if layer_type == 'tke': cmap_name = 'YlOrRd'
-        elif layer_type == 'edr': cmap_name = 'magma'
-        elif layer_type == 'temp': cmap_name = 'coolwarm'
+        vmin, vmax = 0.0, 30.0
+        if layer_type == 'tke': 
+            cmap_name = 'YlOrRd'
+            vmin, vmax = 0.0, 1.5
+        elif layer_type == 'edr': 
+            cmap_name = 'magma'
+            vmin, vmax = 0.0, 0.015
+        elif layer_type == 'temp': 
+            cmap_name = 'coolwarm'
+            vmin, vmax = -15.0, 10.0
+        elif layer_type == 'humidity':
+            cmap_name = 'GnBu'
+            vmin, vmax = 0.0, 100.0
+        elif layer_type == 'qvapor':
+            cmap_name = 'PuBu'
+            vmin, vmax = 0.0, 10.0
         
-        cf = ax.contourf(Lons, Lats, data, levels=50, cmap=cmap_name, alpha=0.55)
+        levels = np.linspace(vmin, vmax, 50)
+        cf = ax.contourf(Lons, Lats, data, levels=levels, cmap=cmap_name, alpha=0.55, extend='both')
         ax.contour(Lons, Lats, data, levels=15, colors='black', linewidths=0.3, alpha=0.3)
         
         buf = io.BytesIO()

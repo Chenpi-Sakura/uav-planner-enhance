@@ -58,10 +58,10 @@ const legends = ref([
   { name: '地面海拔高度', color: '#3498db' },
   { name: '无人机相对高度', color: '#9b59b6' },
   { name: 'TKE (x10)', color: '#1abc9c' },
-  { name: 'EDR (x100)', color: '#2ecc71' },
+  { name: 'EDR (x1000)', color: '#2ecc71' },
   { name: '温度 (°C)', color: '#f39c12' },
-  { name: '湿度 (%)', color: '#8e44ad' },
-  { name: '降雨量 (x10)', color: '#e74c3c' }
+  { name: '相对湿度 (%)', color: '#8e44ad' },
+  { name: '水汽混合比 (g/kg)', color: '#e74c3c' }
 ]);
 
 const initChart = () => {
@@ -146,7 +146,7 @@ const initChart = () => {
         data: [2, 4, 8, 12, 9, 5, 3, 2]
       },
       {
-        name: 'EDR (x100)',
+        name: 'EDR (x1000)',
         type: 'line',
         smooth: true,
         symbol: 'none',
@@ -164,7 +164,7 @@ const initChart = () => {
         data: [22, 21, 18.5, 17, 17.5, 16, 18, 19]
       },
       {
-        name: '湿度 (%)',
+        name: '相对湿度 (%)',
         type: 'line',
         smooth: true,
         symbol: 'none',
@@ -173,13 +173,13 @@ const initChart = () => {
         data: [40, 45, 55, 60, 58, 65, 50, 45]
       },
       {
-        name: '降雨量 (x10)',
+        name: '水汽混合比 (g/kg)',
         type: 'line',
         smooth: true,
         symbol: 'none',
         yAxisIndex: 1,
         itemStyle: { color: '#e74c3c' },
-        data: [0, 0, 0, 50, 20, 0, 0, 0]
+        data: [5, 6, 5.5, 4, 3, 5, 8, 9]
       }
     ]
   };
@@ -220,14 +220,16 @@ const updateChartWithData = (data: any[]) => {
   
   const xAxisData = data.map(d => `${d.distance_from_start.toFixed(1)}km`);
   const tkeData = data.map(d => Number((d.tke * 10).toFixed(2)));
-  const edrData = data.map(d => Number((d.edr * 100).toFixed(2)));
+  const edrData = data.map(d => Number((d.edr * 1000).toFixed(2)));
   const tempData = data.map(d => Number((d.tc > 100 ? d.tc - 273.15 : d.tc).toFixed(1)));
   
-  // Mock missing data
+  // Mock elev/alt data since DEM is not available
   const elevData = data.map((d, i) => 3650 + Math.sin(i * 0.5) * 500); 
   const relAltData = data.map(() => 500);
-  const humData = data.map((d, i) => 40 + Math.cos(i * 0.5) * 20);
-  const rainData = data.map((d, i) => i % 5 === 0 ? Math.random() * 50 : 0);
+  
+  // Real humidity and qvapor data
+  const humData = data.map(d => Number((d.rh).toFixed(1)));
+  const qvaporData = data.map(d => Number((d.qvapor * 1000).toFixed(2)));
   
   chartInstance.value.setOption({
     xAxis: { data: xAxisData },
@@ -235,10 +237,10 @@ const updateChartWithData = (data: any[]) => {
       { name: '地面海拔高度', data: elevData }, 
       { name: '无人机相对高度', data: relAltData }, 
       { name: 'TKE (x10)', data: tkeData },
-      { name: 'EDR (x100)', data: edrData },
+      { name: 'EDR (x1000)', data: edrData },
       { name: '温度 (°C)', data: tempData },
-      { name: '湿度 (%)', data: humData }, 
-      { name: '降雨量 (x10)', data: rainData } 
+      { name: '相对湿度 (%)', data: humData }, 
+      { name: '水汽混合比 (g/kg)', data: qvaporData } 
     ]
   });
 };

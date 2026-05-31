@@ -7,10 +7,11 @@ from config import settings
 from schemas import Point, PlanRequest
 
 def heuristic(a: Tuple[float, float], b: Tuple[float, float], start: Tuple[float, float] = None) -> float:
-    # Octile distance for 8-way grid heuristic
+    # Octile distance for 8-way grid heuristic (in degree space to maintain perfect A* grid properties)
     dx = abs(b[0] - a[0])
     dy = abs(b[1] - a[1])
     h = (max(dx, dy) + (math.sqrt(2) - 1) * min(dx, dy))
+    
     # Tie-breaker to prefer paths closer to the straight line from start to end
     if start is not None:
         dx1 = a[0] - b[0]
@@ -34,7 +35,7 @@ def get_neighbors(node: Tuple[float, float], resolution: float) -> List[Tuple[fl
         (lat - resolution, lon + resolution),
     ]
 
-def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_str, initial_g_score, speed_kmh):
+def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_str, initial_g_score, initial_dist, speed_kmh):
     """
     A* path planning algorithm on a 2D grid, with dynamic time progression.
     """
@@ -43,6 +44,7 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
     came_from = {}
     
     g_score = {start_node: initial_g_score}
+    real_dist = {start_node: initial_dist}
     f_score = {start_node: heuristic(start_node, end_node) * 111.0}
     
     resolution = settings.GRID_RESOLUTION_DEG
@@ -69,22 +71,39 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
         if heuristic(current, end_node) < resolution * 1.5:
             # Reconstruct path
             path = [Point(lat=end_node[0], lon=end_node[1])]
-            final_g = g_score[current] + heuristic(current, end_node) * 111.0
+            
+            # Use grid distance for A* cost, physical distance for time
+            hop_grid_dist = heuristic(current, end_node) * 111.0
+            
+            lat_mid = math.radians((current[0] + end_node[0]) / 2.0)
+            dx_phys = (end_node[1] - current[1]) * math.cos(lat_mid)
+            dy_phys = end_node[0] - current[0]
+            hop_phys_dist = math.hypot(dx_phys, dy_phys) * 111.0
+            
+            final_g = g_score[current] + hop_grid_dist
+            final_dist = real_dist[current] + hop_phys_dist
+            
             while current in came_from:
                 path.append(Point(lat=current[0], lon=current[1]))
                 current = came_from[current]
             path.append(Point(lat=start_node[0], lon=start_node[1]))
             path.reverse()
-            return path, final_g
+            return path, final_g, final_dist
             
         for neighbor in get_neighbors(current, resolution):
             neighbor = (round(neighbor[0], 2), round(neighbor[1], 2))
             
-            # Actual distance between current and neighbor without tie-breaker
-            dist_km = math.hypot(neighbor[0] - current[0], neighbor[1] - current[1]) * 111.0
+            # Grid distance for A* routing (maintains square grid properties for Octile heuristic)
+            grid_dist = math.hypot(neighbor[0] - current[0], neighbor[1] - current[1]) * 111.0
             
-            # Predict the absolute time when UAV reaches this neighbor
-            elapsed_hours = (g_score[current] + dist_km) / speed_kmh
+            # Physical distance for accurate time prediction and weather fetching
+            lat_mid = math.radians((current[0] + neighbor[0]) / 2.0)
+            dx_phys = (neighbor[1] - current[1]) * math.cos(lat_mid)
+            dy_phys = neighbor[0] - current[0]
+            phys_dist = math.hypot(dx_phys, dy_phys) * 111.0
+            
+            # Predict the absolute time using the real physical distance traveled
+            elapsed_hours = (real_dist[current] + phys_dist) / speed_kmh
             current_time = base_time + np.timedelta64(int(elapsed_hours * 3600), 's')
             
             # Fast O(1) vectorized array lookup
@@ -115,17 +134,23 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
             if edr >= 0.1:
                 penalty += (edr - 0.1) * 200.0
                 
-            tentative_g_score = g_score[current] + dist_km + penalty
+            tentative_g_score = g_score[current] + grid_dist + penalty
             
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g_score
+                real_dist[neighbor] = real_dist[current] + phys_dist
                 f_score[neighbor] = tentative_g_score + heuristic(neighbor, end_node, start=start_node) * 111.0
                 heapq.heappush(open_set, (f_score[neighbor], neighbor))
                 
     # If path not found or max iterations reached, return straight line as fallback
-    fallback_g = initial_g_score + heuristic(start_node, end_node) * 111.0
-    return [Point(lat=start_node[0], lon=start_node[1]), Point(lat=end_node[0], lon=end_node[1])], fallback_g
+    fallback_grid_dist = heuristic(start_node, end_node) * 111.0
+    lat_mid = math.radians((start_node[0] + end_node[0]) / 2.0)
+    dx_phys = (end_node[1] - start_node[1]) * math.cos(lat_mid)
+    dy_phys = end_node[0] - start_node[0]
+    fallback_phys_dist = math.hypot(dx_phys, dy_phys) * 111.0
+    
+    return [Point(lat=start_node[0], lon=start_node[1]), Point(lat=end_node[0], lon=end_node[1])], initial_g_score + fallback_grid_dist, initial_dist + fallback_phys_dist
 
 
 def plan_path(req: PlanRequest) -> tuple[List[Point], float, float, float]:
@@ -137,6 +162,7 @@ def plan_path(req: PlanRequest) -> tuple[List[Point], float, float, float]:
     
     start_time_str = f"{req.date}T{req.start_time}:00" if len(req.start_time) <= 5 else req.start_time
     current_g_score = 0.0
+    current_dist = 0.0
     
     for i in range(len(targets) - 1):
         s = targets[i]
@@ -148,10 +174,10 @@ def plan_path(req: PlanRequest) -> tuple[List[Point], float, float, float]:
         t_thresh = req.tke_threshold if req.tke_threshold is not None else settings.TKE_THRESHOLD_HIGH
         e_thresh = req.edr_threshold if req.edr_threshold is not None else settings.EDR_THRESHOLD_HIGH
 
-        segment_path, current_g_score = plan_path_segment(
+        segment_path, current_g_score, current_dist = plan_path_segment(
             s_node, e_node, 
             t_thresh, e_thresh,
-            start_time_str, current_g_score, req.speed
+            start_time_str, current_g_score, current_dist, req.speed
         )
         
         if i > 0 and len(segment_path) > 0:
@@ -168,7 +194,10 @@ def plan_path(req: PlanRequest) -> tuple[List[Point], float, float, float]:
     
     for i in range(len(full_path)):
         if i > 0:
-            dist = math.hypot(full_path[i].lon - full_path[i-1].lon, full_path[i].lat - full_path[i-1].lat) * 111.0
+            lat_mid = math.radians((full_path[i].lat + full_path[i-1].lat) / 2.0)
+            dx = (full_path[i].lon - full_path[i-1].lon) * math.cos(lat_mid)
+            dy = full_path[i].lat - full_path[i-1].lat
+            dist = math.hypot(dx, dy) * 111.0
             total_dist += dist
             
         elapsed_hours = total_dist / req.speed

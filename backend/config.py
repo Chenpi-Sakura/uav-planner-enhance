@@ -10,6 +10,8 @@ class Settings(BaseModel):
     V_FILE: str = "tibet_2022_upper_v.nc"
     W_FILE: str = "tibet_2022_upper_w.nc"
     TC_FILE: str = "tibet_2022_upper_tc.nc"
+    RH_FILE: str = "tibet_2022_upper_rh.nc"
+    Q_FILE: str = "tibet_2022_upper_qvapor.nc"
 
     # thresholds for path planning (can be updated dynamically if needed, or via API)
     TKE_THRESHOLD_HIGH: float = 1.0 

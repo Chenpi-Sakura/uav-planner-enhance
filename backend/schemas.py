@@ -18,6 +18,8 @@ class ProfileDataPoint(BaseModel):
     v: float
     w: float
     tc: float
+    rh: float
+    qvapor: float
     tke: float
     edr: float
 

@@ -2,27 +2,25 @@
   <div class="overlay-legend glass-panel" v-if="activeOverlays.length > 0">
     <h3 class="legend-title">叠加层图例</h3>
     
-    <!-- Heatmap legend (Mock) -->
-    <div class="legend-section">
-      <div class="section-label">热力图区 (强弱)</div>
-      <div class="color-scale heatmap-scale"></div>
-      <div class="scale-labels">
-        <span>低</span>
-        <span>中</span>
-        <span>高</span>
-      </div>
+    <!-- Heatmap legends dynamically based on active overlays -->
+    <div class="legend-section" v-for="layerId in activeOverlays" :key="layerId">
+      <template v-if="legendConfigs[layerId]">
+        <div class="section-label">{{ legendConfigs[layerId].label }}</div>
+        <div class="color-scale" :style="{ background: legendConfigs[layerId].gradient }"></div>
+        <div class="scale-labels">
+          <span>{{ legendConfigs[layerId].min }}</span>
+          <span>{{ legendConfigs[layerId].mid }}</span>
+          <span>{{ legendConfigs[layerId].max }}</span>
+        </div>
+      </template>
     </div>
     
-    <!-- Isoline legend (Mock) -->
-    <div class="legend-section">
-      <div class="section-label">等值线区 (轮廓)</div>
+    <!-- Isoline legend (Black contour lines rendered by backend) -->
+    <div class="legend-section mt-2">
+      <div class="section-label">等值线 (轮廓)</div>
       <div class="isoline-item">
-        <div class="line solid-line"></div>
-        <span>高密度/强值</span>
-      </div>
-      <div class="isoline-item">
-        <div class="line dashed-line"></div>
-        <span>低密度/弱值</span>
+        <div class="line contour-line"></div>
+        <span>等高数值密度</span>
       </div>
     </div>
   </div>
@@ -33,6 +31,51 @@ import { computed } from 'vue';
 import { store } from '../store';
 
 const activeOverlays = computed(() => store.overlays);
+
+const legendConfigs: Record<string, any> = {
+  'tke': {
+    label: 'TKE 湍动能 (强度)',
+    gradient: 'linear-gradient(to right, #ffffb2, #fd8d3c, #bd0026)', // YlOrRd
+    min: '0.0',
+    mid: '0.7',
+    max: '1.5+',
+  },
+  'edr': {
+    label: 'EDR 涡动耗散率',
+    gradient: 'linear-gradient(to right, #000004, #721f81, #f1605d, #fcfdbf)', // Magma
+    min: '0.0',
+    mid: '0.007',
+    max: '0.015+',
+  },
+  'temp': {
+    label: '温度 (°C) @ 500hPa',
+    gradient: 'linear-gradient(to right, #313695, #e0f3f8, #a50026)', // coolwarm
+    min: '-15',
+    mid: '-2',
+    max: '10+',
+  },
+  'flow': {
+    label: '风速 (m/s)',
+    gradient: 'linear-gradient(to right, #00007F, #007FFF, #7FFF7F, #FF7F00, #7F0000)', // jet
+    min: '0',
+    mid: '15',
+    max: '30+',
+  },
+  'humidity': {
+    label: '相对湿度 (%)',
+    gradient: 'linear-gradient(to right, #f7fcf0, #7bccc4, #084081)', // GnBu approx
+    min: '0%',
+    mid: '50%',
+    max: '100%',
+  },
+  'qvapor': {
+    label: '水汽混合比 (g/kg)',
+    gradient: 'linear-gradient(to right, #f1eef6, #74a9cf, #045a8d)', // PuBu
+    min: '0',
+    mid: '5',
+    max: '10+',
+  }
+};
 </script>
 
 <style scoped>
@@ -42,10 +85,10 @@ const activeOverlays = computed(() => store.overlays);
   left: 20px;
   z-index: 800; /* Below sidebar (1000) and chart (900) */
   padding: 16px;
-  width: 220px;
+  width: 240px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .legend-title {
@@ -59,19 +102,25 @@ const activeOverlays = computed(() => store.overlays);
 .legend-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
+}
+
+.mt-2 {
+  margin-top: 8px;
+  border-top: 1px dashed rgba(255,255,255,0.1);
+  padding-top: 8px;
 }
 
 .section-label {
   font-size: 12px;
   color: var(--text-primary);
+  font-weight: 500;
 }
 
-.heatmap-scale {
-  height: 12px;
-  border-radius: 6px;
-  background: linear-gradient(to right, rgba(0,255,0,0.6), rgba(255,255,0,0.6), rgba(255,0,0,0.6));
-  border: 1px solid rgba(255,255,255,0.2);
+.color-scale {
+  height: 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.1);
 }
 
 .scale-labels {
@@ -94,11 +143,7 @@ const activeOverlays = computed(() => store.overlays);
   height: 0;
 }
 
-.solid-line {
-  border-top: 2px solid #3498db;
-}
-
-.dashed-line {
-  border-top: 2px dashed #9b59b6;
+.contour-line {
+  border-top: 1px solid rgba(255, 255, 255, 0.4);
 }
 </style>
