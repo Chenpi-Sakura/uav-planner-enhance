@@ -75,8 +75,17 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
             if tke > tke_thresh or edr > edr_thresh:
                 continue # Obstacle
                 
-            # Soft constraints/penalties: encourage paths with lower TKE/EDR
-            penalty = (tke * 2.0) + (edr * 10.0) 
+            # Soft constraints/penalties: severely penalize moderate turbulence
+            penalty = 0.0
+            
+            # TKE >= 0.4 means moderate turbulence
+            if tke >= 0.4:
+                penalty += (tke - 0.4) * 50.0
+                
+            # EDR >= 0.1 means moderate turbulence
+            if edr >= 0.1:
+                penalty += (edr - 0.1) * 200.0
+                
             tentative_g_score = g_score[current] + dist_km + penalty
             
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
@@ -107,9 +116,12 @@ def plan_path(req: PlanRequest) -> tuple[List[Point], float, float, float]:
         s_node = (round(s.lat, 2), round(s.lon, 2))
         e_node = (round(e.lat, 2), round(e.lon, 2))
         
+        t_thresh = req.tke_threshold if req.tke_threshold is not None else settings.TKE_THRESHOLD_HIGH
+        e_thresh = req.edr_threshold if req.edr_threshold is not None else settings.EDR_THRESHOLD_HIGH
+
         segment_path, current_g_score = plan_path_segment(
             s_node, e_node, 
-            req.tke_threshold, req.edr_threshold,
+            t_thresh, e_thresh,
             start_time_str, current_g_score, req.speed
         )
         

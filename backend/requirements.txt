@@ -9,3 +9,5 @@ pydantic
 aiofiles
 matplotlib
 scipy
+dask
+h5netcdf

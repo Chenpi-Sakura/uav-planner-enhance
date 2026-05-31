@@ -38,9 +38,10 @@ async def get_weather_profile(req: ProfileRequest):
             lat=wp.lat,
             lon=wp.lon,
             distance_from_start=round(total_dist, 2),
-            u10=meteo['u10'],
-            v10=meteo['v10'],
-            t2=meteo['t2'],
+            u=meteo['u'],
+            v=meteo['v'],
+            w=meteo['w'],
+            tc=meteo['tc'],
             tke=meteo['tke'],
             edr=meteo['edr']
         )
@@ -54,9 +55,6 @@ async def plan_route(request: PlanRequest):
     Plan a 4D path from start to end via waypoints using A*.
     Returns the path points, total distance, max TKE, and max EDR along the route.
     """
-    # Defaults
-    if request.tke_threshold is None: request.tke_threshold = 15.0
-    if request.edr_threshold is None: request.edr_threshold = 0.5
 
     path, total_dist, max_tke, max_edr = plan_path(request)
 

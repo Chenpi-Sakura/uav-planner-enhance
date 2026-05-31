@@ -1,16 +1,16 @@
 import numpy as np
 
-def calculate_tke(u10: float, v10: float) -> float:
+def calculate_tke(u: float, v: float, w: float) -> float:
     """
-    Estimate Turbulent Kinetic Energy (TKE) based on 10m wind components.
-    This is a simplified 2D parameterization placeholder.
+    Estimate Turbulent Kinetic Energy (TKE) based on 3D wind components.
+    This is a simplified parameterization placeholder.
     In a real scenario, this would depend on wind shear, surface roughness, and stability.
-    Here we use a simple proportion of the wind kinetic energy.
+    Here we use a simple proportion of the 3D wind kinetic energy.
     """
-    # Wind speed squared
-    wind_speed_sq = u10**2 + v10**2
+    # Wind speed squared (3D)
+    wind_speed_sq = u**2 + v**2 + w**2
     # Empirical constant for parameterization
-    # Assuming TKE is roughly 10% of mean flow kinetic energy at surface level in turbulent conditions
+    # Assuming TKE is roughly 10% of mean flow kinetic energy in turbulent conditions
     tke = 0.1 * 0.5 * wind_speed_sq
     return float(tke)
 

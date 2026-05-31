@@ -12,20 +12,24 @@ from meteorology import calculate_tke, calculate_edr
 
 class DataLoader:
     def __init__(self):
-        self.ds_u10 = None
-        self.ds_v10 = None
-        self.ds_t2 = None
-        self.load_data()
+        self.ds_u = None
+        self.ds_v = None
+        self.ds_w = None
+        self.ds_tc = None
+        self._loaded = False
 
     def load_data(self):
-        u10_path = os.path.join(settings.DATA_DIR, settings.U10_FILE)
-        v10_path = os.path.join(settings.DATA_DIR, settings.V10_FILE)
-        t2_path = os.path.join(settings.DATA_DIR, settings.T2_FILE)
+        u_path = os.path.join(settings.DATA_DIR, settings.U_FILE)
+        v_path = os.path.join(settings.DATA_DIR, settings.V_FILE)
+        w_path = os.path.join(settings.DATA_DIR, settings.W_FILE)
+        tc_path = os.path.join(settings.DATA_DIR, settings.TC_FILE)
 
         try:
-            self.ds_u10 = xr.open_dataset(u10_path)
-            self.ds_v10 = xr.open_dataset(v10_path)
-            self.ds_t2 = xr.open_dataset(t2_path)
+            self.ds_u = xr.open_dataset(u_path)
+            self.ds_v = xr.open_dataset(v_path)
+            self.ds_w = xr.open_dataset(w_path)
+            self.ds_tc = xr.open_dataset(tc_path)
+            self._loaded = True
             print("Data loaded successfully.")
         except FileNotFoundError as e:
             print(f"Warning: Data file not found. {e}")
@@ -34,25 +38,30 @@ class DataLoader:
         """
         Interpolate data to a specific lat/lon point.
         """
-        if self.ds_u10 is None:
-            u10, v10, t2 = 5.0, 5.0, 280.0
+        if not self._loaded:
+            self.load_data()
+            
+        if self.ds_u is None:
+            u, v, w, tc = 5.0, 5.0, 0.0, 280.0
         else:
             try:
                 # Time string format YYYY-MM-DDTHH:MM:SS
                 target_time = np.datetime64(date) if 'T' in date else np.datetime64(f"{date}T08:00:00")
-                u10 = float(self.ds_u10.sel(lat=lat, lon=lon, method='nearest').u10.sel(time=target_time, method='nearest').values)
-                v10 = float(self.ds_v10.sel(lat=lat, lon=lon, method='nearest').v10.sel(time=target_time, method='nearest').values)
-                t2 = float(self.ds_t2.sel(lat=lat, lon=lon, method='nearest').t2.sel(time=target_time, method='nearest').values)
+                u = float(self.ds_u.sel(lat=lat, lon=lon, method='nearest').u.sel(time=target_time, method='nearest').sel(lev=500).values)
+                v = float(self.ds_v.sel(lat=lat, lon=lon, method='nearest').v.sel(time=target_time, method='nearest').sel(lev=500).values)
+                w = float(self.ds_w.sel(lat=lat, lon=lon, method='nearest').w.sel(time=target_time, method='nearest').sel(lev=500).values)
+                tc = float(self.ds_tc.sel(lat=lat, lon=lon, method='nearest').tc.sel(time=target_time, method='nearest').sel(lev=500).values)
             except Exception as e:
-                u10, v10, t2 = 5.0, 5.0, 280.0
+                u, v, w, tc = 5.0, 5.0, 0.0, 280.0
 
-        tke = calculate_tke(u10, v10)
+        tke = calculate_tke(u, v, w)
         edr = calculate_edr(tke)
 
         return {
-            "u10": u10,
-            "v10": v10,
-            "t2": t2,
+            "u": u,
+            "v": v,
+            "w": w,
+            "tc": tc,
             "tke": tke,
             "edr": edr
         }
@@ -69,7 +78,10 @@ class DataLoader:
         ax.set_xlim(min_lon, max_lon)
         ax.set_ylim(min_lat, max_lat)
         
-        if self.ds_u10 is None:
+        if not self._loaded:
+            self.load_data()
+            
+        if self.ds_u is None:
             lons = np.linspace(min_lon, max_lon, 200)
             lats = np.linspace(min_lat, max_lat, 200)
             Lons, Lats = np.meshgrid(lons, lats)
@@ -78,23 +90,39 @@ class DataLoader:
             try:
                 target_time = np.datetime64(date) if 'T' in date else np.datetime64(f"{date}T08:00:00")
                 pad = 0.5
-                u10_subset = self.ds_u10.sel(lat=slice(min_lat - pad, max_lat + pad), lon=slice(min_lon - pad, max_lon + pad))
-                v10_subset = self.ds_v10.sel(lat=slice(min_lat - pad, max_lat + pad), lon=slice(min_lon - pad, max_lon + pad))
+                u_sub_raw = self.ds_u.sel(lat=slice(min_lat - pad, max_lat + pad), lon=slice(min_lon - pad, max_lon + pad))
+                v_sub_raw = self.ds_v.sel(lat=slice(min_lat - pad, max_lat + pad), lon=slice(min_lon - pad, max_lon + pad))
                 
-                u10_vals = u10_subset.u10.sel(time=target_time, method='nearest').values.squeeze()
-                v10_vals = v10_subset.v10.sel(time=target_time, method='nearest').values.squeeze()
-                Lons, Lats = np.meshgrid(u10_subset.lon.values, u10_subset.lat.values)
+                # Dynamic stride to limit grid size for < 300ms rendering
+                lat_len = len(u_sub_raw.lat)
+                lon_len = len(u_sub_raw.lon)
+                lat_step = max(1, lat_len // 60)
+                lon_step = max(1, lon_len // 60)
+                
+                u_subset = u_sub_raw.isel(lat=slice(None, None, lat_step), lon=slice(None, None, lon_step))
+                v_subset = v_sub_raw.isel(lat=slice(None, None, lat_step), lon=slice(None, None, lon_step))
+                
+                u_vals = u_subset.u.sel(time=target_time, method='nearest').sel(lev=500).values.squeeze()
+                v_vals = v_subset.v.sel(time=target_time, method='nearest').sel(lev=500).values.squeeze()
+                Lons, Lats = np.meshgrid(u_subset.lon.values, u_subset.lat.values)
                 
                 if layer_type == 'tke':
-                    data = 0.1 * 0.5 * (u10_vals**2 + v10_vals**2)
+                    w_sub_raw = self.ds_w.sel(lat=slice(min_lat - pad, max_lat + pad), lon=slice(min_lon - pad, max_lon + pad))
+                    w_subset = w_sub_raw.isel(lat=slice(None, None, lat_step), lon=slice(None, None, lon_step))
+                    w_vals = w_subset.w.sel(time=target_time, method='nearest').sel(lev=500).values.squeeze()
+                    data = 0.1 * 0.5 * (u_vals**2 + v_vals**2 + w_vals**2)
                 elif layer_type == 'edr':
-                    tke = 0.1 * 0.5 * (u10_vals**2 + v10_vals**2)
+                    w_sub_raw = self.ds_w.sel(lat=slice(min_lat - pad, max_lat + pad), lon=slice(min_lon - pad, max_lon + pad))
+                    w_subset = w_sub_raw.isel(lat=slice(None, None, lat_step), lon=slice(None, None, lon_step))
+                    w_vals = w_subset.w.sel(time=target_time, method='nearest').sel(lev=500).values.squeeze()
+                    tke = 0.1 * 0.5 * (u_vals**2 + v_vals**2 + w_vals**2)
                     data = 0.5 * (tke ** 1.5) / 100.0
                 elif layer_type == 'temp':
-                    t2_subset = self.ds_t2.sel(lat=slice(min_lat - pad, max_lat + pad), lon=slice(min_lon - pad, max_lon + pad))
-                    data = t2_subset.t2.sel(time=target_time, method='nearest').values.squeeze() - 273.15
+                    tc_sub_raw = self.ds_tc.sel(lat=slice(min_lat - pad, max_lat + pad), lon=slice(min_lon - pad, max_lon + pad))
+                    tc_subset = tc_sub_raw.isel(lat=slice(None, None, lat_step), lon=slice(None, None, lon_step))
+                    data = tc_subset.tc.sel(time=target_time, method='nearest').sel(lev=500).values.squeeze() - 273.15
                 else:
-                    data = u10_vals
+                    data = u_vals
                 
                 # Apply Gaussian filter to smooth the contour lines (avoid jagged polygons)
                 data = ndimage.gaussian_filter(data, sigma=1.2)

@@ -14,9 +14,10 @@ class ProfileDataPoint(BaseModel):
     lat: float
     lon: float
     distance_from_start: float = 0.0  # 方便前端折线图作为X轴
-    u10: float
-    v10: float
-    t2: float
+    u: float
+    v: float
+    w: float
+    tc: float
     tke: float
     edr: float
 
