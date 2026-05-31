@@ -1,6 +1,7 @@
 import math
 import heapq
 import numpy as np
+import xarray as xr
 from typing import List, Tuple
 from data_loader import data_loader
 from config import settings
@@ -185,26 +186,52 @@ def plan_path(req: PlanRequest) -> tuple[List[Point], float, float, float]:
             
         full_path.extend(segment_path)
 
-    # Calculate post-planning stats accurately along the stitched path
+    # Calculate post-planning stats using vectorized batch query
+    n = len(full_path)
     total_dist = 0.0
-    max_tke = 0.0
-    max_edr = 0.0
-    
     base_time = np.datetime64(start_time_str)
+    lats = np.zeros(n)
+    lons = np.zeros(n)
+    times = np.empty(n, dtype='datetime64[ns]')
     
-    for i in range(len(full_path)):
+    for i in range(n):
+        lats[i] = full_path[i].lat
+        lons[i] = full_path[i].lon
         if i > 0:
             lat_mid = math.radians((full_path[i].lat + full_path[i-1].lat) / 2.0)
             dx = (full_path[i].lon - full_path[i-1].lon) * math.cos(lat_mid)
             dy = full_path[i].lat - full_path[i-1].lat
             dist = math.hypot(dx, dy) * 111.0
             total_dist += dist
-            
         elapsed_hours = total_dist / req.speed
-        current_time = base_time + np.timedelta64(int(elapsed_hours * 3600), 's')
-        
-        meteo = data_loader.get_meteorology_at_point(full_path[i].lat, full_path[i].lon, date=str(current_time))
-        if meteo['tke'] > max_tke: max_tke = meteo['tke']
-        if meteo['edr'] > max_edr: max_edr = meteo['edr']
+        times[i] = base_time + np.timedelta64(int(elapsed_hours * 3600), 's')
+
+    try:
+        has_data = data_loader._loaded and data_loader.ds_u is not None
+    except:
+        has_data = False
+
+    if has_data:
+        try:
+            da_lat = xr.DataArray(lats, dims='z')
+            da_lon = xr.DataArray(lons, dims='z')
+            da_time = xr.DataArray(times, dims='z')
+
+            u_vals = data_loader.ds_u.sel(lat=da_lat, lon=da_lon, method='nearest').u.sel(time=da_time, method='nearest').sel(lev=500).values
+            v_vals = data_loader.ds_v.sel(lat=da_lat, lon=da_lon, method='nearest').v.sel(time=da_time, method='nearest').sel(lev=500).values
+            w_vals = data_loader.ds_w.sel(lat=da_lat, lon=da_lon, method='nearest').w.sel(time=da_time, method='nearest').sel(lev=500).values
+
+            wind_speed_sq = u_vals**2 + v_vals**2 + w_vals**2
+            tke_arr = 0.01 * 0.5 * wind_speed_sq
+            edr_arr = 0.5 * (tke_arr ** 1.5) / 100.0
+            
+            max_tke = float(np.max(tke_arr))
+            max_edr = float(np.max(edr_arr))
+        except Exception:
+            max_tke = 0.0
+            max_edr = 0.0
+    else:
+        max_tke = 0.0
+        max_edr = 0.0
 
     return full_path, total_dist, max_tke, max_edr
