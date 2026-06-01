@@ -5,7 +5,7 @@
     <!-- Top Header -->
     <div class="top-header glass-panel">
       <Plane :size="24" class="header-logo" />
-      <h1 class="header-title">UAV Planner</h1>
+      <h1 class="header-title">基于WRF湍流数据的青藏高原无人机安全路径规划系统</h1>
     </div>
 
     <Sidebar />

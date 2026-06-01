@@ -49,6 +49,42 @@
   - **高海拔惩罚**：对绝对海拔超过 3000m 的节点施加线性惩罚，驱使无人机寻找低海拔的垭口，避免不必要的爬升。
 
 ## 运行与部署
-1. `frontend/` 下执行 `npm install` && `npm run dev` 启动 Vue3 仿真控制台。
-2. `backend/` 下配置 Python 虚拟环境并安装依赖，执行 `uvicorn main:app --reload` 启动规划引擎与渲染服务。
-3. 依赖本地气象 NetCDF 文件与 `.hgt` 格式的 SRTM 地形切片。
+
+### 快速开始 (Windows / 推荐)
+
+```bat
+:: 1. 第一次使用: 自动配置 Python 环境 (会按需下载便携 Python + pip install)
+setup.bat
+
+:: 2. 启动前后端服务 (会自动开浏览器)
+start.bat
+```
+
+`setup.bat` 行为：
+- 检测系统 Python 3.10+；没有则自动从 python.org 下载 embeddable Python (~10 MB) 到 `backend/.python/portable/`
+- `pip install -r backend/requirements.txt` 安装后端依赖
+- 整个仓库 clone 后只跑这两条命令即可
+
+### 手动部署
+
+```bat
+cd frontend
+npm install
+npm run dev
+```
+另开一个终端:
+```bat
+cd backend
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
+
+### 离线/内网环境
+把 `backend/.python/portable/` 整个目录打包后放到 release 资产里，clone 完手动解压到 `backend/.python/portable/` 即可跳过下载。
+
+### 依赖说明
+- **后端依赖**：见 `backend/requirements.txt`，包含 xarray、netCDF4、FastAPI、numpy 等
+- **数据依赖**：本地气象 NetCDF 文件 (`.nc`) 与 SRTM 地形切片 (`.hgt`)
+- **环境要求**：Python ≥ 3.10, Node.js ≥ 16
