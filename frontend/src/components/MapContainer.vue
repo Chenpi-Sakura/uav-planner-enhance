@@ -9,6 +9,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { store } from '../store';
 import { Play } from 'lucide-vue-next';
+import { API_BASE } from '../config';
 
 const props = defineProps<{
   activeLayer: 'street' | 'satellite' | 'terrain'
@@ -253,7 +254,7 @@ const renderRealOverlays = () => {
   store.overlays.forEach(layer => {
     const hourStr = currentHour.toString().padStart(2, '0') + ':00';
     // Removed t=Date.now() to allow browser caching and explicitly use hourStr
-    const url = `http://localhost:8000/api/weather/overlay?min_lat=${min_lat}&max_lat=${max_lat}&min_lon=${min_lon}&max_lon=${max_lon}&layer=${layer}&date=${store.targetDate}&start_time=${hourStr}`;
+    const url = `${API_BASE}/api/weather/overlay?min_lat=${min_lat}&max_lat=${max_lat}&min_lon=${min_lon}&max_lon=${max_lon}&layer=${layer}&date=${store.targetDate}&start_time=${hourStr}`;
     
     const overlay = L.imageOverlay(url, imageBounds, {
       opacity: 0.8,

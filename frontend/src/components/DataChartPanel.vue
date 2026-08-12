@@ -50,6 +50,7 @@ import { ref, onMounted, onUnmounted, shallowRef, watch } from 'vue';
 import { ChevronDown, ChevronUp, Activity, Play, Pause, Square } from 'lucide-vue-next';
 import * as echarts from 'echarts';
 import { store } from '../store';
+import { API_BASE } from '../config';
 const chartRef = ref<HTMLElement | null>(null);
 const chartInstance = shallowRef<echarts.ECharts | null>(null);
 
@@ -216,7 +217,7 @@ const fetchProfileData = async () => {
   if (!store.plannedPath || store.plannedPath.length === 0) return;
   
   try {
-    const response = await fetch('http://localhost:8000/api/weather/profile', {
+    const response = await fetch(`${API_BASE}/api/weather/profile`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

@@ -136,6 +136,7 @@
 import { ref, reactive } from 'vue';
 import { ChevronLeft, ChevronRight, Clock, Navigation, Layers, Send, Plus, X, Crosshair, Loader, MapPin } from 'lucide-vue-next';
 import { store, BaseStation } from '../store';
+import { API_BASE } from '../config';
 
 const isPlanning = ref(false);
 
@@ -199,7 +200,7 @@ const handlePlan = async () => {
   
   isPlanning.value = true;
   try {
-    const response = await fetch('http://localhost:8000/api/route/plan', {
+    const response = await fetch(`${API_BASE}/api/route/plan`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

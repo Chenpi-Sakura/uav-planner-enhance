@@ -1,7 +1,17 @@
+import json
 import os
+from pathlib import Path
+
 from pydantic import BaseModel
 
+ROOT_DIR = Path(__file__).resolve().parent.parent
+CONFIG_FILE = ROOT_DIR / "config.json"
+
 class Settings(BaseModel):
+    # Server bind address / port (from root config.json)
+    HOST: str = "0.0.0.0"
+    PORT: int = 9090
+
     # Data directory
     DATA_DIR: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
     
@@ -19,4 +29,15 @@ class Settings(BaseModel):
     
     GRID_RESOLUTION_DEG: float = 0.045 # Approximate resolution for A* grid (~5km)
 
-settings = Settings()
+
+def _load_backend_config() -> dict:
+    """从仓库根目录 config.json 读取后端配置（host / port 等）。"""
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("backend", {})
+    except (OSError, ValueError):
+        return {}
+
+
+settings = Settings(**_load_backend_config())

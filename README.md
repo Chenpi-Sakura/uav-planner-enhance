@@ -78,7 +78,7 @@ cd backend
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn main:app --reload
+python main.py   # 端口统一从根目录 config.json 读取（默认 9090）
 ```
 
 ### 离线/内网环境
