@@ -262,7 +262,7 @@ const updateChartWithData = (data: any[]) => {
   // Use REAL elevation data from backend (SRTM90m API)
   const elevData = data.map(d => Number((d.elevation).toFixed(1))); 
   // Drone altitude = Ground Elevation + User-defined Relative Altitude
-  const relAltData = data.map((d, i) => Number(store.plannedPath[i]?.alt || 600));
+  const relAltData = data.map((_d, i) => Number(store.plannedPath[i]?.alt || 600));
   const absAltData = elevData.map((elev, i) => elev + relAltData[i]);
   
   // Real humidity and qvapor data

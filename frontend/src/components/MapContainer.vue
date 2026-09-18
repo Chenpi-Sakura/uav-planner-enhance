@@ -8,7 +8,6 @@ import { ref, onMounted, onUnmounted, watch } from 'vue';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { store } from '../store';
-import { Play } from 'lucide-vue-next';
 import { API_BASE } from '../config';
 
 const props = defineProps<{
@@ -20,6 +19,7 @@ let map: L.Map | null = null;
 let markersLayer = L.layerGroup();
 let mockOverlaysLayer = L.layerGroup();
 let pathLayer = L.layerGroup(); // layer for the planned route line
+let blockLayer = L.layerGroup(); // layer for blocking turbulence regions
 let basesLayer = L.layerGroup(); // layer for city bases
 
 // Map Layers
@@ -57,6 +57,7 @@ onMounted(() => {
   markersLayer.addTo(map);
   mockOverlaysLayer.addTo(map);
   pathLayer.addTo(map);
+  blockLayer.addTo(map);
 
   // Handle clicks for point selection
   map.on('click', (e: L.LeafletMouseEvent) => {
@@ -197,6 +198,63 @@ const renderBases = () => {
   });
 };
 
+const renderBlockingRegions = () => {
+  if (!map) return;
+  blockLayer.clearLayers();
+
+  const regions = store.highlightRegions || [];
+  if (regions.length === 0) return;
+
+  const bounds: L.LatLngExpression[] = [];
+
+  regions.forEach(reg => {
+    const center = reg.center as [number, number];
+
+    // 优先使用后端给出的轮廓多边形；否则退化为圆
+    if (reg.polygon && reg.polygon.length >= 3) {
+      const latlngs = reg.polygon.map(pt => [pt[0], pt[1]] as [number, number]);
+      L.polygon(latlngs, {
+        color: '#ef4444',
+        weight: 2,
+        opacity: 0.9,
+        fillColor: '#ef4444',
+        fillOpacity: 0.28,
+        dashArray: '6, 6',
+      }).addTo(blockLayer);
+      latlngs.forEach(ll => bounds.push(ll));
+    } else {
+      L.circle(center, {
+        radius: reg.radius_km * 1000,
+        color: '#ef4444',
+        weight: 2,
+        opacity: 0.9,
+        fillColor: '#ef4444',
+        fillOpacity: 0.28,
+        dashArray: '6, 6',
+      }).addTo(blockLayer);
+      bounds.push(center);
+      // 圆形占位也纳入视野
+      const r = reg.radius_km;
+      bounds.push([center[0] + r / 111, center[1]]);
+      bounds.push([center[0] - r / 111, center[1]]);
+    }
+
+    L.marker(center, {
+      icon: L.divIcon({
+        className: 'blocking-marker',
+        html: `<div class="blocking-tag">${reg.shape} · ${Math.round(reg.area_km2)}km²</div>`,
+        iconSize: [120, 20],
+        iconAnchor: [60, 10],
+      }),
+      interactive: false,
+    }).addTo(blockLayer);
+  });
+
+  if (bounds.length > 1) {
+    map.fitBounds(L.latLngBounds(bounds), { padding: [60, 60] });
+  }
+};
+
 const renderPlannedPath = () => {
   if (!map) return;
   pathLayer.clearLayers();
@@ -290,12 +348,15 @@ watch(() => store.plannedPath, () => {
   renderPlannedPath();
 }, { deep: true });
 
+watch(() => store.highlightRegions, () => {
+  renderBlockingRegions();
+}, { deep: true });
+
 watch([() => store.overlays, () => store.targetDate, () => store.targetTime], () => {
   renderRealOverlays();
 }, { deep: true });
 
 let uavMarker: L.CircleMarker | null = null;
-let lastHour: number = 0;
 
 watch(() => store.simulationIndex, (newIdx) => {
   const path = store.plannedPath;
@@ -311,12 +372,10 @@ watch(() => store.simulationIndex, (newIdx) => {
       radius: 6,
       weight: 2
     }).addTo(map);
-    lastHour = parseInt(store.targetTime.split(':')[0] || '8');
     return;
   }
   
   if (newIdx < path.length) {
-    const p1 = path[newIdx - 1];
     const p2 = path[newIdx];
     uavMarker.setLatLng([Number(p2.lat), Number(p2.lng)]);
     
@@ -327,11 +386,8 @@ watch(() => store.simulationIndex, (newIdx) => {
       totalDist += Math.hypot(Number(path[i+1].lng) - Number(path[i].lng), Number(path[i+1].lat) - Number(path[i].lat)) * 111.0;
     }
     
-    const startHour = parseInt(store.targetTime.split(':')[0] || '8'); // This is a bit flaky if targetTime updates, but okay for demo
-    const elapsedHours = totalDist / store.uavSpeed;
-    // Assuming startHour is preserved from the beginning of simulation.
-    // Actually, store.targetTime updates. So let's rely on DataChartPanel to manage time updates, or just do it simply:
-    // We just move the marker here. DataChartPanel can handle time progression!
+    // 时间推进交由 DataChartPanel 处理，这里只负责移动无人机标记
+    void totalDist;
   }
 });
 
@@ -421,5 +477,23 @@ onUnmounted(() => {
   color: white;
   text-shadow: 0 2px 4px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,0.8);
   white-space: nowrap;
+}
+
+/* 阻塞湍流区标注 */
+:deep(.blocking-marker) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+:deep(.blocking-tag) {
+  background: rgba(239, 68, 68, 0.92);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+  border: 1px solid rgba(255,255,255,0.5);
 }
 </style>

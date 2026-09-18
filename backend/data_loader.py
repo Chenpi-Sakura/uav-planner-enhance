@@ -267,7 +267,7 @@ class DataLoader:
             else:
                 data = u_vals
 
-            data = ndimage.gaussian_filter(data, sigma=1.0)
+            data = ndimage.gaussian_filter(data, sigma=0.0)
         except Exception as e:
             print(f"Error subsetting real data: {e}")
             import traceback

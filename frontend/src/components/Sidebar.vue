@@ -28,8 +28,28 @@
         </div>
       </section>
 
+
+      <!-- 标签页切换：路径规划 / 可行性评估 -->
+      <div class="tab-bar">
+        <button
+          class="tab-btn"
+          :class="{ active: store.sidebarTab === 'plan' }"
+          @click="store.sidebarTab = 'plan'"
+        >
+          <Navigation :size="14" /> 路径规划
+        </button>
+        <button
+          class="tab-btn"
+          :class="{ active: store.sidebarTab === 'feasibility' }"
+          @click="store.sidebarTab = 'feasibility'"
+        >
+          <ShieldCheck :size="14" /> 可行性评估
+        </button>
+      </div>
+
       <!-- Scrollable Area for Path Planning -->
       <div class="scroll-area">
+        <template v-if="store.sidebarTab === 'plan'">
         <!-- 2. Path Planning -->
         <section class="control-section">
           <h3 class="section-title"><Navigation :size="16" /> 路径规划</h3>
@@ -115,6 +135,10 @@
             </button>
           </div>
         </section>
+        </template>
+
+        <!-- 可行性评估面板 -->
+        <FeasibilityPanel v-if="store.sidebarTab === 'feasibility'" />
       </div>
 
       <!-- 3. Overlays (Fixed at Bottom) -->
@@ -133,10 +157,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue';
-import { ChevronLeft, ChevronRight, Clock, Navigation, Layers, Send, Plus, X, Crosshair, Loader, MapPin } from 'lucide-vue-next';
-import { store, BaseStation } from '../store';
+import { ref } from 'vue';
+import { ChevronLeft, ChevronRight, Clock, Navigation, Layers, Send, Plus, X, Crosshair, Loader, MapPin, ShieldCheck } from 'lucide-vue-next';
+import { store } from '../store';
+import type { BaseStation } from '../store';
 import { API_BASE } from '../config';
+import FeasibilityPanel from './FeasibilityPanel.vue';
 
 const isPlanning = ref(false);
 
@@ -245,6 +271,36 @@ const handlePlan = async () => {
 </script>
 
 <style scoped>
+.tab-bar {
+  display: flex;
+  gap: 6px;
+  padding: 10px 20px 0 20px;
+  flex-shrink: 0;
+}
+.tab-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 0;
+  font-size: 12px;
+  border-radius: 8px 8px 0 0;
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.tab-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.06); }
+.tab-btn.active {
+  color: var(--accent-color);
+  border-bottom-color: var(--accent-color);
+  background: rgba(52, 152, 219, 0.12);
+  font-weight: 600;
+}
+
 .sidebar-container {
   position: absolute;
   top: 50%;

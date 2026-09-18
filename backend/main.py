@@ -1,8 +1,15 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from schemas import ProfileRequest, ProfileResponse, ProfileDataPoint, PlanRequest, PlanResponse
+from fastapi.responses import Response
+from schemas import (
+    ProfileRequest, ProfileResponse, ProfileDataPoint,
+    PlanRequest, PlanResponse,
+    FeasibilityRequest, FeasibilityResponse,
+)
 from data_loader import data_loader
-from planner import plan_path
+from planner import plan_path, plan_path_ex
+from feasibility import assess_feasibility
+import geo
 from config import settings
 import math
 import urllib.request
@@ -101,16 +108,51 @@ async def plan_route(request: PlanRequest):
     Returns the path points, total distance, max TKE, and max EDR along the route.
     """
     loop = asyncio.get_event_loop()
-    path, total_dist, max_tke, max_edr = await loop.run_in_executor(None, plan_path, request)
+    result = await loop.run_in_executor(None, plan_path_ex, request)
 
+    if not result.found or not result.path:
+        # 无安全航线：明确返回 feasible=False，不再用直线兜底
+        return PlanResponse(path=[], total_distance=0.0, max_tke=0.0, max_edr=0.0, feasible=False)
+
+    path, total_dist, max_tke, max_edr = await loop.run_in_executor(None, plan_path, request)
     return PlanResponse(
         path=path,
         total_distance=total_dist,
         max_tke=max_tke,
-        max_edr=max_edr
+        max_edr=max_edr,
+        feasible=True,
     )
 
-from fastapi.responses import Response
+@app.post("/api/assess/feasibility", response_model=FeasibilityResponse)
+async def assess_route_feasibility(request: FeasibilityRequest):
+    """
+    功能一 · 飞行路径可行性评估。
+
+    基于 4D 气象数据评估起降点之间是否存在安全可行航线，输出
+    「可飞 / 不可飞」结论、距离与时间成本、风险等级（全程 + 分城市段）、
+    阻塞原因、绕行成本分析与建议措施。
+    """
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, assess_feasibility, request)
+    return FeasibilityResponse(**{
+        "feasible": result.feasible,
+        "conclusion": result.conclusion,
+        "reason": result.reason,
+        "priority": result.priority,
+        "detour_limit": result.detour_limit,
+        "distance": result.distance,
+        "flight_time_h": result.flight_time_h,
+        "risk": result.risk,
+        "blocking": result.blocking,
+        "suggestions": result.suggestions,
+        "path": result.path,
+        "meta": result.meta,
+    })
+
+@app.get("/api/meta/cities")
+async def list_cities():
+    """返回平台内置的城市/基地清单（供前端分段展示与快速选点）。"""
+    return {"cities": geo.CITIES}
 
 @app.get("/api/weather/overlay")
 async def get_weather_overlay(min_lat: float, max_lat: float, min_lon: float, max_lon: float, layer: str = 'tke', date: str = '2022-07-01', start_time: str = '08:00'):
