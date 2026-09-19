@@ -149,6 +149,92 @@ class SuggestionsModel(BaseModel):
     has_alt_bases: bool = False
     text: str = ""
 
+# ==================== 功能二：飞行时间窗口规划 ====================
+
+# ==================== 功能三：AI 辅助评估 ====================
+
+class ReportRequest(BaseModel):
+    # 报告类型：feasibility（功能一）/ time_window（功能二）
+    task: str = 'feasibility'
+    # 结构化结果原文；后端只读取其中字段，不再向外部取数（防幻觉）
+    payload: Dict[str, Any] = {}
+
+
+class TimeWindowRequest(BaseModel):
+    start: Point
+    end: Point
+    waypoints: List[Point] = []
+    date: str = '2022-07-01'
+    start_time: str = '08:00'
+    speed: float = 60.0
+    # 当日无窗口时向前推演天数（0 表示不推演）
+    forecast_days: Optional[int] = None
+    # 扫描步长（小时）；默认走 config 的 TW_SCAN_STEP_HOURS
+    scan_step_hours: Optional[int] = None
+    tke_threshold: Optional[float] = None
+    edr_threshold: Optional[float] = None
+
+
+class TimeWindowSlot(BaseModel):
+    time: str                      # 北京时间 HH:MM
+    max_tke: Optional[float] = None
+    max_edr: Optional[float] = None
+    level: str
+    safe: bool
+
+
+class TimeWindowWindow(BaseModel):
+    start: str
+    end: str
+    level: str
+    max_tke: float
+    max_edr: float
+
+
+class RecommendedWindow(BaseModel):
+    takeoff: str                   # 北京时间 ISO，如 2022-07-01T07:00
+    window: List[str]              # [起, 止] 北京时间 HH:MM
+    landing: str
+    level: str
+    max_tke: Optional[float] = None
+    max_edr: Optional[float] = None
+
+
+class TurbulenceCurve(BaseModel):
+    times: List[str] = []
+    max_tke: List[float] = []
+    max_edr: List[float] = []
+    mean_tke: List[float] = []
+
+
+class ForecastDay(BaseModel):
+    date: str
+    has_window: bool
+    best_window: Optional[List[str]] = None
+    level: Optional[str] = None
+    max_tke: Optional[float] = None
+    safe_slot_count: int = 0
+
+
+class ForecastInfo(BaseModel):
+    enabled: bool = False
+    days: List[ForecastDay] = []
+    first_available_date: Optional[str] = None
+
+
+class TimeWindowResponse(BaseModel):
+    date: str
+    has_window: bool
+    recommended: Optional[RecommendedWindow] = None
+    curve: TurbulenceCurve = TurbulenceCurve()
+    backup_windows: List[TimeWindowWindow] = []
+    warnings: List[Dict[str, Any]] = []
+    slot_analysis: List[TimeWindowSlot] = []
+    forecast: ForecastInfo = ForecastInfo()
+    reason: Optional[str] = None
+    meta: Dict[str, Any] = {}
+
+
 class FeasibilityResponse(BaseModel):
     feasible: bool
     conclusion: str

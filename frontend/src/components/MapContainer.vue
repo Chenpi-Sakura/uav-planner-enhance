@@ -7,7 +7,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { store } from '../store';
+import { store, RISK_COLORS } from '../store';
 import { API_BASE } from '../config';
 
 const props = defineProps<{
@@ -259,21 +259,50 @@ const renderPlannedPath = () => {
   if (!map) return;
   pathLayer.clearLayers();
   
-  if (store.plannedPath && store.plannedPath.length > 0) {
-    const latlngs: L.LatLngExpression[] = store.plannedPath.map(p => [Number(p.lat), Number(p.lng)]);
-    
-    // Draw the main route line
+  const path = store.plannedPath;
+  if (!path || path.length === 0) return;
+  
+  const latlngs: L.LatLngExpression[] = path.map(p => [Number(p.lat), Number(p.lng)]);
+  const segments = store.feasibility?.risk?.segments ?? [];
+  const selected = store.selectedSegmentIndex;
+  const hovered = store.hoveredSegmentIndex;
+  
+  // 有分段风险数据时按等级着色（每段一条 polyline），否则回退为单条虚线
+  if (segments.length > 0) {
+    segments.forEach((seg, idx) => {
+      const from = Math.max(0, seg.start_index);
+      const to = Math.min(path.length - 1, seg.end_index);
+      if (to <= from) return;
+      const piece = latlngs.slice(from, to + 1);
+      const isFocused = selected === idx || hovered === idx;
+      L.polyline(piece, {
+        color: RISK_COLORS[seg.level] ?? '#94a3b8',
+        weight: isFocused ? 9 : 6,
+        opacity: selected !== null && !isFocused ? 0.6 : 1.0,
+      }).addTo(pathLayer);
+    });
+  } else {
     L.polyline(latlngs, {
       color: '#FF3300', // Bright red-orange
       weight: 6,
       opacity: 1.0,
       dashArray: '10, 10'
     }).addTo(pathLayer);
-    
-    // Optionally zoom map to fit the path
-    const bounds = L.latLngBounds(latlngs);
-    map.fitBounds(bounds, { padding: [50, 50] });
   }
+  
+  // 聚焦到选中分段，便于查看该段风险
+  const focusIdx = selected ?? hovered;
+  if (focusIdx !== null && segments[focusIdx]) {
+    const seg = segments[focusIdx];
+    const from = Math.max(0, seg.start_index);
+    const to = Math.min(path.length - 1, seg.end_index);
+    if (to > from) {
+      map.fitBounds(L.latLngBounds(latlngs.slice(from, to + 1)), { padding: [80, 80] });
+      return;
+    }
+  }
+  
+  map.fitBounds(L.latLngBounds(latlngs), { padding: [50, 50] });
 };
 
 let lastRenderState = '';
@@ -344,10 +373,14 @@ watch(() => [store.start, store.end, store.waypoints], () => {
   renderMarkers();
 }, { deep: true });
 
-watch(() => store.plannedPath, () => {
+watch(() => [store.plannedPath, store.selectedSegmentIndex, store.hoveredSegmentIndex], () => {
   renderPlannedPath();
 }, { deep: true });
 
+// 分段风险变化（重新评估后）也要重绘
+watch(() => store.feasibility?.risk?.segments, () => {
+  renderPlannedPath();
+}, { deep: true });
 watch(() => store.highlightRegions, () => {
   renderBlockingRegions();
 }, { deep: true });

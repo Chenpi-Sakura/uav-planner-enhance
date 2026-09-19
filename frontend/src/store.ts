@@ -1,4 +1,5 @@
 import { reactive } from 'vue';
+import type { TimeWindowResult } from './types/assessment';
 
 export interface Point {
   lat: number | string;
@@ -124,12 +125,18 @@ export interface StoreState {
   simulationIndex: number;
   bases: BaseStation[];
   // ---- 决策平台新增 ----
-  sidebarTab: 'plan' | 'feasibility';   // 侧边栏标签页
+  sidebarTab: 'plan' | 'feasibility' | 'timeWindow';   // 侧边栏标签页
   priority: 'urgent' | 'normal' | 'economy';  // 任务优先级
   assessLoading: boolean;
   feasibility: FeasibilityResult | null; // 功能一评估结果
   highlightRegions: BlockingRegion[];    // 地图高亮：阻塞区
   selectedSegmentIndex: number | null;   // 结果面板：选中的分段
+  // ---- 功能二：时间窗口 ----
+  timeWindowLoading: boolean;
+  timeWindow: TimeWindowResult | null;   // 功能二评估结果
+  forecastDays: number;                  // 7 天推演天数（0 = 不推演）
+  hoveredSegmentIndex: number | null;    // 地图联动：悬停的分段
+  pendingTimeWindowScan: boolean;        // 从功能一跳转功能二时自动执行一次扫描
 }
 
 export const store = reactive<StoreState>({
@@ -160,6 +167,11 @@ export const store = reactive<StoreState>({
   feasibility: null,
   highlightRegions: [],
   selectedSegmentIndex: null,
+  timeWindowLoading: false,
+  timeWindow: null,
+  forecastDays: 7,
+  hoveredSegmentIndex: null,
+  pendingTimeWindowScan: false,
 });
 
 /** 风险等级 -> 展示色 */

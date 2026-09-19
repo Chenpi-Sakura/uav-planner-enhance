@@ -1,6 +1,8 @@
 import os
 import xarray as xr
 import io
+from collections import OrderedDict
+from typing import Optional, Sequence, Tuple
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -19,6 +21,8 @@ class DataLoader:
         self.ds_rh = None
         self.ds_q = None
         self._loaded = False
+        # 功能二：按天 slab 的 LRU 缓存（键 = 变量+起始时刻+小时数+量化 bbox）
+        self._slab_cache = OrderedDict()
 
     def load_data(self):
         u_path = os.path.join(settings.DATA_DIR, settings.U_FILE)
@@ -180,6 +184,116 @@ class DataLoader:
             import traceback
             traceback.print_exc()
             return None, None, None, None, None
+
+    # ==================== 功能二：时间窗口规划的批量读取 ====================
+
+    _VAR_FILES = {
+        "u": "U_FILE", "v": "V_FILE", "w": "W_FILE",
+        "tc": "TC_FILE", "rh": "RH_FILE", "qvapor": "Q_FILE",
+    }
+
+    def _var_path(self, var: str) -> str:
+        """返回变量对应的 NetCDF 文件绝对路径。"""
+        attr = self._VAR_FILES.get(var)
+        if attr is None:
+            raise ValueError(f"unknown variable: {var}")
+        return os.path.join(settings.DATA_DIR, getattr(settings, attr))
+
+    def read_slab(self, var: str, start_time, hours: int, bbox):
+        """读取某个变量在 500hPa 上的 (hours, lat, lon) 数据块。
+
+        参数
+        ----
+        var : 'u' / 'v' / 'w' / 'tc' / 'rh' / 'qvapor'
+        start_time : 数据时间轴上的起始时刻（np.datetime64 或字符串）
+        hours : 读取的小时数
+        bbox : (min_lat, max_lat, min_lon, max_lon)
+
+        返回
+        ----
+        (values, lats, lons, times) —— 失败时 values 为 None。
+
+        实现要点（依据实测性能结论）：
+          - 用 isel + 预计算整数索引定位，避免 label 化 .sel() 的开销；
+          - 只打开该变量自己的文件，绝不顺带读取其它变量；
+          - 结果进 LRU 缓存，供扫描 / 曲线 / 预警复用。
+        """
+        try:
+            min_lat, max_lat, min_lon, max_lon = (float(v) for v in bbox)
+        except Exception:
+            return None, None, None, None
+
+        hours = int(max(1, hours))
+        key = (var, str(np.datetime64(start_time)),
+               hours,
+               round(min_lat, 3), round(max_lat, 3),
+               round(min_lon, 3), round(max_lon, 3))
+
+        cached = self._slab_cache.get(key)
+        if cached is not None:
+            self._slab_cache.move_to_end(key)
+            return cached
+
+        try:
+            path = self._var_path(var)
+            ds = xr.open_dataset(path, chunks=None)
+            try:
+                tv = ds.time.values
+                i0 = int(np.searchsorted(tv, np.datetime64(start_time)))
+                i0 = max(0, min(i0, len(tv) - 1))
+                i1 = min(len(tv), i0 + hours)
+                if i1 <= i0:
+                    return None, None, None, None
+
+                la = ds.lat.values
+                lo = ds.lon.values
+                li = np.where((la >= min_lat) & (la <= max_lat))[0]
+                loi = np.where((lo >= min_lon) & (lo <= max_lon))[0]
+                if len(li) == 0 or len(loi) == 0:
+                    return None, None, None, None
+
+                levs = ds.lev.values
+                lv_idx = int(np.where(levs == 500.0)[0][0]) if (levs == 500.0).any() else int(
+                    np.abs(levs - 500.0).argmin())
+
+                data = ds[var].isel(
+                    time=slice(i0, i1), lev=lv_idx,
+                    lat=slice(int(li[0]), int(li[-1]) + 1),
+                    lon=slice(int(loi[0]), int(loi[-1]) + 1),
+                ).values
+                lats = la[li[0]:li[-1] + 1]
+                lons = lo[loi[0]:loi[-1] + 1]
+                times = tv[i0:i1]
+            finally:
+                ds.close()
+        except Exception as e:
+            print(f"read_slab({var}) failed: {e}")
+            return None, None, None, None
+
+        result = (np.asarray(data), np.asarray(lats), np.asarray(lons), np.asarray(times))
+
+        self._slab_cache[key] = result
+        while len(self._slab_cache) > int(settings.TW_SLAB_CACHE_SIZE):
+            self._slab_cache.popitem(last=False)
+        return result
+
+    def check_coverage(self, lat: float, lon: float, tol: float = 0.25) -> bool:
+        """判断坐标是否落在气象数据覆盖范围内（带容差）。
+
+        数据未加载时返回 True（不阻塞评估流程，与功能一口径一致）。
+        """
+        try:
+            ds = self.ds_u
+            if ds is None:
+                return True
+            lats = ds.lat.values
+            lons = ds.lon.values
+            lat_lo, lat_hi = float(np.min(lats)), float(np.max(lats))
+            lon_lo, lon_hi = float(np.min(lons)), float(np.max(lons))
+            return bool((lat_lo - tol <= lat <= lat_hi + tol)
+                        and (lon_lo - tol <= lon <= lon_hi + tol))
+        except Exception:
+            return True
 
     def _read_overlay_slice(self, file_path, var_name, target_time, lat_slice, lon_slice):
         """Read a 2D slice (time+lev resolved) without dask for fast overlay."""

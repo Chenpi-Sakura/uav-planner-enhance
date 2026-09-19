@@ -29,7 +29,7 @@
       </section>
 
 
-      <!-- 标签页切换：路径规划 / 可行性评估 -->
+      <!-- 标签页切换：路径规划 / 可行性评估 / 时间窗口 -->
       <div class="tab-bar">
         <button
           class="tab-btn"
@@ -44,6 +44,13 @@
           @click="store.sidebarTab = 'feasibility'"
         >
           <ShieldCheck :size="14" /> 可行性评估
+        </button>
+        <button
+          class="tab-btn"
+          :class="{ active: store.sidebarTab === 'timeWindow' }"
+          @click="store.sidebarTab = 'timeWindow'"
+        >
+          <CalendarClock :size="14" /> 时间窗口
         </button>
       </div>
 
@@ -139,6 +146,9 @@
 
         <!-- 可行性评估面板 -->
         <FeasibilityPanel v-if="store.sidebarTab === 'feasibility'" />
+
+        <!-- 时间窗口面板 -->
+        <TimeWindowPanel v-if="store.sidebarTab === 'timeWindow'" />
       </div>
 
       <!-- 3. Overlays (Fixed at Bottom) -->
@@ -158,11 +168,12 @@
 
 <script setup lang="ts">
 import { ref } from 'vue';
-import { ChevronLeft, ChevronRight, Clock, Navigation, Layers, Send, Plus, X, Crosshair, Loader, MapPin, ShieldCheck } from 'lucide-vue-next';
+import { ChevronLeft, ChevronRight, Clock, Navigation, Layers, Send, Plus, X, Crosshair, Loader, MapPin, ShieldCheck, CalendarClock } from 'lucide-vue-next';
 import { store } from '../store';
 import type { BaseStation } from '../store';
 import { API_BASE } from '../config';
 import FeasibilityPanel from './FeasibilityPanel.vue';
+import TimeWindowPanel from './TimeWindowPanel.vue';
 
 const isPlanning = ref(false);
 
@@ -242,7 +253,13 @@ const handlePlan = async () => {
     if (!response.ok) throw new Error("规划失败");
     
     const result = await response.json();
-    if (result && result.path) {
+    // 后端起降点被封死时返回 path=[] + feasible=false，需明确提示而非静默成功
+    if (result && result.feasible === false) {
+      store.plannedPath = [];
+      alert('当前条件下未找到安全航线，请调整起降点、时间或改用「可行性评估」查看原因。');
+      return;
+    }
+    if (result && result.path && result.path.length > 0) {
       const startAlt = Number(store.start.alt || 600);
       const endAlt = Number(store.end.alt || 600);
       const n = result.path.length;
@@ -282,8 +299,8 @@ const handlePlan = async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 8px 0;
+  gap: 4px;
+  padding: 8px 4px;
   font-size: 12px;
   border-radius: 8px 8px 0 0;
   border: 1px solid transparent;

@@ -6,6 +6,7 @@ from typing import List, Tuple, Optional
 from dataclasses import dataclass, field
 
 from data_loader import data_loader
+from timebase import to_data_time_str
 from config import settings
 from schemas import Point, PlanRequest
 
@@ -80,7 +81,7 @@ def _is_safe_at(node, base_time, dist_km, speed_kmh,
         return False, float('nan'), float('nan')
 
     elapsed_hours = dist_km / speed_kmh if speed_kmh else 0.0
-    t = base_time + np.timedelta64(int(elapsed_hours * 3600), 's')
+    t = base_time + np.timedelta64(int(elapsed_hours * 3600), 's')  # base_time 已是数据标签时间
     idx_t = np.abs(times_arr - t).argmin()
     idx_lat = np.abs(lats - node[0]).argmin()
     idx_lon = np.abs(lons - node[1]).argmin()
@@ -337,7 +338,8 @@ def plan_path_ex(req: PlanRequest) -> PlanResult:
     segment_results: List[SegmentResult] = []
     waypoints_reached: List[int] = []
 
-    start_time_str = f"{req.date}T{req.start_time}:00" if len(req.start_time) <= 5 else req.start_time
+    # 对外契约是北京时间，查表前必须换算为数据标签时间（UTC）
+    start_time_str = to_data_time_str(req.date + 'T' + req.start_time)
     current_g_score = 0.0
     current_dist = 0.0
     found = True
@@ -418,7 +420,7 @@ def plan_path(req: PlanRequest) -> tuple[List[Point], float, float, float]:
         return [], result.total_distance, 0.0, 0.0
 
     full_path = result.path
-    start_time_str = f"{req.date}T{req.start_time}:00" if len(req.start_time) <= 5 else req.start_time
+    start_time_str = to_data_time_str(req.date + 'T' + req.start_time)
     base_time = np.datetime64(start_time_str)
 
     n = len(full_path)

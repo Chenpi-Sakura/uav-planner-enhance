@@ -16,6 +16,7 @@ import numpy as np
 from config import settings
 from planner import plan_path_ex, PlanResult, _haversine_km
 from data_loader import data_loader
+from timebase import to_data_time_str
 from risk import build_risk_profile, RiskProfile, LEVEL_UNFLYABLE
 import blockage as blockage_mod
 import geo
@@ -52,7 +53,8 @@ class FeasibilityResult:
 
 def assess_feasibility(req,
                        samples_per_km: float = 0.1,
-                       include_alt_bases: bool = True) -> FeasibilityResult:
+                       include_alt_bases: bool = True,
+                       include_alt_windows: bool = True) -> FeasibilityResult:
     """执行功能一评估。
 
     req 需为 schemas.FeasibilityRequest。
@@ -154,6 +156,11 @@ def assess_feasibility(req,
     # 否则会出现「文案承诺已给出替代点、但列表为空」的自相矛盾。
     if include_alt_bases and not feasible:
         suggestions["alt_bases"] = _suggest_alt_bases(req, endpoints=endpoints)
+    # 「更换飞行时间」建议的数据支撑：扫描当天若干时次，给出可飞备选时段。
+    # 仅在不可飞时计算（可飞时无需替换时间），失败时静默留空不影响主结论。
+    if include_alt_windows and not feasible and data_ok:
+        suggestions["alt_windows"] = _suggest_alt_windows(start, end, req)
+        suggestions["alt_bases"] = _suggest_alt_bases(req, endpoints=endpoints)
     suggestions["has_alt_bases"] = bool(suggestions["alt_bases"])
     suggestions["text"] = _build_suggestion_text(
         feasible, reason, distance_block, blocking_block, risk_profile, priority,
@@ -253,7 +260,8 @@ def _sample_along_path(path, date: str, start_time: str, speed: float,
         if times and len(times) == len(resampled):
             times_arr = np.array([np.datetime64(t) for t in times], dtype='datetime64[ns]')
         else:
-            start_ts = np.datetime64(f"{date}T{start_time}:00")
+            # 北京时间 -> 数据标签时间（UTC），否则取到偏早 8 小时的气象场
+            start_ts = np.datetime64(to_data_time_str(f"{date}T{start_time}"))
             times_arr = np.array([
                 start_ts + np.timedelta64(int((p["cum_km"] / speed) * 3600), 's')
                 for p in resampled
@@ -311,7 +319,7 @@ def _analyze_blocking(start, end, req) -> Optional[Dict[str, Any]]:
         tke_grid, edr_grid, lats, lons, times = data_loader.get_meteorology_grid(
             min(start[0], end[0]) - pad, max(start[0], end[0]) + pad,
             min(start[1], end[1]) - pad, max(start[1], end[1]) + pad,
-            date=f"{req.date}T{req.start_time}:00",
+            date=to_data_time_str(f"{req.date}T{req.start_time}"),
         )
         if tke_grid is None:
             return None
@@ -325,7 +333,7 @@ def _analyze_blocking(start, end, req) -> Optional[Dict[str, Any]]:
             tke_grid, edr_grid, lats, lons, start, end,
             tke_thresh=req.tke_threshold, edr_thresh=req.edr_threshold,
             times=times,
-            base_time=f"{req.date}T{req.start_time}:00",
+            base_time=to_data_time_str(f"{req.date}T{req.start_time}"),
             window_hours=window_hours,
         )
         return {
@@ -350,7 +358,7 @@ def _check_endpoints(start, end, req) -> Dict[str, Any]:
         safe = True
         try:
             vals = data_loader.get_meteorology_at_points(
-                [pt[0]], [pt[1]], date=f"{req.date}T{req.start_time}:00")
+                [pt[0]], [pt[1]], date=to_data_time_str(f"{req.date}T{req.start_time}"))
             tke = float(vals["tke"][0])
             edr = float(vals["edr"][0])
             tke_th = req.tke_threshold if req.tke_threshold is not None else settings.TKE_THRESHOLD_HIGH
@@ -379,6 +387,50 @@ def _bad_endpoint_label(endpoints: Optional[Dict[str, Any]]) -> Optional[str]:
     if not bad:
         return None
     return "".join(bad) if len(bad) == 2 else bad[0]
+
+
+def _suggest_alt_windows(start, end, req, max_results: int = 3) -> List[Dict[str, Any]]:
+    """扫描当天的安全时段，作为「更换飞行时间」建议的数据支撑。
+
+    复用功能二的扫描链路（同一时区口径与阈值），只回填少量字段给前端展示，
+    不重复实现一套时段判定逻辑，避免两处口径漂移。
+    """
+    try:
+        from schemas import TimeWindowRequest
+        from time_window import assess_time_window
+
+        tw_req = TimeWindowRequest(
+            start=req.start, end=req.end, waypoints=req.waypoints or [],
+            date=req.date, start_time=req.start_time or "08:00", speed=req.speed,
+            forecast_days=0,  # 只要当天的备选时段
+            tke_threshold=getattr(req, "tke_threshold", None),
+            edr_threshold=getattr(req, "edr_threshold", None),
+        )
+        tw = assess_time_window(tw_req, run_planner=False)
+    except Exception:
+        return []
+
+    out: List[Dict[str, Any]] = []
+    rec = tw.get("recommended")
+    if rec:
+        out.append({
+            "date": tw.get("date"),
+            "takeoff": rec.get("takeoff"),
+            "window": rec.get("window"),
+            "level": rec.get("level"),
+            "max_tke": rec.get("max_tke"),
+        })
+    for w in (tw.get("backup_windows") or []):
+        if len(out) >= max_results:
+            break
+        out.append({
+            "date": tw.get("date"),
+            "takeoff": w.get("start"),
+            "window": [w.get("start"), w.get("end")],
+            "level": w.get("level"),
+            "max_tke": w.get("max_tke"),
+        })
+    return out[:max_results]
 
 
 def _suggest_alt_bases(req,

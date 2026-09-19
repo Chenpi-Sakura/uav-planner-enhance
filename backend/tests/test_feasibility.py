@@ -1,184 +1,138 @@
 """
-功能一 · 自动化测试（使用标准库 unittest，无需额外依赖）。
+功能一 · 可行性评估编排测试（计划书 §9.1）。
 
-运行：
-    python -m unittest discover -s backend/tests -v
-    # 或
-    python -m pytest backend/tests -q   （若已安装 pytest）
+覆盖：
+  ① 可飞分支（低风险 + 绕行在阈值内）；
+  ② 绕行超阈分支（detour_exceeds_threshold），并验证阈值随任务优先级变化；
+  ③ 无安全路径分支（blocked → no_safe_path）。
+
+风险分级 / 阻塞区 / 地理分段的用例已拆分到 test_risk.py、test_blockage.py、
+test_geo（见 test_feasibility.py 的 TestGeo 与 TestConfigThresholds）；
+这里只做编排层行为契约，全部使用合成数据与替身，不触碰真实 NetCDF。
+
+运行：cd backend; .python/portable/python.exe -m unittest discover -s tests
 """
 import os
 import sys
-import math
 import unittest
 
-# 让测试可以直接 import backend 下的模块
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 import numpy as np
 
-import risk
-import blockage
+import feasibility
 import geo
 from config import settings
+from planner import PlanResult
+from schemas import FeasibilityRequest, Point
 
 
-class TestRiskClassification(unittest.TestCase):
-    """风险分级边界值测试。"""
+class _StubLoader:
+    """替身 data_loader：不读文件，端点始终安全、危险区分析返回空。"""
 
-    def test_low_risk(self):
-        self.assertEqual(risk.classify_point(0.1, 0.01), risk.LEVEL_LOW)
-        self.assertEqual(risk.classify_point(0.39, 0.09), risk.LEVEL_LOW)
+    ds_u = None
 
-    def test_moderate_boundary(self):
-        # TKE 达到 0.4 即为中度
-        self.assertEqual(risk.classify_point(0.4, 0.0), risk.LEVEL_MODERATE)
-        # EDR 达到 0.1 即为中度
-        self.assertEqual(risk.classify_point(0.0, 0.1), risk.LEVEL_MODERATE)
+    def get_meteorology_at_points(self, lats, lons, date=None):
+        n = len(lats)
+        return {"tke": np.full(n, 0.1), "edr": np.full(n, 0.001)}
 
-    def test_high_boundary(self):
-        self.assertEqual(risk.classify_point(0.7, 0.0), risk.LEVEL_HIGH)
-        self.assertEqual(risk.classify_point(0.0, 0.2), risk.LEVEL_HIGH)
-
-    def test_unflyable_boundary(self):
-        # TKE >= 1.0 命中硬约束
-        self.assertEqual(risk.classify_point(1.0, 0.0), risk.LEVEL_UNFLYABLE)
-        # EDR >= 0.3 命中硬约束
-        self.assertEqual(risk.classify_point(0.0, 0.3), risk.LEVEL_UNFLYABLE)
-
-    def test_nan_is_not_flagged(self):
-        # NaN 不应被判为高风险/不可飞（NaN 由数据缺失在别处处理）
-        self.assertEqual(risk.classify_point(float('nan'), 0.0), risk.LEVEL_LOW)
-
-    def test_two_dimension_takes_worse(self):
-        # TKE 低但 EDR 高 -> 取较高等级
-        self.assertEqual(risk.classify_point(0.1, 0.25), risk.LEVEL_HIGH)
+    def get_meteorology_grid(self, *args, **kwargs):
+        return None, None, None, None, None
 
 
-class TestRiskProfile(unittest.TestCase):
-    """风险剖面构建与合成。"""
-
-    def _samples(self, tke_list, edr_list, step_km=5.0):
-        out = []
-        for i, (t, e) in enumerate(zip(tke_list, edr_list)):
-            out.append({"lat": 29.0 + i * 0.05, "lon": 91.0, "cum_km": i * step_km, "tke": t, "edr": e})
-        return out
-
-    def test_overall_low(self):
-        s = self._samples([0.1, 0.2, 0.3], [0.01, 0.02, 0.03])
-        prof = risk.build_risk_profile(s)
-        self.assertEqual(prof.overall, risk.LEVEL_LOW)
-        self.assertEqual(prof.stats.n_samples, 3)
-
-    def test_overall_moderate(self):
-        s = self._samples([0.1, 0.5, 0.3], [0.01, 0.02, 0.03])
-        prof = risk.build_risk_profile(s)
-        self.assertEqual(prof.overall, risk.LEVEL_MODERATE)
-
-    def test_overall_unflyable_dominates(self):
-        s = self._samples([0.1, 1.5, 0.3], [0.01, 0.02, 0.03])
-        prof = risk.build_risk_profile(s)
-        self.assertEqual(prof.overall, risk.LEVEL_UNFLYABLE)
-
-    def test_moderate_ratio_promotes(self):
-        # 中度样本占比超过阈值时整体上调
-        s = self._samples([0.5, 0.5, 0.5, 0.5, 0.1], [0.01]*5)
-        prof = risk.build_risk_profile(s)
-        self.assertEqual(prof.overall, risk.LEVEL_HIGH)
-
-    def test_max_exposure_computed(self):
-        # 连续 3 个中度样本，跨度应为 2 步 = 10km
-        s = self._samples([0.1, 0.5, 0.5, 0.5, 0.1], [0.01]*5)
-        prof = risk.build_risk_profile(s)
-        self.assertAlmostEqual(prof.stats.max_exposure_km, 10.0, places=1)
-
-    def test_segments_split(self):
-        # 前半段低风险、后半段含中度样本
-        s = self._samples([0.1, 0.2, 0.2, 0.6, 0.1], [0.01]*5)
-        bounds = [
-            {"from_name": "A", "to_name": "B", "start_index": 0, "end_index": 2},
-            {"from_name": "B", "to_name": "C", "start_index": 2, "end_index": 4},
-        ]
-        prof = risk.build_risk_profile(s, bounds)
-        self.assertEqual(len(prof.segments), 2)
-        self.assertEqual(prof.segments[0].level, risk.LEVEL_LOW)
-        self.assertEqual(prof.segments[1].level, risk.LEVEL_MODERATE)
-        # 分段风险取该段内的最高等级
-        self.assertEqual(prof.segments[1].max_tke, 0.6)
-
-    def test_empty_samples(self):
-        prof = risk.build_risk_profile([])
-        self.assertEqual(prof.overall, risk.LEVEL_LOW)
-        self.assertEqual(prof.stats.n_samples, 0)
+def _fake_plan(total_distance: float, found: bool = True):
+    """构造一条拉萨→林芝的合成航线（20 点），沿程风险恒为低。"""
+    n = 20
+    lats = np.linspace(29.65, 29.66, n)
+    lons = np.linspace(91.13, 94.36, n)
+    path = [Point(lat=float(a), lon=float(b)) for a, b in zip(lats, lons)]
+    times = [np.datetime64('2022-07-01T00:00') + np.timedelta64(i * 900, 's') for i in range(n)]
+    return PlanResult(
+        path=path if found else [],
+        total_distance=total_distance if found else 0.0,
+        total_grid_cost=0.0,
+        found=found,
+        reason=None if found else 'blocked',
+        times=times if found else [],
+        tkes=[0.1] * n if found else [],
+        edrs=[0.001] * n if found else [],
+        waypoints_reached=[1] if found else [],
+        segment_results=[],
+    )
 
 
-class TestBlockage(unittest.TestCase):
-    """阻塞区连通域与形状特征。"""
+class TestFeasibilityOrchestration(unittest.TestCase):
+    def setUp(self):
+        self.saved_plan = feasibility.plan_path_ex
+        self.saved_loader = feasibility.data_loader
+        feasibility.data_loader = _StubLoader()
 
-    def _grid(self, shape=(60, 80)):
-        lats = np.linspace(29.0, 30.0, shape[0])
-        lons = np.linspace(90.0, 92.0, shape[1])
-        tke = np.full(shape, 0.2)
-        edr = np.full(shape, 0.05)
-        return tke, edr, lats, lons
+    def tearDown(self):
+        feasibility.plan_path_ex = self.saved_plan
+        feasibility.data_loader = self.saved_loader
 
-    def test_no_danger_returns_empty(self):
-        tke, edr, lats, lons = self._grid()
-        out = blockage.analyze_blockage(tke, edr, lats, lons, (29.5, 91.0), (29.5, 91.0))
-        self.assertEqual(out, [])
+    def _req(self, priority='normal'):
+        return FeasibilityRequest(
+            start=Point(lat=29.65, lon=91.13),
+            end=Point(lat=29.66, lon=94.36),
+            date='2022-07-01', start_time='08:00', speed=60.0, priority=priority,
+        )
 
-    def test_band_shape_detected(self):
-        tke, edr, lats, lons = self._grid()
-        # 水平贯穿的条带
-        tke[25:30, :] = 1.5
-        edr[25:30, :] = 0.4
-        out = blockage.analyze_blockage(tke, edr, lats, lons, (29.5, 91.0), (29.5, 91.0))
-        self.assertGreaterEqual(len(out), 1)
-        self.assertEqual(out[0].shape, blockage.SHAPE_BAND)
-        self.assertTrue(out[0].crosses_corridor)
-        self.assertGreater(out[0].aspect_ratio, 3.0)
+    def _assess(self, plan, priority='normal'):
+        feasibility.plan_path_ex = lambda req: plan
+        return feasibility.assess_feasibility(
+            self._req(priority), include_alt_bases=False, include_alt_windows=False)
 
-    def test_blob_shape_detected(self):
-        tke, edr, lats, lons = self._grid()
-        # 近方形团块
-        tke[25:35, 35:45] = 1.5
-        edr[25:35, 35:45] = 0.4
-        out = blockage.analyze_blockage(tke, edr, lats, lons, (29.09, 90.1), (29.09, 91.9))
-        self.assertGreaterEqual(len(out), 1)
-        self.assertEqual(out[0].shape, blockage.SHAPE_BLOB)
+    def test_feasible_branch(self):
+        # 直线约 312.6 km；航线 340 km -> 绕行比 1.09，正常优先级可接受
+        result = self._assess(_fake_plan(340.0))
+        self.assertTrue(result.feasible)
+        self.assertEqual(result.conclusion, '可飞')
+        self.assertIsNone(result.reason)
+        self.assertEqual(result.risk['overall'], '低风险')
+        self.assertEqual(result.distance['applicable'], True)
+        self.assertFalse(result.distance['time_cost_h']['exceeded'])
 
-    def test_small_cluster_filtered(self):
-        tke, edr, lats, lons = self._grid()
-        tke[10, 10] = 1.5
-        edr[10, 10] = 0.4
-        out = blockage.analyze_blockage(tke, edr, lats, lons, (29.5, 91.0), (29.5, 91.0),
-                                       min_area_km2=400.0)
-        self.assertEqual(out, [])
+    def test_detour_exceeded_branch(self):
+        # 航线 480 km -> 绕行比约 1.54，超过 normal(1.5)
+        result = self._assess(_fake_plan(480.0), priority='normal')
+        self.assertFalse(result.feasible)
+        self.assertEqual(result.conclusion, '不可飞')
+        self.assertEqual(result.reason, 'detour_exceeds_threshold')
+        self.assertTrue(result.distance['time_cost_h']['exceeded'])
+        # 距离仍可用（有真实航线，只是成本超阈）
+        self.assertEqual(result.distance['applicable'], True)
 
-    def test_top_n_limit(self):
-        tke, edr, lats, lons = self._grid((120, 160))
-        tke[10:20, 10:20] = 1.5
-        edr[10:20, 10:20] = 0.4
-        tke[50:60, 50:60] = 1.5
-        edr[50:60, 50:60] = 0.4
-        tke[90:100, 90:100] = 1.5
-        edr[90:100, 90:100] = 0.4
-        out = blockage.analyze_blockage(tke, edr, lats, lons, (29.5, 91.0), (29.5, 91.0), top_n=2)
-        self.assertLessEqual(len(out), 2)
+    def test_detour_threshold_follows_priority(self):
+        plan = _fake_plan(420.0)  # 绕行比约 1.34
+        urgent = self._assess(plan, priority='urgent')     # 上限 1.25 -> 超阈
+        normal = self._assess(plan, priority='normal')     # 上限 1.5  -> 通过
+        economy = self._assess(plan, priority='economy')   # 上限 2.0  -> 通过
+        self.assertFalse(urgent.feasible)
+        self.assertEqual(urgent.reason, 'detour_exceeds_threshold')
+        self.assertTrue(normal.feasible)
+        self.assertTrue(economy.feasible)
+        self.assertLess(urgent.detour_limit, normal.detour_limit)
+        self.assertLess(normal.detour_limit, economy.detour_limit)
 
-    def test_polygon_emitted(self):
-        tke, edr, lats, lons = self._grid()
-        tke[25:35, 35:45] = 1.5
-        edr[25:35, 35:45] = 0.4
-        out = blockage.analyze_blockage(tke, edr, lats, lons, (29.09, 90.1), (29.09, 91.9))
-        self.assertTrue(out and out[0].polygon)
-        self.assertGreaterEqual(len(out[0].polygon), 3)
+    def test_blocked_branch(self):
+        result = self._assess(_fake_plan(0.0, found=False))
+        self.assertFalse(result.feasible)
+        self.assertEqual(result.conclusion, '不可飞')
+        self.assertEqual(result.reason, 'no_safe_path')
+        # 无航线时距离/时间成本标记为不适用，前端显示「不适用」
+        self.assertEqual(result.distance['applicable'], False)
+        self.assertIsNone(result.distance['route_km'])
+        self.assertIsNone(result.distance['time_cost_h']['extra'])
+        self.assertEqual(result.path, [])
 
-    def test_point_to_segment(self):
-        # 点到线段距离：线段沿经度，点在正上方约 111km*0.1
-        d = blockage._point_to_segment_km(29.1, 91.0, (29.0, 90.0), (29.0, 92.0))
-        self.assertAlmostEqual(d, 11.1, places=0)
+    def test_user_facing_time_contract(self):
+        # meta 回传的是用户输入口径（北京时间），不是换算后的数据标签
+        result = self._assess(_fake_plan(340.0))
+        self.assertEqual(result.meta['date'], '2022-07-01')
+        self.assertEqual(result.meta['start_time'], '08:00')
 
 
 class TestGeo(unittest.TestCase):

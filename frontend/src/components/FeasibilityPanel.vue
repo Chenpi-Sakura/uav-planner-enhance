@@ -104,6 +104,8 @@
           class="segment-item"
           :class="{ selected: store.selectedSegmentIndex === idx }"
           @click="toggleSegment(idx)"
+          @mouseenter="store.hoveredSegmentIndex = idx"
+          @mouseleave="store.hoveredSegmentIndex = null"
         >
           <span class="seg-dot" :style="{ backgroundColor: riskColor(seg.level) }"></span>
           <span class="seg-names">{{ seg.from_name }} → {{ seg.to_name }}</span>
@@ -177,6 +179,10 @@
       <h4 class="sub-title"><Lightbulb :size="14" /> 建议措施</h4>
       <p class="suggestion-text">{{ r.suggestions.text }}</p>
 
+      <button class="ghost-btn full-width goto-window" @click="gotoTimeWindow">
+        <CalendarClock :size="14" /> 查看替代时段
+      </button>
+
       <div v-if="r.suggestions.alt_bases.length" class="alt-bases">
         <div class="alt-title">可用替代起降点：</div>
         <div
@@ -192,6 +198,9 @@
         </div>
       </div>
     </div>
+
+    <!-- AI 评估报告（流式生成） -->
+    <ReportCard task="feasibility" :payload="r" />
   </section>
 
   <section v-else class="control-section">
@@ -205,11 +214,12 @@
 import { computed } from 'vue';
 import {
   ShieldCheck, Loader, CheckCircle2, XCircle, Route, Timer,
-  AlertTriangle, Lightbulb, MapPin,
+  AlertTriangle, Lightbulb, MapPin, CalendarClock,
 } from 'lucide-vue-next';
 import { store, RISK_COLORS, PRIORITY_LABELS } from '../store';
 import type { FeasibilityResult } from '../store';
 import { API_BASE } from '../config';
+import ReportCard from './ReportCard.vue';
 
 const priorityOptions = [
   { value: 'urgent' as const, label: '紧急', hint: '≤ +25% 时间' },
@@ -266,6 +276,12 @@ const costBarWidth = computed(() => {
 
 const toggleSegment = (idx: number) => {
   store.selectedSegmentIndex = store.selectedSegmentIndex === idx ? null : idx;
+};
+
+/** 跳转到时间窗口标签页并自动执行一次扫描（用于「更换飞行时间」建议）。 */
+const gotoTimeWindow = () => {
+  store.sidebarTab = 'timeWindow';
+  store.pendingTimeWindowScan = true;
 };
 
 const focusBlocking = () => {
@@ -569,6 +585,7 @@ const handleAssess = async () => {
   transition: all 0.2s;
 }
 .ghost-btn:hover { border-color: var(--accent-color); color: var(--accent-color); }
+.goto-window { margin-bottom: 10px; }
 
 .suggestion-text {
   font-size: 12px;
