@@ -440,10 +440,6 @@ const handlePlan = async () => {
   color: white;
 }
 
-.full-width {
-  width: 100%;
-}
-
 .mini {
   width: 0;
   flex: 1;

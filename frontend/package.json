@@ -6,13 +6,16 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "build:watch": "vite build --watch",
     "preview": "vite preview"
   },
   "dependencies": {
     "@types/leaflet": "^1.9.21",
+    "dompurify": "^3.4.15",
     "echarts": "^6.1.0",
     "leaflet": "^1.9.4",
     "lucide-vue-next": "^1.0.0",
+    "marked": "^18.0.13",
     "vue": "^3.5.34"
   },
   "devDependencies": {

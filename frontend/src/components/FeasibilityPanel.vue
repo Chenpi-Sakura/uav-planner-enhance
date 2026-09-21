@@ -575,7 +575,7 @@ const handleAssess = async () => {
   border: 1px dashed var(--panel-border);
   color: var(--text-secondary);
   border-radius: 9999px;
-  padding: 6px 0;
+  padding: 7px 18px;
   font-size: 12px;
   cursor: pointer;
   display: flex;
@@ -585,7 +585,7 @@ const handleAssess = async () => {
   transition: all 0.2s;
 }
 .ghost-btn:hover { border-color: var(--accent-color); color: var(--accent-color); }
-.goto-window { margin-bottom: 10px; }
+.goto-window { margin-top: 16px; margin-bottom: 10px; }
 
 .suggestion-text {
   font-size: 12px;

@@ -40,3 +40,6 @@ venv/
 .vite/
 frontend/.tsbuildinfo/
 *.tsbuildinfo
+
+# 内网穿透隧道二进制与含 auth token 的配置，不入库
+frp/

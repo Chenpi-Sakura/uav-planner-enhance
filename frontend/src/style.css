@@ -68,6 +68,11 @@ body {
   transform: translateY(-1px);
 }
 
+/* 全局工具类：放在各组件 scoped 样式之外，否则跨组件引用时不生效 */
+.full-width {
+  width: 100%;
+}
+
 /* Scrollbar styling for dark mode */
 ::-webkit-scrollbar {
   width: 6px;

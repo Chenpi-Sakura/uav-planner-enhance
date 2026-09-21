@@ -34,7 +34,16 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { Sparkles, Loader, Copy, RefreshCw, AlertTriangle } from 'lucide-vue-next';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { API_BASE } from '../config';
+
+DOMPurify.addHook('afterSanitizeAttributes', node => {
+  if (node instanceof HTMLAnchorElement && node.target !== '_blank') {
+    node.target = '_blank';
+    node.rel = 'noopener noreferrer';
+  }
+});
 
 const props = defineProps<{
   /** 报告类型：功能一 / 功能二 */
@@ -55,30 +64,19 @@ const sourceLabel = computed(() => {
 });
 
 /**
- * 把报告文本渲染为轻量 HTML。
+ * 报告正文按 Markdown 渲染。
  *
- * 只支持 ``## 标题`` 与 ``- 列表`` 两种约定，且先做 HTML 转义，
- * 避免把模型输出直接当作 HTML 注入。
+ * 模型的小标题写法不稳定（`## 标题` 与整行 `**标题**` 混用），先归一再交给 marked；
+ * 结果统一过 DOMPurify，避免把模型输出直接当 HTML 注入。
  */
-const renderedHtml = computed(() => {
-  const escape = (s: string) =>
-    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const normalizeHeadings = (src: string) =>
+  src.replace(/^([ \t]*)\*\*([^*\n]+)\*\*[ \t]*$/gm, '$1### $2');
 
-  return text.value
-    .split('\n')
-    .map(line => {
-      const trimmed = line.trim();
-      if (!trimmed) return '';
-      if (trimmed.startsWith('## ')) {
-        return `<h5>${escape(trimmed.slice(3))}</h5>`;
-      }
-      if (trimmed.startsWith('- ')) {
-        return `<p class="li">• ${escape(trimmed.slice(2))}</p>`;
-      }
-      return `<p>${escape(trimmed)}</p>`;
-    })
-    .join('');
-});
+const renderedHtml = computed(() =>
+  DOMPurify.sanitize(
+    marked.parse(normalizeHeadings(text.value), { gfm: true, breaks: true, async: false }),
+  ),
+);
 
 const generate = async () => {
   if (loading.value) return;
@@ -200,15 +198,67 @@ const copyReport = async () => {
   line-height: 1.75;
   color: var(--text-primary);
 }
-.report-body :deep(h5) {
+.report-body :deep(h1),
+.report-body :deep(h2),
+.report-body :deep(h3),
+.report-body :deep(h4),
+.report-body :deep(h5),
+.report-body :deep(h6) {
   font-size: 12px;
   color: var(--accent-color);
   margin: 10px 0 4px 0;
   font-weight: 600;
+  line-height: 1.5;
 }
-.report-body :deep(h5:first-child) { margin-top: 0; }
-.report-body :deep(p) { margin: 0 0 4px 0; }
-.report-body :deep(p.li) { padding-left: 4px; }
+.report-body :deep(:first-child) { margin-top: 0; }
+.report-body :deep(p) { margin: 0 0 6px 0; }
+.report-body :deep(p:last-child) { margin-bottom: 0; }
+.report-body :deep(ul),
+.report-body :deep(ol) { margin: 0 0 6px 0; padding-left: 18px; }
+.report-body :deep(li) { margin: 0 0 3px 0; }
+.report-body :deep(li::marker) { color: var(--text-secondary); }
+.report-body :deep(strong) { font-weight: 700; color: var(--text-primary); }
+.report-body :deep(em) { color: var(--text-secondary); }
+.report-body :deep(a) { color: #7dd3fc; text-decoration: underline; }
+.report-body :deep(code) {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.16);
+}
+.report-body :deep(pre) {
+  margin: 0 0 6px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.28);
+  overflow-x: auto;
+}
+.report-body :deep(pre code) { padding: 0; background: none; }
+.report-body :deep(blockquote) {
+  margin: 0 0 6px 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--accent-color);
+  color: var(--text-secondary);
+}
+.report-body :deep(table) {
+  width: 100%;
+  margin: 0 0 6px 0;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.report-body :deep(th),
+.report-body :deep(td) {
+  padding: 3px 6px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  text-align: left;
+}
+.report-body :deep(th) { background: rgba(148, 163, 184, 0.12); }
+.report-body :deep(hr) {
+  margin: 8px 0;
+  border: none;
+  border-top: 1px solid rgba(148, 163, 184, 0.24);
+}
 
 .report-error {
   display: flex;

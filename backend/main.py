@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from schemas import (
     TimeWindowRequest, TimeWindowResponse,
     ReportRequest,
@@ -14,7 +15,7 @@ from feasibility import assess_feasibility
 from time_window import assess_time_window
 import assessor
 import geo
-from config import settings
+from config import ROOT_DIR, settings
 from timebase import to_data_time_str
 import math
 import urllib.request
@@ -243,6 +244,14 @@ async def get_weather_overlay(min_lat: float, max_lat: float, min_lon: float, ma
     loop = asyncio.get_event_loop()
     image_bytes = await loop.run_in_executor(None, data_loader.get_overlay_image, min_lat, max_lat, min_lon, max_lon, layer, time_str)
     return Response(content=image_bytes, media_type="image/png")
+
+# 前端构建产物与 API 共用本端口：公网只需转发这一个端口，页面与接口天然同源。
+# 挂载必须在所有 /api 路由之后（Starlette 按注册顺序匹配，根路径挂载会兜走其余请求）。
+FRONTEND_DIST = ROOT_DIR / "frontend" / "dist"
+if (FRONTEND_DIST / "index.html").is_file():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
+else:
+    print(f"[WARN] 未找到前端产物 {FRONTEND_DIST}，本进程仅提供 API；请先在 frontend/ 执行 npm run build")
 
 if __name__ == "__main__":
     import uvicorn

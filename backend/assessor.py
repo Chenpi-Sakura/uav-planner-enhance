@@ -33,6 +33,22 @@ def _fmt(v: Any, digits: int = 4, suffix: str = "") -> str:
     return f"{num:.{digits}f}{suffix}"
 
 
+# 上下文里对报告无用、却会诱导模型自行换算时区的内部标志。
+_LLM_META_DROP = ("data_label_is_utc",)
+
+# 正文时间已在后端换算完毕；不显式声明的话，模型会拿 meta 里的偏移量再算一次，
+# 产出与面板矛盾的起飞时间。
+TIME_BASE_NOTE = (
+    "本报告涉及的时间均为北京时间（UTC+8），后端已完成时区换算；"
+    "请直接引用，禁止再加减时区偏移或标注为 UTC。"
+)
+
+
+def _llm_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
+    """透出给报告的元信息：保留阈值等展示字段，剔除内部时区标志。"""
+    return {k: v for k, v in (meta or {}).items() if k not in _LLM_META_DROP}
+
+
 def build_feasibility_context(result: Dict[str, Any]) -> Dict[str, Any]:
     """从功能一结果中抽取报告需要的字段（不引入额外事实）。"""
     risk = result.get("risk") or {}
@@ -91,7 +107,8 @@ def build_feasibility_context(result: Dict[str, Any]) -> Dict[str, Any]:
             }
             for a in ((result.get("suggestions") or {}).get("alt_bases") or [])
         ],
-        "meta": result.get("meta") or {},
+        "meta": _llm_meta(result.get("meta")),
+        "time_base": TIME_BASE_NOTE,
     }
 
 
@@ -136,7 +153,8 @@ def build_time_window_context(result: Dict[str, Any]) -> Dict[str, Any]:
                 for d in (forecast.get("days") or [])
             ],
         },
-        "meta": result.get("meta") or {},
+        "meta": _llm_meta(result.get("meta")),
+        "time_base": TIME_BASE_NOTE,
     }
 
 
@@ -355,8 +373,89 @@ def build_prompt(ctx: Dict[str, Any]) -> str:
     )
 
 
+# 部分推理模型（MiniMax-M3 / DeepSeek-R1 / QwQ 等）会把思考过程直接写进正文，
+# 常见形态是用内联标签包裹。这里只按已知标签名成对剥离；标签不在名单内时
+# 原样输出，宁可少删也不破坏正文。
+_THINK_TAGS = tuple(
+    (f"<{name}>", f"</{name}>")
+    for name in ("think", "thinking", "thought", "reasoning", "REASONING_SCRATCHPAD")
+)
+
+
+class ThinkTagFilter:
+    """跨增量剥离内联思考标签。
+
+    SSE 分块可能把标签切断（例如上一块以 ``<thi`` 结尾），因此对可能是
+    标签前缀的尾巴做缓冲，等下一块到齐再判断。
+    """
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._closing = ""  # 非空表示当前正处于某个思考块内部
+
+    @staticmethod
+    def _find_open(buf: str):
+        """返回最早出现的开标签位置及其配对闭标签。"""
+        best = None
+        for open_tag, close_tag in _THINK_TAGS:
+            idx = buf.find(open_tag)
+            if idx >= 0 and (best is None or idx < best[0]):
+                best = (idx, close_tag)
+        return best
+
+    @staticmethod
+    def _hold_start(buf: str) -> int:
+        """给出末尾「可能是标签前缀」的起始下标；无嫌疑时返回 len(buf)。"""
+        longest = max(len(tag) for pair in _THINK_TAGS for tag in pair)
+        for size in range(min(len(buf), longest - 1), 0, -1):
+            tail = buf[-size:]
+            if any(tag.startswith(tail) for pair in _THINK_TAGS for tag in pair):
+                return len(buf) - size
+        return len(buf)
+
+    def feed(self, text: str) -> str:
+        """喂入一段原始增量，返回可以展示给用户的部分。"""
+        self._buf += text
+        out: List[str] = []
+        while True:
+            if self._closing:
+                idx = self._buf.find(self._closing)
+                if idx < 0:
+                    self._buf = self._buf[self._hold_start(self._buf):]
+                    break
+                self._buf = self._buf[idx + len(self._closing):]
+                self._closing = ""
+                continue
+            hit = self._find_open(self._buf)
+            if hit is None:
+                keep = self._hold_start(self._buf)
+                out.append(self._buf[:keep])
+                self._buf = self._buf[keep:]
+                break
+            start, close_tag = hit
+            out.append(self._buf[:start])
+            self._closing = close_tag
+            self._buf = self._buf[start:]
+        return "".join(out)
+
+    def flush(self) -> str:
+        """流结束时取出剩余内容；未闭合的思考块视为残稿，整段丢弃。"""
+        if self._closing:
+            self._buf = ""
+            return ""
+        out, self._buf = self._buf, ""
+        return out
+
+
 def _iter_sse_content(resp) -> Iterator[str]:
-    """解析 OpenAI 兼容的 SSE 流，逐段产出文本增量。"""
+    """解析 OpenAI 兼容的 SSE 流，逐段产出**正文**增量。
+
+    只取 ``delta.content``：推理型网关会把思考过程放在 reasoning /
+    reasoning_content / reasoning_details 等独立字段里，这里天然不会读到；
+    ``AI_STRIP_THINKING`` 打开时再叠加一层内联标签剥离，
+    避免「思考独白混进报告正文」这种观感很差的情况。
+    """
+    sanitizer = ThinkTagFilter() if settings.AI_STRIP_THINKING else None
     for raw_line in resp:
         line = raw_line.decode("utf-8", errors="replace").strip()
         if not line or not line.startswith("data:"):
@@ -373,18 +472,29 @@ def _iter_sse_content(resp) -> Iterator[str]:
             continue
         delta = choices[0].get("delta") or {}
         piece = delta.get("content")
-        if piece:
+        if not piece:
+            continue
+        if sanitizer is None:
             yield piece
+            continue
+        shown = sanitizer.feed(piece)
+        if shown:
+            yield shown
+    if sanitizer is not None:
+        tail = sanitizer.flush()
+        if tail:
+            yield tail
 
 
-def stream_llm_report(ctx: Dict[str, Any]) -> Iterator[str]:
-    """以流式方式调用 OpenAI 兼容的 /chat/completions，逐段产出文本。
+def build_request_body(ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """组装 /chat/completions 请求体（单独成函数便于测试）。
 
-    使用标准库 urllib（项目便携 Python 未安装 httpx/requests），
-    因此这里以 ``readline`` 方式逐行消费响应，实现真实的流式输出。
+    关键是显式关闭推理型模型的「思考输出」：MiniMax-M3 这类模型默认会把
+    思考过程一并写进返回，前端就会把推理独白当成报告正文展示。
+    ``AI_THINKING`` 为空或取值不认识时不发送该字段，以兼容不支持它的网关
+    （Ollama、vLLM 等），此时改由响应侧的 ThinkTagFilter 兜底。
     """
-    url = f"{settings.AI_BASE_URL}/chat/completions"
-    body = {
+    body: Dict[str, Any] = {
         "model": settings.AI_MODEL,
         "messages": [
             {"role": "system", "content": settings.AI_SYSTEM_PROMPT},
@@ -394,6 +504,15 @@ def stream_llm_report(ctx: Dict[str, Any]) -> Iterator[str]:
         "max_tokens": settings.AI_MAX_TOKENS,
         "stream": True,
     }
+    thinking = (settings.AI_THINKING or "").strip().lower()
+    if thinking in ("disabled", "adaptive"):
+        body["thinking"] = {"type": thinking}
+    return body
+
+
+def _open_stream(body: Dict[str, Any]) -> Any:
+    """发起流式请求并返回响应对象（调用方负责关闭）。"""
+    url = f"{settings.AI_BASE_URL}/chat/completions"
     api_key = os.environ.get(settings.AI_API_KEY_ENV or "UAV_AI_API_KEY", "")
     req = urllib.request.Request(
         url,
@@ -405,7 +524,26 @@ def stream_llm_report(ctx: Dict[str, Any]) -> Iterator[str]:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=settings.AI_TIMEOUT_S) as resp:
+    return urllib.request.urlopen(req, timeout=settings.AI_TIMEOUT_S)
+
+
+def stream_llm_report(ctx: Dict[str, Any]) -> Iterator[str]:
+    """以流式方式调用 OpenAI 兼容的 /chat/completions，逐段产出文本。
+
+    使用标准库 urllib（项目便携 Python 未安装 httpx/requests），
+    因此这里以 ``readline`` 方式逐行消费响应，实现真实的流式输出。
+    """
+    body = build_request_body(ctx)
+    try:
+        resp = _open_stream(body)
+    except urllib.error.HTTPError as exc:
+        # 个别网关不认识 thinking 参数会直接 4xx：去掉该字段重试一次，
+        # 思考内容交给响应侧过滤器兜底，避免整个报告退化成规则版。
+        if "thinking" not in body or exc.code not in (400, 404, 422):
+            raise
+        body.pop("thinking", None)
+        resp = _open_stream(body)
+    with resp:
         yield from _iter_sse_content(resp)
 
 
@@ -419,13 +557,18 @@ def generate_report_stream(ctx: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
       - ``{"type": "done"}``：结束。
     """
     if llm_available():
+        # 「声明来源」必须晚于「确认真拿到内容」：
+        # 若先发 meta:llm 再失败，前端来源标签会先闪出「LLM 生成」再跳成
+        # 「规则模板」，看起来像是重复展示。因此这里等首个增量到达后
+        # 才补发 meta，保证来源标签只出现一次且终态正确。
+        announced = False
         try:
-            yield {"type": "meta", "source": "llm"}
-            produced = False
             for piece in stream_llm_report(ctx):
-                produced = True
+                if not announced:
+                    yield {"type": "meta", "source": "llm"}
+                    announced = True
                 yield {"type": "delta", "text": piece}
-            if produced:
+            if announced:
                 yield {"type": "done"}
                 return
             # 没有任何增量（例如网关不支持流式）→ 明确降级
@@ -434,6 +577,14 @@ def generate_report_stream(ctx: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
                 "message": "LLM 未返回任何内容，已回退到规则模板版报告。",
             }
         except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
+            # 已经吐出过部分正文时不能再降级，否则规则版会与残稿叠在一起。
+            if announced:
+                yield {
+                    "type": "error",
+                    "message": f"LLM 输出中断（{type(exc).__name__}），以上为已生成的部分内容。",
+                }
+                yield {"type": "done"}
+                return
             yield {
                 "type": "error",
                 "message": f"LLM 调用失败（{type(exc).__name__}），已回退到规则模板版报告。",

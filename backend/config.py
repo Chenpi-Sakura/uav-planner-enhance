@@ -7,6 +7,49 @@ from pydantic import BaseModel
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 CONFIG_FILE = ROOT_DIR / "config.json"
+ENV_FILE = ROOT_DIR / ".env"
+
+
+def load_env_file(path: Path = ENV_FILE) -> int:
+    """把仓库根目录 `.env` 里的键值对载入 os.environ（零依赖实现）。
+
+    约定与常见 dotenv 一致：
+      - 每行 `KEY=VALUE`，支持 `#` 注释与空行；
+      - `KEY = VALUE` 两侧空白会被去除；
+      - 值可用单/双引号包裹（用于含空格或 `#` 的 Key）；
+      - **已存在的真实环境变量优先**，`.env` 不覆盖它们，便于 CI/容器注入。
+
+    返回实际写入的键数量；文件不存在或格式异常时静默跳过，
+    保证「没有 .env 也能正常启动」这一契约（与 AI 未配置自动降级一致）。
+    """
+    if not path.exists():
+        return 0
+
+    written = 0
+    try:
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return 0
+
+    for line in raw_lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.lower().startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        if key not in os.environ:
+            os.environ[key] = value
+            written += 1
+    return written
 
 class Settings(BaseModel):
     # Server bind address / port (from root config.json)
@@ -88,6 +131,16 @@ class Settings(BaseModel):
     AI_TIMEOUT_S: float = 60.0         # 单次请求超时（秒）
     AI_MAX_TOKENS: int = 900           # 生成上限，避免报告过长
     AI_TEMPERATURE: float = 0.3        # 较低温度换取口径稳定
+    # ---- 思考（CoT）输出控制 ----
+    # 推理型模型（MiniMax-M3 / DeepSeek-R1 / QwQ 等）会把「思考过程」一并写进输出，
+    # 不做处理时报告正文前面会多出一大段自言自语。这里设两道防线：
+    #   1) AI_THINKING：请求侧关闭思考。取值 disabled / adaptive / 空字符串
+    #      （空 = 不发送该字段，供不认识该参数的网关使用）。MiniMax-M3 等
+    #      OpenAI 兼容网关接受 thinking = {"type": "disabled"}。
+    #   2) AI_STRIP_THINKING：响应侧兜底，忽略 delta 里的 reasoning 系列字段，
+    #      并从 content 中剥离内联思考标签。默认开启，保证正文只保留报告本身。
+    AI_THINKING: str = 'disabled'    # 请求侧思考开关
+    AI_STRIP_THINKING: bool = True   # 响应侧思考内容兜底过滤
     # 评估接口超时（秒）：超过则返回 504 并提示稍后重试，避免请求长期挂起。
     # 实测端到端 5-8s（暖读），首次冷读可能更久，故默认留足余量。
     ASSESS_TIMEOUT_S: float = 120.0
@@ -97,6 +150,8 @@ class Settings(BaseModel):
         '禁止编造任何气象事实。不确定时使用「数据显示」措辞。'
         '用简洁的中文分点作答，包含：结论概述、航线地理叙事、气象解读、'
         '时间建议、操作建议、数据口径声明。不要输出 JSON，不要复述输入原文。'
+        '直接给出报告正文：不要输出思考过程、草稿、自我说明或任何分析旁白。'
+        'JSON 中的时间已是北京时间（UTC+8），照抄即可，禁止再做时区换算或标注 UTC。'
     )
 
 
@@ -135,17 +190,44 @@ def _load_ai_config() -> dict:
             cfg["AI_MAX_TOKENS"] = int(ai["max_tokens"])
         if ai.get("temperature") is not None:
             cfg["AI_TEMPERATURE"] = float(ai["temperature"])
+        if "thinking" in ai:
+            cfg["AI_THINKING"] = str(ai["thinking"] or "").strip().lower()
+        if "strip_thinking" in ai:
+            cfg["AI_STRIP_THINKING"] = bool(ai["strip_thinking"])
     except (OSError, ValueError, TypeError):
         pass
 
     # 环境变量覆盖（便于不修改仓库文件即切换模型/网关）
+    # 注：.env 已在模块导入时载入 os.environ，因此这里能一并读到。
     if os.environ.get("UAV_AI_BASE_URL"):
         cfg["AI_BASE_URL"] = os.environ["UAV_AI_BASE_URL"].rstrip("/")
     if os.environ.get("UAV_AI_MODEL"):
         cfg["AI_MODEL"] = os.environ["UAV_AI_MODEL"]
     if os.environ.get("UAV_AI_ENABLED"):
         cfg["AI_ENABLED"] = os.environ["UAV_AI_ENABLED"].lower() in ("1", "true", "yes", "on")
+    # 数值型参数做容错解析：填错时忽略而非让服务启动失败。
+    for env_name, field, cast in (
+        ("UAV_AI_TIMEOUT_S", "AI_TIMEOUT_S", float),
+        ("UAV_AI_MAX_TOKENS", "AI_MAX_TOKENS", int),
+        ("UAV_AI_TEMPERATURE", "AI_TEMPERATURE", float),
+    ):
+        raw = os.environ.get(env_name)
+        if raw:
+            try:
+                cfg[field] = cast(raw)
+            except (TypeError, ValueError):
+                pass
+    # 文本型开关单独处理：thinking 允许显式置空（= 不发送该字段），
+    # 因此用「环境变量是否存在」判断，而不是「值是否为真」。
+    if "UAV_AI_THINKING" in os.environ:
+        cfg["AI_THINKING"] = os.environ["UAV_AI_THINKING"].strip().lower()
+    if os.environ.get("UAV_AI_STRIP_THINKING"):
+        cfg["AI_STRIP_THINKING"] = os.environ["UAV_AI_STRIP_THINKING"].lower() not in ("0", "false", "no", "off")
     return cfg
 
+
+# 先载入 .env（若存在），再构造 settings；真实环境变量优先级更高，
+# 因此 `set UAV_AI_API_KEY=...` 之类的一次性覆盖仍然生效。
+load_env_file()
 
 settings = Settings(**_load_backend_config(), **_load_ai_config())
