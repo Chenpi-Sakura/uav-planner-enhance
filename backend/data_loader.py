@@ -1,4 +1,5 @@
 import os
+import math
 import xarray as xr
 import io
 from collections import OrderedDict
@@ -305,11 +306,68 @@ class DataLoader:
         finally:
             ds.close()
 
+    @staticmethod
+    def _overlay_canvas(min_lat: float, max_lat: float, min_lon: float, max_lon: float,
+                        dpi: int, max_px: int):
+        """按 bbox 在 Web Mercator 下的实际宽高比给出画布英寸数。
+
+        Leaflet 是把整张图线性贴到 bounds 上的，此前固定正方形画布对扁平视野框
+        有近六成像素落在拉伸出来的空白上；宽高比对齐后同样的像素预算才真用在数据上。
+        """
+        def merc_y(lat):
+            return math.log(math.tan(math.pi / 4.0 + math.radians(lat) / 2.0))
+
+        try:
+            dy = merc_y(max_lat) - merc_y(min_lat)
+            aspect = math.radians(max_lon - min_lon) / dy if dy > 0 else 1.0
+        except (ValueError, OverflowError):
+            aspect = 1.0
+        if not math.isfinite(aspect) or aspect <= 0:
+            aspect = 1.0
+        aspect = min(max(aspect, 0.2), 6.0)
+
+        if aspect >= 1.0:
+            w_px, h_px = int(max_px), int(round(max_px / aspect))
+        else:
+            w_px, h_px = int(round(max_px * aspect)), int(max_px)
+        return (max(w_px, 1) / dpi, max(h_px, 1) / dpi), (w_px, h_px)
+
+    @staticmethod
+    def _encode_overlay_png(fig, colors: int) -> bytes:
+        """把画布导出成 PNG；colors>=2 时转成 8-bit 调色板。
+
+        直接取 Agg 的像素缓冲，绕开「先编 PNG 再解码回来临时量化」这一趟往返
+        （实测省约 0.36s/张）。contourf 本就是离散色阶，量化后可见色差约 2/255，
+        alpha 走 tRNS 保留；Pillow 异常时退回 matplotlib 自己编码，宁可大图也别开不出图。
+        """
+        buf = io.BytesIO()
+        try:
+            from PIL import Image
+            fig.canvas.draw()
+            w, h = fig.canvas.get_width_height()
+            img = Image.frombytes('RGBA', (w, h), bytes(fig.canvas.buffer_rgba()))
+            if colors >= 2:
+                img = img.quantize(colors=colors, method=Image.Quantize.FASTOCTREE,
+                                   dither=Image.Dither.NONE)
+            img.save(buf, format='PNG', optimize=True)
+            return buf.getvalue()
+        except Exception as e:
+            print(f"Overlay png export via Pillow failed ({e}), falling back to savefig")
+            buf.close()
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', transparent=True)
+            return buf.getvalue()
+
     def get_overlay_image(self, min_lat: float, max_lat: float, min_lon: float, max_lon: float, layer_type: str, date: str = '2022-05-30', time_slot: str = 'morning') -> bytes:
         """
         Generate a transparent PNG heatmap for the given bounding box and layer type.
         """
-        fig = plt.figure(figsize=(8, 8), dpi=200)
+        dpi = int(settings.OVERLAY_DPI)
+        figsize, _ = self._overlay_canvas(min_lat, max_lat, min_lon, max_lon,
+                                          dpi, int(settings.OVERLAY_MAX_PX))
+        fig = plt.figure(figsize=figsize, dpi=dpi)
+        # 等效于 savefig(transparent=True)：底板不透明度清零，贴图区域才不会被填成白底
+        fig.patch.set_alpha(0.0)
         ax = plt.Axes(fig, [0., 0., 1., 1.])
         ax.set_axis_off()
         fig.add_axes(ax)
@@ -323,9 +381,6 @@ class DataLoader:
         tc_path = os.path.join(settings.DATA_DIR, settings.TC_FILE)
         rh_path = os.path.join(settings.DATA_DIR, settings.RH_FILE)
         q_path = os.path.join(settings.DATA_DIR, settings.Q_FILE)
-
-        data = None
-        Lons, Lats = None, None
 
         try:
             target_time = np.datetime64(date) if 'T' in date else np.datetime64(f"{date}T08:00:00")
@@ -347,8 +402,9 @@ class DataLoader:
 
             lat_len = len(u_lats)
             lon_len = len(u_lons)
-            lat_step = max(1, lat_len // 60)
-            lon_step = max(1, lon_len // 60)
+            grid_points = int(settings.OVERLAY_GRID_POINTS)
+            lat_step = max(1, lat_len // grid_points)
+            lon_step = max(1, lon_len // grid_points)
 
             u_vals = u_vals[::lat_step, ::lon_step]
             v_vals = v_vals[::lat_step, ::lon_step]
@@ -381,16 +437,21 @@ class DataLoader:
             else:
                 data = u_vals
 
+            if Lons.size < 4 or data.size < 4 or Lons.shape != data.shape:
+                # 包围框整体落在数据覆盖范围外时 sel() 给的是空数组而不是 None，
+                # 放任它走到 contourf 会抛在 try 外面变成 500，这里先判成无数据。
+                raise ValueError(f'overlay grid degenerate: {Lons.shape} / {data.shape}')
+
             data = ndimage.gaussian_filter(data, sigma=0.0)
         except Exception as e:
             print(f"Error subsetting real data: {e}")
             import traceback
             traceback.print_exc()
-            if Lons is None:
-                lons = np.linspace(min_lon, max_lon, 200)
-                lats = np.linspace(min_lat, max_lat, 200)
-                Lons, Lats = np.meshgrid(lons, lats)
-            data = np.zeros_like(Lons)
+            # 取不到数据（多数是包围框整体越界）就出全透明图：
+            # 拿 0 当实测值去 contourf 会在地图上糊一层假色。
+            png = self._encode_overlay_png(fig, int(settings.OVERLAY_COLORS))
+            plt.close(fig)
+            return png
 
         cmap_name = 'jet'
         vmin, vmax = 0.0, 30.0
@@ -410,15 +471,15 @@ class DataLoader:
             cmap_name = 'PuBu'
             vmin, vmax = 0.0, 10.0
         
-        levels = np.linspace(vmin, vmax, 50)
+        levels = np.linspace(vmin, vmax, int(settings.OVERLAY_CONTOUR_LEVELS))
         cf = ax.contourf(Lons, Lats, data, levels=levels, cmap=cmap_name, alpha=0.55, extend='both')
-        ax.contour(Lons, Lats, data, levels=15, colors='black', linewidths=0.3, alpha=0.8)
-        
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', transparent=True)
+        line_levels = int(settings.OVERLAY_LINE_LEVELS)
+        if line_levels > 0:
+            ax.contour(Lons, Lats, data, levels=line_levels, colors='black', linewidths=0.3, alpha=0.8)
+
+        png = self._encode_overlay_png(fig, int(settings.OVERLAY_COLORS))
         plt.close(fig)
-        buf.seek(0)
-        return buf.read()
+        return png
 
 # Singleton instance
 data_loader = DataLoader()

@@ -121,6 +121,22 @@ class Settings(BaseModel):
     ALT_BASE_RADII_KM: list = [10.0, 20.0, 30.0]   # 候选点采样半径
     ALT_BASE_MAX_RESULTS: int = 3                  # 最多返回 N 个替代方案
 
+    # ==================== 气象覆盖层出图质量 ====================
+    # 覆盖层是「后端出一张透明 PNG，前端贴成 imageOverlay」，公网链路要把它
+    # 整个穿过服务器出口带宽（实测约 2.5 Mbps，1 MB 图 ≈ 3.3 s），所以体积
+    # 就是加载时间。下面每个参数都是一次「清晰度 / 字节」的显式取舍。
+    # 配置来源：根目录 config.json 的 overlay 段 > 这里的默认值。
+    OVERLAY_DPI: int = 150            # matplotlib 画布 dpi（现网旧值 200）
+    OVERLAY_MAX_PX: int = 1600        # 图片长边像素上限，按 bbox 实际宽高比分配
+    OVERLAY_COLORS: int = 128         # 调色板量化档位数；0 或 1 = 不量化（RGBA 直出）
+    OVERLAY_GRID_POINTS: int = 60     # 数据重采样后的网格点数（等值线细节上限）
+    OVERLAY_CONTOUR_LEVELS: int = 50  # 填色色阶数
+    OVERLAY_LINE_LEVELS: int = 15     # 黑色等值线条数
+    # 响应的 Cache-Control max-age（同一小时同一 bbox 图不变）。
+    # 注意这个值同时管着服务器那层：实测 nginx 以回源的 max-age 为准，
+    # `proxy_cache_valid 200 7d` 并不会覆盖它，所以它就是整条链路的 TTL。
+    OVERLAY_CACHE_SECONDS: int = 86400
+
     # ==================== AI 辅助评估（功能三） ====================
     # 默认关闭：未配置时自动降级为离线规则模板版，保证演示可用性。
     # 配置来源优先级：环境变量 > 根目录 config.json 的 ai 段 > 这里的默认值。
@@ -226,8 +242,56 @@ def _load_ai_config() -> dict:
     return cfg
 
 
+def _load_overlay_config() -> dict:
+    """从根目录 config.json 的 `overlay` 段读取覆盖层质量参数。
+
+    只做类型容错：填错或留空时忽略该项、沿用默认值，不让服务启动失败。
+    非法取值（如 dpi<=0、colors=2）会被夹到安全范围，避免出图直接报错。
+    """
+    cfg: dict = {}
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        ov = data.get("overlay", {}) or {}
+    except (OSError, ValueError):
+        return cfg
+
+    for key, field, cast in (
+        ("dpi", "OVERLAY_DPI", int),
+        ("max_px", "OVERLAY_MAX_PX", int),
+        ("colors", "OVERLAY_COLORS", int),
+        ("grid_points", "OVERLAY_GRID_POINTS", int),
+        ("contour_levels", "OVERLAY_CONTOUR_LEVELS", int),
+        ("line_levels", "OVERLAY_LINE_LEVELS", int),
+        ("cache_seconds", "OVERLAY_CACHE_SECONDS", int),
+    ):
+        if key in ov and ov[key] is not None:
+            try:
+                cfg[field] = cast(ov[key])
+            except (TypeError, ValueError):
+                pass
+
+    if "OVERLAY_DPI" in cfg:
+        cfg["OVERLAY_DPI"] = min(max(cfg["OVERLAY_DPI"], 30), 400)
+    if "OVERLAY_MAX_PX" in cfg:
+        cfg["OVERLAY_MAX_PX"] = min(max(cfg["OVERLAY_MAX_PX"], 200), 4096)
+    if "OVERLAY_COLORS" in cfg:
+        # 量化位数只有 2 的幂有意义；<2 视为关闭量化
+        c = cfg["OVERLAY_COLORS"]
+        cfg["OVERLAY_COLORS"] = 0 if c < 2 else min(1 << (c - 1).bit_length(), 256)
+    if "OVERLAY_GRID_POINTS" in cfg:
+        cfg["OVERLAY_GRID_POINTS"] = min(max(cfg["OVERLAY_GRID_POINTS"], 8), 512)
+    if "OVERLAY_CONTOUR_LEVELS" in cfg:
+        cfg["OVERLAY_CONTOUR_LEVELS"] = min(max(cfg["OVERLAY_CONTOUR_LEVELS"], 2), 256)
+    if "OVERLAY_LINE_LEVELS" in cfg:
+        cfg["OVERLAY_LINE_LEVELS"] = max(cfg["OVERLAY_LINE_LEVELS"], 0)
+    if "OVERLAY_CACHE_SECONDS" in cfg:
+        cfg["OVERLAY_CACHE_SECONDS"] = max(cfg["OVERLAY_CACHE_SECONDS"], 0)
+    return cfg
+
+
 # 先载入 .env（若存在），再构造 settings；真实环境变量优先级更高，
 # 因此 `set UAV_AI_API_KEY=...` 之类的一次性覆盖仍然生效。
 load_env_file()
 
-settings = Settings(**_load_backend_config(), **_load_ai_config())
+settings = Settings(**_load_backend_config(), **_load_ai_config(), **_load_overlay_config())

@@ -244,7 +244,10 @@ async def get_weather_overlay(min_lat: float, max_lat: float, min_lon: float, ma
     time_str = to_data_time_str(f"{date}T{start_time}")
     loop = asyncio.get_event_loop()
     image_bytes = await loop.run_in_executor(None, data_loader.get_overlay_image, min_lat, max_lat, min_lon, max_lon, layer, time_str)
-    return Response(content=image_bytes, media_type="image/png")
+    # 同一 layer/date/整点/包围框的图是确定的，允许各级缓存复用；
+    # 包围框由前端量化到固定格点，否则每次平移都是新键、缓存全数落空。
+    return Response(content=image_bytes, media_type="image/png",
+                    headers={"Cache-Control": f"public, max-age={int(settings.OVERLAY_CACHE_SECONDS)}"})
 
 # 前端构建产物与 API 共用本端口：公网只需转发这一个端口，页面与接口天然同源。
 # 挂载必须在所有 /api 路由之后（Starlette 按注册顺序匹配，根路径挂载会兜走其余请求）。

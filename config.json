@@ -2,5 +2,14 @@
   "backend": {
     "host": "0.0.0.0",
     "port": 9090
+  },
+  "overlay": {
+    "dpi": 150,
+    "max_px": 1600,
+    "colors": 128,
+    "grid_points": 60,
+    "contour_levels": 50,
+    "line_levels": 15,
+    "cache_seconds": 86400
   }
 }

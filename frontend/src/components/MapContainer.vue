@@ -39,6 +39,7 @@ const layers: Record<string, L.TileLayer> = {
 };
 
 let currentLayer: L.TileLayer | null = null;
+let overlayDebounce: number = 0;
 
 onMounted(() => {
   if (!mapElement.value) return;
@@ -91,9 +92,10 @@ onMounted(() => {
 
   // Re-fetch overlays when map is moved or zoomed
   map.on('moveend', () => {
-    if (store.overlays.length > 0) {
-      renderRealOverlays();
-    }
+    if (store.overlays.length === 0) return;
+    // 拖拽/缩放会连发 moveend，等视野稳定再取图，避免中途作废的请求反复叠图
+    window.clearTimeout(overlayDebounce);
+    overlayDebounce = window.setTimeout(renderRealOverlays, 250);
   });
 });
 
@@ -307,32 +309,65 @@ const renderPlannedPath = () => {
 
 let lastRenderState = '';
 
+// 覆盖层图片由 (layer, date, hour, bbox) 唯一决定，bbox 必须量化成稳定值，
+// 否则每次平移都是新 URL，各级缓存（浏览器 / OpenResty / CF）全部落空。
+const quantizeBounds = (bounds: L.LatLngBounds) => {
+  const rawStep = (bounds.getNorth() - bounds.getSouth()) / 8;
+  const mag = Math.pow(10, Math.floor(Math.log10(Math.max(rawStep, 1e-4))));
+  const n = rawStep / mag;
+  const step = (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * mag;
+  const dec = Math.min(4, Math.max(0, Math.ceil(-Math.log10(step))));
+  // 向外吸附：量化后的框始终罩住视口，图片不会露边
+  const snap = (v: number, up: boolean) => {
+    const q = (up ? Math.ceil(v / step) : Math.floor(v / step)) * step;
+    return Number(Math.max(-90, Math.min(90, q)).toFixed(dec));
+  };
+  const snapLon = (v: number, up: boolean) => {
+    const q = (up ? Math.ceil(v / step) : Math.floor(v / step)) * step;
+    return Number(Math.max(-180, Math.min(180, q)).toFixed(dec));
+  };
+  return {
+    minLat: snap(bounds.getSouth(), false),
+    maxLat: snap(bounds.getNorth(), true),
+    minLon: snapLon(bounds.getWest(), false),
+    maxLon: snapLon(bounds.getEast(), true),
+    dec,
+  };
+};
+
+// 尚未全部就位的一批覆盖层：新一轮请求发起时直接丢弃，避免多批半透明图叠色
+let inflightOverlays: L.ImageOverlay[] = [];
+let overlaySeq = 0;
+
 const renderRealOverlays = () => {
   if (!map) return;
-  
+
   if (store.overlays.length === 0) {
+    window.clearTimeout(overlayDebounce);
     mockOverlaysLayer.clearLayers();
+    inflightOverlays = [];
+    overlaySeq++;
     lastRenderState = '';
     return;
   }
 
-  const bounds = map.getBounds();
-  const min_lat = bounds.getSouth();
-  const max_lat = bounds.getNorth();
-  const min_lon = bounds.getWest();
-  const max_lon = bounds.getEast();
-  
+  const { minLat, maxLat, minLon, maxLon, dec } = quantizeBounds(map.getBounds());
+
   const currentHour = parseInt(store.targetTime.split(':')[0] || '8');
-  // State guard to prevent flickering: only re-fetch if layers, date, HOUR, or map bounds change
-  const currentStateStr = `${store.overlays.join(',')}_${store.targetDate}_${currentHour}_${min_lat.toFixed(4)}_${max_lat.toFixed(4)}_${min_lon.toFixed(4)}_${max_lon.toFixed(4)}`;
-  
+  // State guard to prevent flickering: only re-fetch if layers, date, HOUR, or quantized bounds change
+  const currentStateStr = `${store.overlays.join(',')}_${store.targetDate}_${currentHour}_${minLat}_${maxLat}_${minLon}_${maxLon}`;
+
   if (currentStateStr === lastRenderState) {
     return; // Skip redundant updates! (e.g. simulation minute ticking)
   }
   lastRenderState = currentStateStr;
 
-  // Create bounds for the ImageOverlay
-  const imageBounds: L.LatLngBoundsExpression = [[min_lat, min_lon], [max_lat, max_lon]];
+  inflightOverlays.forEach(l => mockOverlaysLayer.removeLayer(l));
+  inflightOverlays = [];
+  const seq = ++overlaySeq;
+
+  // Create bounds for the ImageOverlay，与 URL 用同一组量化值保证像素对齐
+  const imageBounds: L.LatLngBoundsExpression = [[minLat, minLon], [maxLat, maxLon]];
 
   // Keep a reference to current layers to remove later to prevent flickering
   const oldLayers = mockOverlaysLayer.getLayers();
@@ -341,22 +376,31 @@ const renderRealOverlays = () => {
   store.overlays.forEach(layer => {
     const hourStr = currentHour.toString().padStart(2, '0') + ':00';
     // Removed t=Date.now() to allow browser caching and explicitly use hourStr
-    const url = `${API_BASE}/api/weather/overlay?min_lat=${min_lat}&max_lat=${max_lat}&min_lon=${min_lon}&max_lon=${max_lon}&layer=${layer}&date=${store.targetDate}&start_time=${hourStr}`;
-    
+    const url = `${API_BASE}/api/weather/overlay?min_lat=${minLat.toFixed(dec)}&max_lat=${maxLat.toFixed(dec)}&min_lon=${minLon.toFixed(dec)}&max_lon=${maxLon.toFixed(dec)}&layer=${layer}&date=${store.targetDate}&start_time=${hourStr}`;
+
     const overlay = L.imageOverlay(url, imageBounds, {
       opacity: 0.8,
       interactive: false,
       crossOrigin: true
     });
-    
-    overlay.on('load', () => {
+
+    // 失败也要计数，否则这一批永远不就位，旧图层会一直压在新图层下面
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      if (seq !== overlaySeq) return; // 已被更新的请求取代
       loadedCount++;
       // Once all new layers are loaded, remove old layers
       if (loadedCount === store.overlays.length) {
+        inflightOverlays = [];
         oldLayers.forEach(l => mockOverlaysLayer.removeLayer(l));
       }
-    });
-    
+    };
+
+    overlay.on('load', settle);
+    overlay.on('error', settle);
+    inflightOverlays.push(overlay);
     overlay.addTo(mockOverlaysLayer);
   });
 };
@@ -425,6 +469,7 @@ watch(() => store.simulationIndex, (newIdx) => {
 });
 
 onUnmounted(() => {
+  window.clearTimeout(overlayDebounce);
   if (map) {
     map.remove();
   }
