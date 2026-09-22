@@ -10,7 +10,7 @@ from schemas import (
     FeasibilityRequest, FeasibilityResponse,
 )
 from data_loader import data_loader
-from planner import plan_path, plan_path_ex
+from planner import compute_path_turbulence, plan_path_ex
 from feasibility import assess_feasibility
 from time_window import assess_time_window
 import assessor
@@ -142,10 +142,11 @@ async def plan_route(request: PlanRequest):
         # 无安全航线：明确返回 feasible=False，不再用直线兜底
         return PlanResponse(path=[], total_distance=0.0, max_tke=0.0, max_edr=0.0, feasible=False)
 
-    path, total_dist, max_tke, max_edr = await loop.run_in_executor(None, plan_path, request)
+    max_tke, max_edr = await loop.run_in_executor(
+        None, compute_path_turbulence, request, result.path)
     return PlanResponse(
-        path=path,
-        total_distance=total_dist,
+        path=result.path,
+        total_distance=result.total_distance,
         max_tke=max_tke,
         max_edr=max_edr,
         feasible=True,

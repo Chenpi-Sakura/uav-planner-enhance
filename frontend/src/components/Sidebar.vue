@@ -356,8 +356,8 @@ const handlePlan = async () => {
   justify-content: center;
   cursor: pointer;
   background: var(--panel-bg);
-  backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
   border: 1px solid var(--panel-border);
   border-left: none;
   color: var(--text-secondary);

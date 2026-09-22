@@ -136,10 +136,14 @@ def assess_feasibility(req,
         reason = REASON_DATA_MISSING
     elif not plan.found:
         feasible = False
-        reason = REASON_ITERATION if plan.reason == 'iteration_limit' else REASON_NO_PATH
-        # 起降点本身不安全时，不必再报告途中阻塞区，避免张冠李戴
-        if endpoint_bad is None:
-            blocking_block = _analyze_blocking(start, end, req)
+        if plan.reason == 'no_data':
+            # 日期或区域没有气象数据，与「湍流封死」是两回事，别去分析阻塞区
+            reason = REASON_DATA_MISSING
+        else:
+            reason = REASON_ITERATION if plan.reason == 'iteration_limit' else REASON_NO_PATH
+            # 起降点本身不安全时，不必再报告途中阻塞区，避免张冠李戴
+            if endpoint_bad is None:
+                blocking_block = _analyze_blocking(start, end, req)
     elif risk_profile is not None and risk_profile.overall == LEVEL_UNFLYABLE:
         feasible = False
         reason = REASON_NO_PATH

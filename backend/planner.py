@@ -16,7 +16,7 @@ class SegmentResult:
     """A* 单段规划结果，携带是否成功与失败原因。"""
     path: List[Point]
     found: bool
-    reason: Optional[str] = None      # None | 'blocked' | 'iteration_limit'
+    reason: Optional[str] = None      # None | 'blocked' | 'iteration_limit' | 'no_data'
     final_g_score: float = 0.0        # 该段结束时的累计 A* 代价
     final_dist: float = 0.0           # 该段结束时的累计物理距离（km）
     times: List[object] = field(default_factory=list)  # 与 path 一一对应的绝对时刻
@@ -70,21 +70,85 @@ def get_neighbors(node: Tuple[float, float], resolution: float) -> List[Tuple[fl
         (lat - resolution, lon + resolution),
     ]
 
-def _is_safe_at(node, base_time, dist_km, speed_kmh,
-                tke_grid, edr_grid, lats, lons, times_arr,
+class _GridIndex:
+    """把「坐标值 -> 网格下标」的查询从每次 np.abs(arr - v).argmin() 换成等价快查。
+
+    与 argmin 等价靠两条写死的规则，不是靠「结果差不多」：
+      ① 并列时取最小下标。时间轴用 `2*r > dt` 进位（而非 `>=`），
+         所以正落在两整点中间的时刻取的是**更早**的那一小时。
+      ② 时间轴只有在严格升序且等距时才走算术定位，一旦不等距就退回
+         argmin 原路径；lat/lon 不做任何形状假设，只缓存 argmin 的结果。
+
+    lat/lon 的缓存命中率接近 100%，因为 A* 的节点一律量化到 round(x, 2)，
+    查询值天然落在 0.01° 的有限格点上。
+    """
+
+    __slots__ = ("_lats", "_lons", "_times_ns", "_t0", "_dt", "_n", "_uniform",
+                 "_lat_cache", "_lon_cache")
+
+    def __init__(self, lats, lons, times_arr):
+        self._lats = lats
+        self._lons = lons
+        self._times_ns = np.asarray(times_arr, dtype='datetime64[ns]').astype('int64')
+        n = int(self._times_ns.size)
+        self._n = n
+        self._t0 = int(self._times_ns[0]) if n else 0
+        self._dt = int(self._times_ns[1] - self._times_ns[0]) if n > 1 else 0
+        uniform = n > 1 and self._dt > 0
+        if uniform and n > 2:
+            uniform = bool(np.all(self._times_ns[1:] - self._times_ns[:-1] == self._dt))
+        self._uniform = uniform
+        self._lat_cache = {}
+        self._lon_cache = {}
+
+    def lat(self, v):
+        i = self._lat_cache.get(v)
+        if i is None:
+            i = int(np.abs(self._lats - v).argmin())
+            self._lat_cache[v] = i
+        return i
+
+    def lon(self, v):
+        i = self._lon_cache.get(v)
+        if i is None:
+            i = int(np.abs(self._lons - v).argmin())
+            self._lon_cache[v] = i
+        return i
+
+    def time(self, t_ns):
+        """t_ns 已是自 epoch 起的纳秒整数；返回与 argmin 一致的下标。"""
+        if not self._uniform:
+            return int(np.abs(self._times_ns - t_ns).argmin())
+        q, r = divmod(t_ns - self._t0, self._dt)
+        if 2 * r > self._dt:
+            q += 1
+        if q < 0:
+            return 0
+        if q >= self._n:
+            return self._n - 1
+        return int(q)
+
+
+def _ns_of(dt64):
+    """datetime64 -> 自 epoch 起的纳秒整数（单位换算为精确整数倍，不引入误差）。"""
+    return int(np.datetime64(dt64, 'ns').astype('int64'))
+
+
+def _is_safe_at(node, base_ns, dist_km, speed_kmh,
+                tke_grid, edr_grid, lookup,
                 tke_thresh, edr_thresh):
     """查询某节点在指定累计距离对应时刻的气象，判断是否满足硬约束。
 
     返回 (safe, tke, edr)。数据缺失（NaN）视为不安全（与 A* 邻居判定一致）。
     """
-    if tke_grid is None or lats is None or lons is None or times_arr is None:
+    if tke_grid is None or lookup is None:
         return False, float('nan'), float('nan')
 
     elapsed_hours = dist_km / speed_kmh if speed_kmh else 0.0
-    t = base_time + np.timedelta64(int(elapsed_hours * 3600), 's')  # base_time 已是数据标签时间
-    idx_t = np.abs(times_arr - t).argmin()
-    idx_lat = np.abs(lats - node[0]).argmin()
-    idx_lon = np.abs(lons - node[1]).argmin()
+    t_ns = base_ns + int(elapsed_hours * 3600) * 1000000000  # base_ns 已是数据标签时间
+    idx_t = lookup.time(t_ns)
+    idx_lat = lookup.lat(node[0])
+    idx_lon = lookup.lon(node[1])
     tke = tke_grid[idx_t, idx_lat, idx_lon]
     edr = edr_grid[idx_t, idx_lat, idx_lon]
 
@@ -95,8 +159,8 @@ def _is_safe_at(node, base_time, dist_km, speed_kmh,
     return True, tke, edr
 
 
-def _terminal_hop_is_safe(current, end_node, base_time, start_dist, speed_kmh,
-                          tke_grid, edr_grid, lats, lons, times_arr,
+def _terminal_hop_is_safe(current, end_node, base_ns, start_dist, speed_kmh,
+                          tke_grid, edr_grid, lookup,
                           tke_thresh, edr_thresh, resolution):
     """校验「当前节点 -> 终点」这一末段是否全程安全。
 
@@ -113,8 +177,8 @@ def _terminal_hop_is_safe(current, end_node, base_time, start_dist, speed_kmh,
         frac = k / steps
         node = (round(current[0] + dlat * frac, 2), round(current[1] + dlon * frac, 2))
         seg_km = start_dist + _deg_to_km(current, node)
-        safe, _, _ = _is_safe_at(node, base_time, seg_km, speed_kmh,
-                                 tke_grid, edr_grid, lats, lons, times_arr,
+        safe, _, _ = _is_safe_at(node, base_ns, seg_km, speed_kmh,
+                                 tke_grid, edr_grid, lookup,
                                  tke_thresh, edr_thresh)
         if not safe:
             return False
@@ -162,11 +226,25 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
     
     tke_grid, edr_grid, lats, lons, times_arr = data_loader.get_meteorology_grid(min_lat, max_lat, min_lon, max_lon, date=start_time_str)
 
+    # 日期或区域落在 NetCDF 覆盖之外时，xarray 的 sel 返回的是**空数组**而不是 None，
+    # 此前表现为 argmin 打在空序列上抛 ValueError、接口直接 500。这里给出显式结论，
+    # 让上层按「数据覆盖不足」解释，而不是把它伪装成「被湍流封死」。
+    if tke_grid is not None and (times_arr.size == 0 or lats.size == 0 or lons.size == 0):
+        return SegmentResult(
+            path=[], found=False, reason='no_data',
+            final_g_score=initial_g_score, final_dist=initial_dist,
+            times=[], tkes=[], edrs=[], iterations=0, explored=0,
+        )
+
+    # base_time 在整个 A* 过程中恒定，纳秒基准只换算一次
+    base_ns = _ns_of(base_time)
+    lookup = None if tke_grid is None else _GridIndex(lats, lons, times_arr)
+
     # 起点安全校验：起点本身处于高危区时不应给出可行结论
     if tke_grid is not None:
         start_safe, start_tke, start_edr = _is_safe_at(
-            start_node, base_time, initial_dist, speed_kmh,
-            tke_grid, edr_grid, lats, lons, times_arr, tke_thresh, edr_thresh)
+            start_node, base_ns, initial_dist, speed_kmh,
+            tke_grid, edr_grid, lookup, tke_thresh, edr_thresh)
         node_tke[start_node] = start_tke
         node_edr[start_node] = start_edr
         if not start_safe:
@@ -183,9 +261,9 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
         # If we are close enough to the end node
         if heuristic(current, end_node) < resolution * 1.5:
             # 末段安全校验：终点本身与最后一段若不可飞，则不能算作抵达
-            if not _terminal_hop_is_safe(current, end_node, base_time,
+            if not _terminal_hop_is_safe(current, end_node, base_ns,
                                          real_dist[current], speed_kmh,
-                                         tke_grid, edr_grid, lats, lons, times_arr,
+                                         tke_grid, edr_grid, lookup,
                                          tke_thresh, edr_thresh, resolution):
                 continue
 
@@ -219,8 +297,8 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
                 dist_nd = final_dist if nd == end_node else real_dist.get(nd, initial_dist)
                 times.append(base_time + np.timedelta64(int(dist_nd / speed_kmh * 3600), 's'))
                 if nd == end_node:
-                    _, e_tke, e_edr = _is_safe_at(nd, base_time, final_dist, speed_kmh,
-                                                  tke_grid, edr_grid, lats, lons, times_arr,
+                    _, e_tke, e_edr = _is_safe_at(nd, base_ns, final_dist, speed_kmh,
+                                                  tke_grid, edr_grid, lookup,
                                                   tke_thresh, edr_thresh)
                     tkes_out.append(float(e_tke))
                     edrs_out.append(float(e_edr))
@@ -254,15 +332,14 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
             
             # Predict the absolute time using the real physical distance traveled
             elapsed_hours = (real_dist[current] + phys_dist) / speed_kmh
-            current_time = base_time + np.timedelta64(int(elapsed_hours * 3600), 's')
-            
-            # Fast O(1) vectorized array lookup
+            current_ns = base_ns + int(elapsed_hours * 3600) * 1000000000
+
+            # Fast O(1) array lookup（下标定位见 _GridIndex，语义与 argmin 一致）
             tke, edr = float('nan'), float('nan')
-            if tke_grid is not None and lats is not None and lons is not None and times_arr is not None:
-                # Find nearest indices
-                idx_time = np.abs(times_arr - current_time).argmin()
-                idx_lat = np.abs(lats - neighbor[0]).argmin()
-                idx_lon = np.abs(lons - neighbor[1]).argmin()
+            if lookup is not None:
+                idx_time = lookup.time(current_ns)
+                idx_lat = lookup.lat(neighbor[0])
+                idx_lon = lookup.lon(neighbor[1])
                 tke = tke_grid[idx_time, idx_lat, idx_lon]
                 edr = edr_grid[idx_time, idx_lat, idx_lon]
             
@@ -327,8 +404,8 @@ def plan_path_ex(req: PlanRequest) -> PlanResult:
     """
     Plan a full route connecting start -> waypoints -> end.
 
-    与旧的 plan_path 不同：失败时不再返回「伪装成航线的直线」，而是
-    明确返回 found=False 及失败原因，供可行性评估模块判定。
+    失败时不返回「伪装成航线的直线」，而是明确返回 found=False 及失败原因，
+    供可行性评估模块判定。
     """
     targets = [req.start] + req.waypoints + [req.end]
     full_path: List[Point] = []
@@ -407,19 +484,13 @@ def plan_path_ex(req: PlanRequest) -> PlanResult:
     )
 
 
-def plan_path(req: PlanRequest) -> tuple[List[Point], float, float, float]:
+def compute_path_turbulence(req: PlanRequest, full_path: List[Point]) -> Tuple[float, float]:
     """
-    兼容旧调用方的包装：返回 (path, total_distance, max_tke, max_edr)。
+    沿已定好的航线逐点重采样，返回 (max_tke, max_edr)。
 
-    注意：当航线不可达时，path 为空列表（不再用直线兜底）；
-    max_tke / max_edr 基于实际路径的沿程气象计算。
+    口径与 A* 内层判定不同：内层只查 25 小时窗口的网格切片，这里按实际
+    到达时刻直接查全量数据集，因此能覆盖跨天的长航线。
     """
-    result = plan_path_ex(req)
-
-    if not result.found or not result.path:
-        return [], result.total_distance, 0.0, 0.0
-
-    full_path = result.path
     start_time_str = to_data_time_str(req.date + 'T' + req.start_time)
     base_time = np.datetime64(start_time_str)
 
@@ -467,4 +538,4 @@ def plan_path(req: PlanRequest) -> tuple[List[Point], float, float, float]:
             max_tke = 0.0
             max_edr = 0.0
 
-    return full_path, result.total_distance, max_tke, max_edr
+    return max_tke, max_edr
