@@ -39,7 +39,13 @@
         </div>
         
         <!-- Right: Chart -->
-        <div class="echarts-area" ref="chartRef"></div>
+        <div class="echarts-wrap">
+          <div class="echarts-area" ref="chartRef"></div>
+          <div class="chart-empty" v-if="store.plannedPath.length === 0">
+            <span class="chart-empty-text">暂无路线</span>
+            <span class="chart-empty-hint">请先在左侧规划航线或运行可行性评估</span>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -70,7 +76,7 @@ const initChart = () => {
   
   chartInstance.value = echarts.init(chartRef.value);
   
-  const xAxisData = ['0km', '5km', '10km', '15km', '20km', '25km', '30km', '35km'];
+  const xAxisData: string[] = [];
   
   const option: echarts.EChartsOption = {
     backgroundColor: 'transparent',
@@ -124,7 +130,7 @@ const initChart = () => {
             { offset: 1, color: 'rgba(52, 152, 219, 0)' }
           ])
         },
-        data: [120, 200, 450, 600, 580, 720, 450, 300]
+        data: []
       },
       {
         name: '无人机飞行海拔',
@@ -134,7 +140,7 @@ const initChart = () => {
         yAxisIndex: 0,
         itemStyle: { color: '#9b59b6' },
         lineStyle: { type: 'dashed' },
-        data: [170, 250, 500, 650, 630, 770, 500, 350]
+        data: []
       },
       {
         name: 'TKE (x50)',
@@ -144,7 +150,7 @@ const initChart = () => {
         yAxisIndex: 1,
         itemStyle: { color: '#1abc9c' },
         lineStyle: { width: 2 },
-        data: [2, 4, 8, 12, 9, 5, 3, 2]
+        data: []
       },
       {
         name: 'EDR (x5000)',
@@ -153,7 +159,7 @@ const initChart = () => {
         symbol: 'none',
         yAxisIndex: 1,
         itemStyle: { color: '#2ecc71' },
-        data: [10, 30, 60, 80, 70, 40, 20, 10]
+        data: []
       },
       {
         name: '温度 (°C)',
@@ -162,7 +168,7 @@ const initChart = () => {
         symbol: 'none',
         yAxisIndex: 1,
         itemStyle: { color: '#f39c12' },
-        data: [22, 21, 18.5, 17, 17.5, 16, 18, 19]
+        data: []
       },
       {
         name: '相对湿度 (%)',
@@ -171,7 +177,7 @@ const initChart = () => {
         symbol: 'none',
         yAxisIndex: 1,
         itemStyle: { color: '#8e44ad' },
-        data: [40, 45, 55, 60, 58, 65, 50, 45]
+        data: []
       },
       {
         name: '水汽混合比 (x10)',
@@ -180,7 +186,7 @@ const initChart = () => {
         symbol: 'none',
         yAxisIndex: 1,
         itemStyle: { color: '#e74c3c' },
-        data: [5, 6, 5.5, 4, 3, 5, 8, 9]
+        data: []
       }
     ]
   };
@@ -213,8 +219,27 @@ const initChart = () => {
   });
 };
 
+/**
+ * setOption 是增量合并，只改数据不会自动抹掉旧曲线，所以清空要逐条喂空数组，
+ * 并去掉推演游标 markLine，否则「暂无路线」时底下仍留着上一次的地形剖面。
+ */
+const clearChart = () => {
+  if (!chartInstance.value) return;
+  chartInstance.value.setOption({
+    xAxis: { data: [] },
+    series: legends.value.map((item, i) => ({
+      name: item.name,
+      data: [],
+      ...(i === 0 ? { markLine: { data: [] } } : {})
+    }))
+  });
+};
+
 const fetchProfileData = async () => {
-  if (!store.plannedPath || store.plannedPath.length === 0) return;
+  if (!store.plannedPath || store.plannedPath.length === 0) {
+    clearChart();
+    return;
+  }
   
   try {
     const response = await fetch(`${API_BASE}/api/weather/profile`, {
@@ -518,10 +543,38 @@ onUnmounted(() => {
   line-height: 1.2;
 }
 
-.echarts-area {
+.echarts-wrap {
   flex: 1;
+  position: relative;
+  min-width: 0;
+}
+
+.echarts-area {
+  width: 100%;
   height: 100%;
   padding: 10px;
+}
+
+.chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.chart-empty-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.chart-empty-hint {
+  font-size: 11.5px;
+  color: var(--text-secondary);
 }
 
 .simulation-controls {

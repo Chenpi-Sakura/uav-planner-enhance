@@ -59,8 +59,6 @@
         <template v-if="store.sidebarTab === 'plan'">
         <!-- 2. Path Planning -->
         <section class="control-section">
-          <h3 class="section-title"><Navigation :size="16" /> 路径规划</h3>
-          
           <!-- Quick Bases -->
           <div class="quick-bases">
             <span class="base-chip" v-for="b in store.bases" :key="b.name" @click="handleBaseClick(b)" title="点击取点后再点击此处快速填入">
@@ -229,13 +227,26 @@ const handleBaseClick = (base: BaseStation) => {
   }
 };
 
+/** 清掉上一次航线与派生结果：失败时不能留旧线，否则地图上的线和面板结论会对不上 */
+const clearRoute = () => {
+  store.plannedPath = [];
+  store.isSimulating = false;
+  store.simulationIndex = 0;
+  store.feasibility = null;
+  store.highlightRegions = [];
+  store.selectedSegmentIndex = null;
+  store.hoveredSegmentIndex = null;
+};
+
 const handlePlan = async () => {
   if (!store.start.lat || !store.start.lng || !store.end.lat || !store.end.lng) {
     alert("请先设置起点和终点！");
     return;
   }
-  
+
   isPlanning.value = true;
+  store.planNotice = null;
+  clearRoute();
   try {
     const response = await fetch(`${API_BASE}/api/route/plan`, {
       method: 'POST',
@@ -253,10 +264,9 @@ const handlePlan = async () => {
     if (!response.ok) throw new Error("规划失败");
     
     const result = await response.json();
-    // 后端起降点被封死时返回 path=[] + feasible=false，需明确提示而非静默成功
+    // 后端无安全航线时返回 path=[] + feasible=false + reason，按原因出对应文案
     if (result && result.feasible === false) {
-      store.plannedPath = [];
-      alert('当前条件下未找到安全航线，请调整起降点、时间或改用「可行性评估」查看原因。');
+      store.planNotice = { reason: result.reason || 'blocked' };
       return;
     }
     if (result && result.path && result.path.length > 0) {
@@ -280,7 +290,7 @@ const handlePlan = async () => {
     }
   } catch (error) {
     console.error("规划请求失败:", error);
-    alert("路径规划失败，请确保后端服务已启动");
+    store.planNotice = { reason: 'request_failed' };
   } finally {
     isPlanning.value = false;
   }

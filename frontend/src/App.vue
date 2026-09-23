@@ -12,6 +12,7 @@
     <DataChartPanel />
     <LayerSelector v-model="activeLayer" />
     <OverlayLegend />
+    <NoticeDialog />
   </div>
 </template>
 
@@ -23,6 +24,7 @@ import Sidebar from './components/Sidebar.vue';
 import DataChartPanel from './components/DataChartPanel.vue';
 import LayerSelector from './components/LayerSelector.vue';
 import OverlayLegend from './components/OverlayLegend.vue';
+import NoticeDialog from './components/NoticeDialog.vue';
 
 // Default map layer set to satellite
 const activeLayer = ref<'street' | 'satellite' | 'terrain'>('satellite');

@@ -1,7 +1,6 @@
 <template>
   <!-- ============ 输入区：查找最佳窗口 ============ -->
   <section class="control-section">
-    <h3 class="section-title"><CalendarClock :size="16" /> 时间窗口</h3>
     <p class="hint-text">
       在期望日期内扫描逐小时湍流强度，找出全程安全且湍流最低的起飞时段。
     </p>

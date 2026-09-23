@@ -1,7 +1,6 @@
 <template>
   <!-- ============ 输入区：任务优先级 ============ -->
   <section class="control-section">
-    <h3 class="section-title"><ShieldCheck :size="16" /> 任务优先级</h3>
     <p class="hint-text">优先级决定可接受的绕行成本（时间口径）上限</p>
     <div class="priority-group">
       <button
@@ -331,7 +330,8 @@ const handleAssess = async () => {
     store.feasibility = result;
     store.selectedSegmentIndex = null;
 
-    // 把评估路径同步到地图
+    // 把评估路径同步到地图。不可飞时后端返回的 path 为空，
+    // 必须显式清掉上一条航线，否则结论写着「不可飞」地图上却还留着线。
     if (result.path && result.path.length > 0) {
       const startAlt = Number(store.start.alt || 600);
       const endAlt = Number(store.end.alt || 600);
@@ -341,6 +341,10 @@ const handleAssess = async () => {
         lng: p.lon,
         alt: n > 1 ? startAlt + (endAlt - startAlt) * (i / (n - 1)) : startAlt,
       }));
+      store.simulationIndex = 0;
+      store.isSimulating = false;
+    } else {
+      store.plannedPath = [];
       store.simulationIndex = 0;
       store.isSimulating = false;
     }

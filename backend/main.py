@@ -139,8 +139,9 @@ async def plan_route(request: PlanRequest):
     result = await loop.run_in_executor(None, plan_path_ex, request)
 
     if not result.found or not result.path:
-        # 无安全航线：明确返回 feasible=False，不再用直线兜底
-        return PlanResponse(path=[], total_distance=0.0, max_tke=0.0, max_edr=0.0, feasible=False)
+        # 无安全航线：明确返回 feasible=False，不再用直线兜底，并带上失败原因
+        return PlanResponse(path=[], total_distance=0.0, max_tke=0.0, max_edr=0.0,
+                            feasible=False, reason=result.reason or 'blocked')
 
     max_tke, max_edr = await loop.run_in_executor(
         None, compute_path_turbulence, request, result.path)

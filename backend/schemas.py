@@ -45,6 +45,9 @@ class PlanResponse(BaseModel):
     max_edr: float
     # 新增：是否规划出真实安全路径（false 时 path 为空，不再用直线兜底）
     feasible: bool = True
+    # 失败原因，供前端分文案出提示：blocked 被高危区封死 / no_data 数据未覆盖
+    # / iteration_limit 未搜完（不代表没有路）。成功时为 None。
+    reason: Optional[str] = None
 
 
 # ==================== 功能一：飞行路径可行性评估 ====================

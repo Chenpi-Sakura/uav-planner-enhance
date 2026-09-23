@@ -262,7 +262,14 @@ const renderPlannedPath = () => {
   pathLayer.clearLayers();
   
   const path = store.plannedPath;
-  if (!path || path.length === 0) return;
+  if (!path || path.length === 0) {
+    // 没有航线时把推演用的无人机标记也清掉，否则上次跑到一半的点会留在原地
+    if (uavMarker) {
+      map.removeLayer(uavMarker);
+      uavMarker = null;
+    }
+    return;
+  }
   
   const latlngs: L.LatLngExpression[] = path.map(p => [Number(p.lat), Number(p.lng)]);
   const segments = store.feasibility?.risk?.segments ?? [];

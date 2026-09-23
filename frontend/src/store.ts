@@ -137,6 +137,14 @@ export interface StoreState {
   forecastDays: number;                  // 7 天推演天数（0 = 不推演）
   hoveredSegmentIndex: number | null;    // 地图联动：悬停的分段
   pendingTimeWindowScan: boolean;        // 从功能一跳转功能二时自动执行一次扫描
+  planNotice: PlanNotice | null;         // 路径规划失败弹窗（null = 不显示）
+}
+
+/** 规划失败原因：后端 reason 直接透传，request_failed 表示请求本身没走通 */
+export type PlanNoticeReason = 'blocked' | 'no_data' | 'iteration_limit' | 'request_failed';
+
+export interface PlanNotice {
+  reason: PlanNoticeReason;
 }
 
 export const store = reactive<StoreState>({
@@ -172,6 +180,7 @@ export const store = reactive<StoreState>({
   forecastDays: 7,
   hoveredSegmentIndex: null,
   pendingTimeWindowScan: false,
+  planNotice: null,
 });
 
 /** 风险等级 -> 展示色 */
