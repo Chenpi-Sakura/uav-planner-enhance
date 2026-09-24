@@ -216,7 +216,7 @@ def to_response_dict(res: FeasibilityResult) -> Dict[str, Any]:
 
 
 def assess_feasibility_multi(req) -> Dict[str, Any]:
-    """一次点击同时产出「紧急 / 平衡 / 经济」三档的完整评估。
+    """一次点击同时产出「紧急 / 平衡 / 安全」三档的完整评估。
 
     只有当前高亮档（默认平衡）算替代起降点与替代时段：那两项服务的是详情面板，
     三档各算一遍会把取数放大三倍而卡片上用不到。阻塞区只在不可飞时才分析，
@@ -664,4 +664,5 @@ def _build_suggestion_text(feasible: bool, reason: Optional[str],
 
 
 def _priority_label(priority: str) -> str:
-    return {"urgent": "紧急", "normal": "常规", "economy": "经济"}.get(priority, "常规")
+    """档位中文名。键名沿用 urgent/normal/economy，只有界面与文案用这套字。"""
+    return {"urgent": "紧急", "normal": "平衡", "economy": "安全"}.get(priority, "平衡")

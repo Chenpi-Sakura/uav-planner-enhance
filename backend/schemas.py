@@ -52,7 +52,7 @@ class PlanResponse(BaseModel):
     reason: Optional[str] = None
 
 
-# ==================== 三方案航线（紧急 / 平衡 / 经济）====================
+# ==================== 三方案航线（紧急 / 平衡 / 安全）====================
 
 class RouteOption(BaseModel):
     priority: str
@@ -85,7 +85,7 @@ class FeasibilityRequest(BaseModel):
     start: Point
     end: Point
     waypoints: List[Point] = []
-    # 任务优先级：urgent 紧急 / normal 常规 / economy 经济，决定绕行成本阈值
+    # 任务档位：urgent 紧急 / normal 平衡 / economy 安全（JSON 键名沿用 economy，只有文案改）
     priority: str = "normal"
     date: str = '2022-07-01'
     start_time: str = '08:00'

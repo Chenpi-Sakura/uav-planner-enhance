@@ -156,7 +156,7 @@ async def plan_route(request: PlanRequest):
 
 @app.post("/api/route/plan-multi", response_model=PlanMultiResponse)
 async def plan_route_multi(request: PlanRequest):
-    """一次产出「紧急 / 平衡 / 经济」三条候选航线。
+    """一次产出「紧急 / 平衡 / 安全」三条候选航线。
 
     三档只差湍流软惩罚倍率；硬阈值与 NaN 禁区一致。响应里除几何外还带每档的
     里程、绕行比与风险统计，供前端叠图与选主。
@@ -193,7 +193,7 @@ async def assess_time_window_endpoint(request: TimeWindowRequest):
 
 @app.post("/api/assess/feasibility-multi", response_model=FeasibilityMultiResponse)
 async def assess_route_feasibility_multi(request: FeasibilityRequest):
-    """三档一次评估：紧急 / 平衡 / 经济 各一条航线 + 各自的可行性结论。
+    """三档一次评估：紧急 / 平衡 / 安全 各一条航线 + 各自的可行性结论。
 
     请求体的 `priority` 在这里表示「详情面板要展开哪一档」，不影响另外两档的几何。
     """

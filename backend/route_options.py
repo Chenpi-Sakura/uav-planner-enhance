@@ -1,4 +1,4 @@
-"""三方案航线：同一起终点一次产出「紧急 / 平衡 / 经济」三条线。
+"""三方案航线：同一起终点一次产出「紧急 / 平衡 / 安全」三条线。
 
 三档的差别只进 A* 的湍流软惩罚倍率（见 planner.tier_risk_scale），硬阈值
 （TKE≥26 / EDR≥0.376 与 NaN 禁区）对三档完全一致——安全底线不由产品档位决定。
@@ -15,7 +15,7 @@ from risk import build_risk_profile
 TIER_LABELS: Dict[str, str] = {
     "urgent": "紧急",
     "normal": "平衡",
-    "economy": "经济",
+    "economy": "安全",
 }
 
 

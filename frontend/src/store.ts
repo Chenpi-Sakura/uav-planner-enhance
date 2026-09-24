@@ -218,7 +218,7 @@ export const RISK_COLORS: Record<string, string> = {
 export const PRIORITY_LABELS: Record<string, string> = {
   urgent: '紧急',
   normal: '平衡',
-  economy: '经济',
+  economy: '安全',
 };
 
 /**

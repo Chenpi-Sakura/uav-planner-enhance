@@ -107,9 +107,9 @@ class Settings(BaseModel):
     # 两项同倍缩放：EDR = 0.0737·√k 是同一个湍流量换了单位，分别调会改风险价格的形状。
     # normal 取 1.0，即与既有验收结果同一口径。
     DETOUR_PENALTY_TIER_SCALE: Dict[str, float] = {
-        "urgent": 0.25,    # 紧急：只为接近封路的湍流绕行
+        "urgent": 0.25,    # 紧急：只为逼近硬阈值的湍流绕行
         "normal": 1.0,     # 平衡：基线
-        "economy": 4.0,    # 经济：宁可绕远也要躲开中风险以上
+        "economy": 4.0,    # 安全：宁可绕远也要躲开中风险以上
     }
     # 一次规划产出的三方案顺序
     PLAN_TIERS: List[str] = ["urgent", "normal", "economy"]
@@ -117,8 +117,8 @@ class Settings(BaseModel):
     # ---- 绕行成本（时间口径）接受比例，按任务优先级 ----
     DETOUR_RATIO_LIMIT: Dict[str, float] = {
         "urgent": 1.25,   # 紧急：最多接受 +25% 时间
-        "normal": 1.5,    # 常规：最多 +50%
-        "economy": 2.0,   # 经济：最多 +100%
+        "normal": 1.5,    # 平衡：最多 +50%
+        "economy": 2.0,   # 安全：最多 +100%
     }
     DEFAULT_PRIORITY: str = "normal"
 
