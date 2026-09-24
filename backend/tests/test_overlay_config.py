@@ -117,13 +117,33 @@ class OverlayNoDataTest(unittest.TestCase):
     更大，低缩放级别下更容易越界，所以这里必须在出图前判成「无数据」。
     """
 
-    def _loader(self, empty: bool) -> DataLoader:
+    LATS = np.arange(25.0, 36.0, 0.5)
+    LONS = np.arange(86.0, 98.0, 0.5)
+    # 湍流层要读 ±TURB_WINDOW_HALF_HOURS 的窗口，桩数据按 13 帧给
+    TIMES = np.array([np.datetime64('2022-07-01T00:00') + np.timedelta64(i, 'h')
+                      for i in range(13)])
+
+    def _loader(self, empty: bool, calls: list = None) -> DataLoader:
         loader = DataLoader()
-        # 只需要「纬度递减/递增」这个方向判断，不需要真数据
+        # 只需要「纬度递增/递减」这个方向判断，不需要真数据
         loader.ds_u = types.SimpleNamespace(
-            lat=np.array([40.0, 30.0, 25.0]), lon=np.array([70.0, 90.0, 115.0]))
-        if empty:
-            loader._read_overlay_slice = lambda *a, **k: (np.zeros((0, 0)), np.zeros((0,)), np.zeros((0,)))
+            lat=np.array([25.0, 30.0, 40.0]), lon=np.array([70.0, 90.0, 115.0]))
+        n_lat, n_lon = (0, 0) if empty else (self.LATS.size, self.LONS.size)
+
+        def fake_slice(path, var, t, lat_slice, lon_slice):
+            if calls is not None:
+                calls.append(var)
+            return np.zeros((n_lat, n_lon)), self.LATS[:n_lat], self.LONS[:n_lon]
+
+        def fake_window(path, var, t, lat_slice, lon_slice):
+            if calls is not None:
+                calls.append(var)
+            return (np.zeros((self.TIMES.size, n_lat, n_lon)),
+                    self.LATS[:n_lat], self.LONS[:n_lon], self.TIMES)
+
+        # tke/edr 走窗口读法，其余层走单帧切片，两条都要桩掉才不碰真实文件
+        loader._read_overlay_slice = fake_slice
+        loader._read_overlay_window = fake_window
         return loader
 
     def test_out_of_coverage_bbox_returns_png_not_exception(self):
@@ -140,19 +160,12 @@ class OverlayNoDataTest(unittest.TestCase):
 
     def test_partial_coverage_still_renders(self):
         # 只有一半在覆盖范围内：切片非空，正常出图，不走兜底
-        loader = self._loader(empty=False)
         called = []
-
-        def fake(path, var, t, lat_slice, lon_slice):
-            called.append(var)
-            lats = np.arange(25.0, 36.0, 0.5)
-            lons = np.arange(86.0, 98.0, 0.5)
-            return np.zeros((lats.size, lons.size)), lats, lons
-
-        loader._read_overlay_slice = fake
+        loader = self._loader(empty=False, calls=called)
         png = loader.get_overlay_image(24.0, 36.0, 86.0, 98.0, 'tke', '2022-07-01T08:00')
         self.assertEqual(png[:8], b'\x89PNG\r\n\x1a\n')
-        self.assertGreater(len(called), 2)
+        # 脉动方差要 u/v/w 三个分量，缺一层就算不出的图
+        self.assertEqual(called, ['u', 'v', 'w'])
 
 
 if __name__ == "__main__":

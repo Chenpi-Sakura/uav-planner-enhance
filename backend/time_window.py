@@ -585,22 +585,8 @@ def _step_hours(req) -> int:
 
 
 def _load_turbulence(data_start, total_hours, bbox):
-    """读取 u/v/w 并合成 TKE / EDR。失败返回全 None。"""
-    _, lats, lons, times = data_loader.read_slab("u", data_start, total_hours, bbox)
-    if lats is None:
-        return None, None, None, None, None
-
-    arrs = {}
-    for var in ("u", "v", "w"):
-        vals, _, _, _ = data_loader.read_slab(var, data_start, total_hours, bbox)
-        if vals is None:
-            return None, None, None, None, None
-        arrs[var] = vals
-
-    wind_sq = arrs["u"] ** 2 + arrs["v"] ** 2 + arrs["w"] ** 2
-    tke = 0.01 * 0.5 * wind_sq
-    edr = 0.5 * (tke ** 1.5) / 100.0
-    return tke, edr, lats, lons, times
+    """读取 TKE / EDR 场。口径统一走 meteorology 单入口，失败返回全 None。"""
+    return data_loader.read_turbulence_field(data_start, total_hours, bbox)
 
 
 def _geometry(start, end, req, run_planner: bool):

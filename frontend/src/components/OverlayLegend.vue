@@ -21,23 +21,20 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { store } from '../store';
+import { TURB, turbTicks } from '../config';
 
 const activeOverlays = computed(() => store.overlays);
 
 const legendConfigs: Record<string, any> = {
   'tke': {
-    label: 'TKE 湍动能 (强度)',
+    label: `TKE 湍动能 (${TURB.tkeUnit})`,
     gradient: 'linear-gradient(to right, #ffffb2, #fd8d3c, #bd0026)', // YlOrRd
-    min: '0.0',
-    mid: '0.7',
-    max: '1.5+',
+    ...turbTicks(TURB.tkeColorMax),
   },
   'edr': {
-    label: 'EDR 涡动耗散率',
+    label: `EDR 涡动耗散率 (${TURB.edrUnit})`,
     gradient: 'linear-gradient(to right, #000004, #721f81, #f1605d, #fcfdbf)', // Magma
-    min: '0.0',
-    mid: '0.007',
-    max: '0.015+',
+    ...turbTicks(TURB.edrColorMax),
   },
   'temp': {
     label: '温度 (°C) @ 500hPa',

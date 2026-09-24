@@ -121,6 +121,17 @@ class TestContextBuild(unittest.TestCase):
         prompt = assessor.build_prompt(assessor.build_time_window_context(TW_PAYLOAD))
         self.assertIn("北京时间", prompt)
 
+    def test_prompt_states_turbulence_calibration(self):
+        """换口径后裸数字有歧义：报告必须带上单位与窗口，LLM 版同理。"""
+        for ctx in (assessor.build_time_window_context(TW_PAYLOAD),
+                    assessor.build_feasibility_context(FEAS_PAYLOAD)):
+            note = ctx["turbulence_calibration"]
+            self.assertIn("m²/s²", note)
+            self.assertIn("m^(2/3)/s", note)
+            self.assertIn(f"±{int(settings.TURB_WINDOW_HALF_HOURS)} 小时", note)
+        prompt = assessor.build_prompt(assessor.build_time_window_context(TW_PAYLOAD))
+        self.assertIn("m²/s²", prompt)
+
     def test_context_tolerates_empty_payload(self):
         ctx = assessor.build_feasibility_context({})
         self.assertIsNone(ctx["feasible"])

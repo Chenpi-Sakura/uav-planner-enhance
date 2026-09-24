@@ -65,13 +65,13 @@
         <div class="kpi-card">
           <span class="kpi-label">时段最大 TKE</span>
           <span class="kpi-value">
-            {{ fmt(r.recommended.max_tke) }}<em>m²/s²</em>
+            {{ fmtTke(r.recommended.max_tke) }}<em>{{ TURB.tkeUnit }}</em>
           </span>
         </div>
         <div class="kpi-card">
           <span class="kpi-label">时段最大 EDR</span>
           <span class="kpi-value">
-            {{ fmt(r.recommended.max_edr) }}<em>m²/s³</em>
+            {{ fmtEdr(r.recommended.max_edr) }}<em>{{ TURB.edrUnit }}</em>
           </span>
         </div>
         <div class="kpi-card">
@@ -95,7 +95,7 @@
             <span class="seg-dot" :style="{ backgroundColor: riskColor(w.level) }"></span>
             <span class="slot-time">{{ w.start }} – {{ w.end }}</span>
             <span class="slot-level" :style="{ color: riskColor(w.level) }">{{ w.level }}</span>
-            <span class="seg-meta">TKE {{ fmt(w.max_tke) }}</span>
+            <span class="seg-meta">TKE {{ fmtTke(w.max_tke) }}</span>
           </div>
         </div>
       </div>
@@ -144,7 +144,7 @@
             <span class="slot-level" :style="{ color: riskColor(s.level) }">
               {{ s.safe ? s.level : '不可飞' }}
             </span>
-            <span class="seg-meta">{{ fmt(s.max_tke) }}</span>
+            <span class="seg-meta">{{ fmtTke(s.max_tke) }}</span>
           </div>
         </div>
       </div>
@@ -185,7 +185,8 @@
     <!-- 数据口径声明（两种情况都展示） -->
     <p class="hint-text small data-note">
       数据口径：500hPa 等压面，约 5km 空间分辨率、逐小时时间分辨率；
-      TKE / EDR 为基于三维风场的代理估算。时间为北京时间（UTC+8）。
+      TKE 为同层三维风场在 ±{{ TURB.windowHalfHours }} 小时窗口内的脉动方差，EDR 由其换算。
+      时间为北京时间（UTC+8）。
     </p>
   </section>
 
@@ -205,7 +206,7 @@ import {
 import * as echarts from 'echarts';
 import { store, RISK_COLORS } from '../store';
 import { TIME_WINDOW_REASONS } from '../types/assessment';
-import { API_BASE } from '../config';
+import { API_BASE, TURB, fmtTke, fmtEdr } from '../config';
 import ReportCard from './ReportCard.vue';
 
 const forecastOptions = [
@@ -219,8 +220,6 @@ const chartRef = ref<HTMLElement | null>(null);
 let chartInstance: echarts.ECharts | null = null;
 
 const riskColor = (level: string) => RISK_COLORS[level] ?? '#94a3b8';
-const fmt = (v: number | null | undefined) =>
-  v === null || v === undefined ? '—' : Number(v).toFixed(4);
 
 /** HH:MM 其中取时间部分（推荐卡用） */
 const takeoffTime = computed(() => {
@@ -241,10 +240,10 @@ const reasonText = computed(() => {
   return TIME_WINDOW_REASONS[key] ?? '当前日期内未找到全程安全的时间窗口';
 });
 
-/** 时段风险条宽度：以 TKE 1.0 为满量程，便于横向比较各时段 */
+/** 时段风险条宽度：以硬阈值（不可飞）为满量程，便于横向比较各时段 */
 const barWidth = (tke: number | null | undefined) => {
   if (tke === null || tke === undefined) return 0;
-  return Math.min(100, Math.max(2, (Number(tke) / 1.0) * 100));
+  return Math.min(100, Math.max(2, (Number(tke) / TURB.tkeUnflyable) * 100));
 };
 
 const renderChart = () => {
@@ -295,16 +294,16 @@ const renderChart = () => {
     yAxis: [
       {
         type: 'value',
-        name: 'TKE',
+        name: 'TKE (m²/s²)',
         nameTextStyle: { color: '#94a3b8', fontSize: 10, padding: [0, 0, 4, 0] },
         axisLabel: { color: '#94a3b8', fontSize: 10 },
         splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.12)' } },
       },
       {
         type: 'value',
-        name: 'EDR (x5000)',
+        name: 'EDR (m^(2/3)/s)',
         nameTextStyle: { color: '#94a3b8', fontSize: 10, padding: [0, 0, 4, 0] },
-        axisLabel: { color: '#94a3b8', fontSize: 10, formatter: (v: number) => v.toFixed(1) },
+        axisLabel: { color: '#94a3b8', fontSize: 10, formatter: (v: number) => v.toFixed(2) },
         splitLine: { show: false },
       },
     ],
@@ -332,12 +331,12 @@ const renderChart = () => {
         },
       },
       {
-        name: '最大 EDR (x5000)',
+        name: '最大 EDR',
         type: 'line',
         smooth: true,
         symbolSize: 4,
         yAxisIndex: 1,
-        data: c.max_edr.map(v => Number((v * 5000).toFixed(2))),
+        data: c.max_edr.map(v => Number(Number(v).toFixed(4))),
         itemStyle: { color: '#38bdf8' },
         lineStyle: { width: 2, color: '#38bdf8' },
       },

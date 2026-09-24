@@ -24,14 +24,35 @@ BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
+import meteorology  # noqa: E402
 import planner  # noqa: E402
 from planner import plan_path_ex, plan_path_segment  # noqa: E402
 from schemas import PlanRequest  # noqa: E402
+from config import settings  # noqa: E402
+
+# 合成用例里的湍流量一律由 settings 推导：阈值换口径后写死的数字会失去含义。
+TKE_MID = settings.TKE_RISK_MODERATE
+EDR_MID = settings.EDR_RISK_MODERATE
+TKE_UNFLYABLE = settings.TKE_THRESHOLD_HIGH
+EDR_UNFLYABLE = settings.EDR_THRESHOLD_HIGH
+TKE_BAD = TKE_UNFLYABLE * 1.5
+EDR_BAD = EDR_UNFLYABLE * 1.5
 
 
 # ==================== 真实数据用例 ====================
 # 坐标取自 /api/meta/cities；覆盖：常规/长途/带航点/短程/阈值收紧/阈值放宽/
 # 不同出发时刻（换时间轴起点）/不同巡航速度（改距离→时刻映射）。
+# 阈值写成 settings 的倍数而不是字面量，否则湍流口径一重标定，这两条就悄悄
+# 变成了「比默认更松」和「比默认更紧」的反面。
+_TIGHT_TKE = settings.TKE_RISK_MODERATE * 1.25          # 略高于中风险下沿
+_LOOSE_TKE = settings.TKE_THRESHOLD_HIGH * 2.5          # 硬阈值的 2.5 倍
+
+
+def _edr_at(tke_value: float) -> float:
+    """让 EDR 阈值与 TKE 阈值切在同一个物理点上（同一场的两种单位）。"""
+    return float(meteorology.edr_from_tke(tke_value))
+
+
 REAL_CASES = [
     ("r_lhasa_shigatse", dict(start={"lat": 29.65, "lon": 91.13}, end={"lat": 29.27, "lon": 88.88})),
     ("r_lhasa_nyingchi", dict(start={"lat": 29.65, "lon": 91.13}, end={"lat": 29.66, "lon": 94.36})),
@@ -40,9 +61,9 @@ REAL_CASES = [
                        end={"lat": 29.27, "lon": 88.88})),
     ("r_dangxung_linzhou", dict(start={"lat": 30.48, "lon": 91.1}, end={"lat": 30.05, "lon": 91.26})),
     ("r_tight_thresh", dict(start={"lat": 29.65, "lon": 91.13}, end={"lat": 29.27, "lon": 88.88},
-                            tke_threshold=0.2, edr_threshold=0.05)),
+                            tke_threshold=_TIGHT_TKE, edr_threshold=_edr_at(_TIGHT_TKE))),
     ("r_loose_thresh", dict(start={"lat": 29.65, "lon": 91.13}, end={"lat": 29.27, "lon": 88.88},
-                            tke_threshold=3.0, edr_threshold=1.0)),
+                            tke_threshold=_LOOSE_TKE, edr_threshold=_edr_at(_LOOSE_TKE))),
     ("r_start_20h", dict(start={"lat": 29.65, "lon": 91.13}, end={"lat": 29.27, "lon": 88.88},
                          start_time="20:00")),
     ("r_speed45", dict(start={"lat": 29.65, "lon": 91.13}, end={"lat": 29.27, "lon": 88.88}, speed=45.0)),
@@ -52,9 +73,10 @@ REAL_CASES = [
 
 # ==================== 合成用例：平局与降级语义 ====================
 class _StubLoader:
-    """替身 data_loader：给一块可控网格，lat 轴故意降序（与真实文件一致）。
+    """替身 data_loader：给一块可控网格，lat 轴故意降序。
 
-    holes 用于把「越限」做成只发生在某一个小时、某几个格点上，
+    真实文件是升序（25.94 -> 40.30），这里反过来是为了让 `_GridIndex` 的两个
+    方向都被覆盖到；holes 用于把「越限」做成只发生在某一个小时、某几个格点上，
     这样才能造出「早小时安全、晚小时危险」型平局（见 synth_cases 注释）。
     """
 
@@ -79,7 +101,7 @@ class _StubLoader:
             i = int(np.abs(self.times - (self.times[0] + np.timedelta64(h, 'h'))).argmin())
             j = int(np.abs(self.lats - lat).argmin())
             k = int(np.abs(self.lons - lon).argmin())
-            tke[i, j, k] = 9.0 if bad else 0.0
+            tke[i, j, k] = TKE_BAD if bad else 0.0
         return tke, edr, self.lats, self.lons, self.times
 
 
@@ -113,7 +135,7 @@ def synth_cases():
     out = []
     res_saved = planner.settings.GRID_RESOLUTION_DEG
 
-    def _run(loader, start, end, speed, tke=1.0, edr=0.3):
+    def _run(loader, start, end, speed, tke=TKE_UNFLYABLE, edr=EDR_UNFLYABLE):
         planner.data_loader = loader
         planner.settings.GRID_RESOLUTION_DEG = 0.5
         seg = plan_path_segment(start, end, tke, edr, '2022-07-01T08:00', 0.0, 0.0, speed)
@@ -131,10 +153,10 @@ def synth_cases():
 
     def exact_hour():
         """elapsed 恰好压在整点上（无平局），锁定另一侧边界。"""
-        return _run(_StubLoader([0.0, 5.0], [0.0]), (30.0, 90.0), (27.5, 90.0), 222.0)
+        return _run(_StubLoader([0.0, TKE_BAD], [0.0]), (30.0, 90.0), (27.5, 90.0), 222.0)
 
     def start_blocked():
-        return _run(_StubLoader([9.0], [9.0]), (30.0, 90.0), (29.0, 91.0), 60.0)
+        return _run(_StubLoader([TKE_BAD], [EDR_BAD]), (30.0, 90.0), (29.0, 91.0), 60.0)
 
     def all_nan():
         """数据缺失区：NaN 一律按不安全处理。"""
@@ -146,7 +168,8 @@ def synth_cases():
 
     def soft_penalty_road():
         """全程可飞但普遍处于中度湍流，锁定软惩罚的代价累加顺序。"""
-        return _run(_StubLoader([0.45], [0.12]), (30.0, 90.0), (28.0, 92.0), 60.0)
+        return _run(_StubLoader([TKE_MID * 1.2], [EDR_MID * 1.2]),
+                    (30.0, 90.0), (28.0, 92.0), 60.0)
 
     out.append(("s_tie_earlier_safe", tie_earlier_safe))
     out.append(("s_tie_earlier_bad", tie_earlier_bad))

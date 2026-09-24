@@ -33,6 +33,20 @@ def _fmt(v: Any, digits: int = 4, suffix: str = "") -> str:
     return f"{num:.{digits}f}{suffix}"
 
 
+# 报告正文里的湍流量一律带单位：换了口径之后，裸数字无法区分是旧的
+# 「平均风动能」还是新的「脉动方差」。
+TKE_UNIT = " m²/s²"
+EDR_UNIT = " m^(2/3)/s"
+
+# 两条报告（可行性 / 时间窗口）共用的湍流量口径。写两遍必然漂移，
+# 而这里的数字要和前端 config.ts 的 TURB 保持一致。
+TURB_NOTE = (
+    f"TKE 为同层 u/v/w 三分量在 ±{int(settings.TURB_WINDOW_HALF_HOURS)} 小时窗口内的"
+    "脉动方差（单位 m²/s²），EDR 由 ε = C·k^1.5 / L 换算、取 L = "
+    f"{int(settings.TURB_EDR_LENGTH_SCALE_M)} m（单位 m^(2/3)/s）"
+)
+
+
 # 上下文里对报告无用、却会诱导模型自行换算时区的内部标志。
 _LLM_META_DROP = ("data_label_is_utc",)
 
@@ -109,6 +123,7 @@ def build_feasibility_context(result: Dict[str, Any]) -> Dict[str, Any]:
         ],
         "meta": _llm_meta(result.get("meta")),
         "time_base": TIME_BASE_NOTE,
+        "turbulence_calibration": TURB_NOTE,
     }
 
 
@@ -155,6 +170,7 @@ def build_time_window_context(result: Dict[str, Any]) -> Dict[str, Any]:
         },
         "meta": _llm_meta(result.get("meta")),
         "time_base": TIME_BASE_NOTE,
+        "turbulence_calibration": TURB_NOTE,
     }
 
 
@@ -218,20 +234,22 @@ def _render_feasibility(ctx: Dict[str, Any]) -> str:
     if risk:
         lines.append(
             f"沿航线采样 {risk.get('n_samples') or '—'} 个格点，"
-            f"最大 TKE {_fmt(risk.get('max_tke'))}、最大 EDR {_fmt(risk.get('max_edr'))}，"
+            f"最大 TKE {_fmt(risk.get('max_tke'), 2, TKE_UNIT)}、"
+            f"最大 EDR {_fmt(risk.get('max_edr'), 3, EDR_UNIT)}，"
             f"中度以上风险格点占比 {_fmt((risk.get('moderate_ratio') or 0) * 100, 1, '%')}。"
         )
         worst = max(segs, key=lambda s: float(s.get("max_tke") or 0), default=None) if segs else None
         if worst:
             lines.append(
                 f"湍流最强区段出现在 {worst.get('from')}→{worst.get('to')}，"
-                f"该段最大 TKE {_fmt(worst.get('max_tke'))}。"
+                f"该段最大 TKE {_fmt(worst.get('max_tke'), 2, TKE_UNIT)}。"
             )
     if blocking:
         b = blocking[0]
         lines.append(
             f"检测到 {len(blocking)} 处高危湍流区，其中最主要的一处为 {b.get('shape')}，"
-            f"面积约 {_fmt(b.get('area_km2'), 1, ' km²')}，峰值 TKE {_fmt(b.get('max_tke'))}。"
+            f"面积约 {_fmt(b.get('area_km2'), 1, ' km²')}，"
+            f"峰值 TKE {_fmt(b.get('max_tke'), 2, TKE_UNIT)}。"
         )
 
     # 4. 时间建议
@@ -267,7 +285,7 @@ def _render_feasibility(ctx: Dict[str, Any]) -> str:
     lines.append("## 数据口径声明")
     lines.append(
         "本报告基于 500hPa 等压面气象数据，空间分辨率约 5km、时间分辨率逐小时；"
-        "TKE / EDR 为基于三维风场的代理估算值，不构成真实气象观测。"
+        f"{TURB_NOTE}；两者均为再分析格点上的代理估算值，不构成真实气象观测。"
     )
     return "\n".join(lines)
 
@@ -297,8 +315,8 @@ def _render_time_window(ctx: Dict[str, Any]) -> str:
     lines.append("气象解读")
     if rec:
         lines.append(
-            f"推荐时段内最大 TKE {_fmt(rec.get('max_tke'))}、"
-            f"最大 EDR {_fmt(rec.get('max_edr'))}，"
+            f"推荐时段内最大 TKE {_fmt(rec.get('max_tke'), 2, TKE_UNIT)}、"
+            f"最大 EDR {_fmt(rec.get('max_edr'), 3, EDR_UNIT)}，"
             f"按 1 小时步长完成 {24} 个时次扫描。"
         )
     lines.append(
@@ -313,7 +331,7 @@ def _render_time_window(ctx: Dict[str, Any]) -> str:
         for w in backup:
             lines.append(
                 f"- {w.get('start')} – {w.get('end')}（{w.get('level')}，"
-                f"最大 TKE {_fmt(w.get('max_tke'))}）"
+                f"最大 TKE {_fmt(w.get('max_tke'), 2, TKE_UNIT)}）"
             )
     else:
         lines.append("本日无其他可用的备用时段。")
@@ -345,7 +363,7 @@ def _render_time_window(ctx: Dict[str, Any]) -> str:
     lines.append("数据口径声明")
     lines.append(
         "本报告基于 500hPa 等压面气象数据，空间分辨率约 5km、时间分辨率逐小时；"
-        "「7 天推演」为基于现有数据集的向前推演，非真实气象预报。"
+        f"{TURB_NOTE}；「7 天推演」为基于现有数据集的向前推演，非真实气象预报。"
     )
     return "\n".join(lines)
 

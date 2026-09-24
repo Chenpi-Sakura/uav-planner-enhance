@@ -1,7 +1,6 @@
 import math
 import heapq
 import numpy as np
-import xarray as xr
 from typing import List, Tuple, Optional
 from dataclasses import dataclass, field
 
@@ -154,7 +153,7 @@ def _is_safe_at(node, base_ns, dist_km, speed_kmh,
 
     if math.isnan(tke) or math.isnan(edr):
         return False, tke, edr
-    if tke > tke_thresh or edr > edr_thresh:
+    if tke >= tke_thresh or edr >= edr_thresh:
         return False, tke, edr
     return True, tke, edr
 
@@ -347,23 +346,22 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
             if math.isnan(tke) or math.isnan(edr):
                 continue # Terrain obstacle (NaN means underground)
                 
-            if tke > tke_thresh or edr > edr_thresh:
+            if tke >= tke_thresh or edr >= edr_thresh:
                 continue # Severe turbulence obstacle
                 
             # 记录该邻居在到达时刻的气象值（供风险评估复用，保证结论一致）
             node_tke[neighbor] = float(tke)
             node_edr[neighbor] = float(edr)
 
-            # Soft constraints/penalties: severely penalize moderate turbulence
+            # Soft constraints/penalties: 中度以上湍流按超出量加收绕行成本
             penalty = 0.0
-            
-            # TKE >= 0.4 means moderate turbulence
-            if tke >= 0.4:
-                penalty += (tke - 0.4) * 50.0
-                
-            # EDR >= 0.1 means moderate turbulence
-            if edr >= 0.1:
-                penalty += (edr - 0.1) * 200.0
+
+            # 拐点即风险分档的「中风险」下沿，罚量与硬阈值处的等效绕行公里数对齐
+            if tke >= settings.TKE_RISK_MODERATE:
+                penalty += (tke - settings.TKE_RISK_MODERATE) * settings.DETOUR_PENALTY_TKE_COEF
+
+            if edr >= settings.EDR_RISK_MODERATE:
+                penalty += (edr - settings.EDR_RISK_MODERATE) * settings.DETOUR_PENALTY_EDR_COEF
                 
             tentative_g_score = g_score[current] + grid_dist + penalty
             
@@ -488,8 +486,8 @@ def compute_path_turbulence(req: PlanRequest, full_path: List[Point]) -> Tuple[f
     """
     沿已定好的航线逐点重采样，返回 (max_tke, max_edr)。
 
-    口径与 A* 内层判定不同：内层只查 25 小时窗口的网格切片，这里按实际
-    到达时刻直接查全量数据集，因此能覆盖跨天的长航线。
+    口径与 A* 内层判定一致（同一套 read_turbulence_field），区别在于这里按
+    实际到达时刻取帧，因此能覆盖跨天的长航线。
     """
     start_time_str = to_data_time_str(req.date + 'T' + req.start_time)
     base_time = np.datetime64(start_time_str)
@@ -520,20 +518,25 @@ def compute_path_turbulence(req: PlanRequest, full_path: List[Point]) -> Tuple[f
 
     if has_data:
         try:
-            da_lat = xr.DataArray(lats, dims='z')
-            da_lon = xr.DataArray(lons, dims='z')
-            da_time = xr.DataArray(times, dims='z')
-
-            u_vals = data_loader.ds_u.sel(lat=da_lat, lon=da_lon, method='nearest').u.sel(time=da_time, method='nearest').sel(lev=500).values
-            v_vals = data_loader.ds_v.sel(lat=da_lat, lon=da_lon, method='nearest').v.sel(time=da_time, method='nearest').sel(lev=500).values
-            w_vals = data_loader.ds_w.sel(lat=da_lat, lon=da_lon, method='nearest').w.sel(time=da_time, method='nearest').sel(lev=500).values
-
-            wind_speed_sq = u_vals**2 + v_vals**2 + w_vals**2
-            tke_arr = 0.01 * 0.5 * wind_speed_sq
-            edr_arr = 0.5 * (tke_arr ** 1.5) / 100.0
-
-            max_tke = float(np.max(tke_arr))
-            max_edr = float(np.max(edr_arr))
+            # 与 A* 内层同一套湍流场：读航线包围盒 + 实际飞行时段的 TKE/EDR，
+            # 再逐点取最近格点。旧实现直接对原始风场做 fancy 取点，量的是平均风。
+            pad = 0.5
+            bbox = (float(lats.min()) - pad, float(lats.max()) + pad,
+                    float(lons.min()) - pad, float(lons.max()) + pad)
+            t0 = np.datetime64(times[0], 'ns')
+            span_h = int(np.ceil((np.datetime64(times[-1], 'ns') - t0)
+                                 / np.timedelta64(1, 'h'))) + 1
+            tke_grid, edr_grid, glats, glons, gtimes = data_loader.read_turbulence_field(
+                t0, span_h, bbox)
+            if tke_grid is not None and len(gtimes):
+                it = np.abs(gtimes[:, None] - times[None, :]).argmin(axis=0)
+                ila = np.abs(glats[:, None] - lats[None, :]).argmin(axis=0)
+                ilo = np.abs(glons[:, None] - lons[None, :]).argmin(axis=0)
+                tv = tke_grid[it, ila, ilo]
+                ev = edr_grid[it, ila, ilo]
+                if np.isfinite(tv).any():
+                    max_tke = float(np.nanmax(tv))
+                    max_edr = float(np.nanmax(ev))
         except Exception:
             max_tke = 0.0
             max_edr = 0.0

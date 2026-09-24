@@ -67,19 +67,41 @@ class Settings(BaseModel):
     RH_FILE: str = "tibet_2022_upper_rh.nc"
     Q_FILE: str = "tibet_2022_upper_qvapor.nc"
 
-    # thresholds for path planning (can be updated dynamically if needed, or via API)
-    TKE_THRESHOLD_HIGH: float = 1.0 
-    EDR_THRESHOLD_HIGH: float = 0.3
-    
+    # thresholds for path planning (can be updated if needed, or via API)
+    # ---- 湍流参数化（申报书口径：脉动方差，见 meteorology.py）----
+    # 脉动量的窗口宽度：中心滑动 ±6h => N=13。
+    # 取整天窗口（N=24）会把一个格点一天压成一个值，功能二的逐小时扫描失去意义，
+    # 且日变化本身被当成脉动计入（实测 p50 从 4.3 抬到 6.6）；
+    # 取 ±3h（N=7）样本太少，估值系统性偏低（p50 2.5）且更噪。
+    TURB_WINDOW_HALF_HOURS: int = 6
+    TURB_MIN_WINDOW_SAMPLES: int = 5      # 窗口内有效小时数不足则判为无数据
+    TURB_EDR_LENGTH_SCALE_M: float = 2000.0   # 湍流外尺度 L，非飞行器尺度
+    TURB_EDR_C_EPS: float = 0.8
+
+    # ---- 风险四档（2026-09-23 按新刻度全年样本重标定，见 docs/backlog.md B5）----
+    # 切点由 k 场定标：安全 < 8 ≤ 中风险 < 16 ≤ 高风险 < 26 ≤ 完全没法飞
+    # 三区域（拉萨—林芝走廊 / 昌都 / 横断山东缘）全年占比几乎一致：
+    #   k>=8 16~28%、k>=16 4~6%、k>=26 0.9~1.5%
+    # EDR 阈值不是独立量，等于对侧 TKE 阈值经 ε=0.8·k^1.5/L、EDR=ε^(1/3) 换算
+    # （L=2000m 时 8/16/26 -> 0.208/0.295/0.376），改任一边的都必须同步另一边。
+    TKE_THRESHOLD_HIGH: float = 26.0
+    EDR_THRESHOLD_HIGH: float = 0.376
+
     GRID_RESOLUTION_DEG: float = 0.045 # Approximate resolution for A* grid (~5km)
 
     # ---- 风险分级阈值（与 planner 的软/硬约束对齐）----
-    TKE_RISK_MODERATE: float = 0.4   # TKE >= 此值 -> 至少中度风险
-    TKE_RISK_HIGH: float = 0.7       # TKE >= 此值 -> 高风险
-    EDR_RISK_MODERATE: float = 0.1   # EDR >= 此值 -> 至少中度风险
-    EDR_RISK_HIGH: float = 0.2       # EDR >= 此值 -> 高风险
+    TKE_RISK_MODERATE: float = 8.0     # TKE >= 此值 -> 至少中度风险
+    TKE_RISK_HIGH: float = 16.0        # TKE >= 此值 -> 高风险
+    EDR_RISK_MODERATE: float = 0.208   # EDR >= 此值 -> 至少中度风险
+    EDR_RISK_HIGH: float = 0.295       # EDR >= 此值 -> 高风险
     # 中度及以上样本占比超过该比例时，整体风险等级上调一级
     RISK_MODERATE_RATIO_PROMOTE: float = 0.35
+
+    # ---- A* 软约束惩罚（单位：等效绕行公里数）----
+    # 旧刻度下硬阈值处合计罚约 70（TKE 30 + EDR 40），此处按新刻度保持同一量级：
+    # (26-8)*1.7 + (0.376-0.208)*180 ≈ 61
+    DETOUR_PENALTY_TKE_COEF: float = 1.7
+    DETOUR_PENALTY_EDR_COEF: float = 180.0
 
     # ---- 绕行成本（时间口径）接受比例，按任务优先级 ----
     DETOUR_RATIO_LIMIT: Dict[str, float] = {

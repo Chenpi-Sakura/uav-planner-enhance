@@ -1,10 +1,11 @@
 """
 风险分级与航线风险统计。
 
-阈值口径与 planner.py 的软/硬约束保持一致：
-  - 硬约束（不可飞）：TKE >= 1.0 或 EDR >= 0.3
-  - 中度湍流：      TKE >= 0.4 或 EDR >= 0.1
-  - 高风险：        TKE >= 0.7 或 EDR >= 0.2
+阈值口径与 planner.py 的软/硬约束保持一致（脉动方差刻度，2026-09-23 重标定）：
+  - 安全（低风险）：  TKE < 8    且 EDR < 0.208
+  - 中风险：        TKE >= 8    或 EDR >= 0.208
+  - 高风险：        TKE >= 16   或 EDR >= 0.295
+  - 完全没法飞（硬约束）：TKE >= 26 或 EDR >= 0.376
 """
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any

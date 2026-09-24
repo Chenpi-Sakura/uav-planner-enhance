@@ -56,16 +56,20 @@ import { ref, onMounted, onUnmounted, shallowRef, watch } from 'vue';
 import { ChevronDown, ChevronUp, Activity, Play, Pause, Square } from 'lucide-vue-next';
 import * as echarts from 'echarts';
 import { store } from '../store';
-import { API_BASE } from '../config';
+import { API_BASE, TURB } from '../config';
 const chartRef = ref<HTMLElement | null>(null);
 const chartInstance = shallowRef<echarts.ECharts | null>(null);
+
+// TKE 在新口径下是 0–30 量级，与温度/湿度同轴直接可读；EDR 只有 0.x，按倍数放大。
+const TKE_SERIES = `TKE (${TURB.tkeUnit})`;
+const EDR_SERIES = `EDR (x${TURB.edrChartFactor})`;
 
 // Updated legend based on requirement
 const legends = ref([
   { name: '地面海拔高度', color: '#3498db' },
   { name: '无人机飞行海拔', color: '#9b59b6' },
-  { name: 'TKE (x50)', color: '#1abc9c' },
-  { name: 'EDR (x5000)', color: '#2ecc71' },
+  { name: TKE_SERIES, color: '#1abc9c' },
+  { name: EDR_SERIES, color: '#2ecc71' },
   { name: '温度 (°C)', color: '#f39c12' },
   { name: '相对湿度 (%)', color: '#8e44ad' },
   { name: '水汽混合比 (x10)', color: '#e74c3c' }
@@ -143,7 +147,7 @@ const initChart = () => {
         data: []
       },
       {
-        name: 'TKE (x50)',
+        name: TKE_SERIES,
         type: 'line',
         smooth: true,
         symbol: 'none',
@@ -153,7 +157,7 @@ const initChart = () => {
         data: []
       },
       {
-        name: 'EDR (x5000)',
+        name: EDR_SERIES,
         type: 'line',
         smooth: true,
         symbol: 'none',
@@ -279,9 +283,10 @@ const updateChartWithData = (data: any[]) => {
     return `${d.distance_from_start.toFixed(1)}km\n${hStr}:${mStr}`;
   });
   
-  // Dramatically increase scaling factors so these values are visible on a 0-100 scale (driven by Humidity)
-  const tkeData = data.map(d => Number((d.tke * 50).toFixed(2))); // x50
-  const edrData = data.map(d => Number((d.edr * 5000).toFixed(2))); // x5000
+  // 与湿度(0–100)共用的「气象指数」轴：TKE 新口径已是 0–30 量级，直接画；
+  // EDR 只有 0.x，按倍数放大才看得见（倍数写在 config 的 TURB.edrChartFactor）。
+  const tkeData = data.map(d => Number(d.tke.toFixed(2)));
+  const edrData = data.map(d => Number((d.edr * TURB.edrChartFactor).toFixed(2)));
   const tempData = data.map(d => Number((d.tc > 100 ? d.tc - 273.15 : d.tc).toFixed(1)));
   
   // Use REAL elevation data from backend (SRTM90m API)
@@ -299,8 +304,8 @@ const updateChartWithData = (data: any[]) => {
     series: [
       { name: '地面海拔高度', data: elevData }, 
       { name: '无人机飞行海拔', data: absAltData }, 
-      { name: 'TKE (x50)', data: tkeData },
-      { name: 'EDR (x5000)', data: edrData },
+      { name: TKE_SERIES, data: tkeData },
+      { name: EDR_SERIES, data: edrData },
       { name: '温度 (°C)', data: tempData },
       { name: '相对湿度 (%)', data: humData }, 
       { name: '水汽混合比 (x10)', data: qvaporData } 

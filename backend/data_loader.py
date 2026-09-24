@@ -11,7 +11,23 @@ import numpy as np
 import scipy.ndimage as ndimage
 
 from config import settings
-from meteorology import calculate_tke, calculate_edr
+from meteorology import pulsation_tke, edr_from_tke
+
+
+def nearest_time_index(times, target_time) -> int:
+    """时间轴上最接近 target_time 的下标（数据标签为 UTC，逐小时）。"""
+    tv = np.asarray(times, dtype='datetime64[ns]').astype('int64')
+    tt = np.datetime64(target_time, 'ns').astype('int64')
+    return int(np.abs(tv - tt).argmin())
+
+
+def turbulence_from_wind(u, v, w):
+    """三方向风场 -> (TKE, EDR)。全仓库唯一出口，别处不要再写公式。
+
+    输入形状 (hours, ...)，单位 m/s；脉动方差沿 hours 轴滑窗。
+    """
+    tke = pulsation_tke(u, v, w)
+    return tke, edr_from_tke(tke)
 
 class DataLoader:
     def __init__(self):
@@ -50,6 +66,34 @@ class DataLoader:
         except FileNotFoundError as e:
             print(f"Warning: Data file not found. {e}")
 
+    def _wind_window_at(self, lats, lons, target_time):
+        """采样点最近格点的风场时间窗口，形状 (T, n_points)。
+
+        脉动量要在目标时刻前后各取 TURB_WINDOW_HALF_HOURS 小时，
+        故统一走 read_slab（非 dask、带 LRU）读这段窗口，再逐点取最近格点。
+        返回 (u, v, w, center_index)；取不到数据时 u 为 None。
+        """
+        la = np.asarray(lats, dtype=float).ravel()
+        lo = np.asarray(lons, dtype=float).ravel()
+        if la.size == 0 or la.size != lo.size:
+            return None, None, None, -1
+        half = int(settings.TURB_WINDOW_HALF_HOURS)
+        pad = 0.1
+        bbox = (float(la.min()) - pad, float(la.max()) + pad,
+                float(lo.min()) - pad, float(lo.max()) + pad)
+        t0 = np.datetime64(target_time, 'ns') - np.timedelta64(half, 'h')
+        arrs, times, slab_la, slab_lo = [], None, None, None
+        for var in ('u', 'v', 'w'):
+            vals, sl, so, ts = self.read_slab(var, t0, 2 * half + 1, bbox)
+            if vals is None:
+                return None, None, None, -1
+            arrs.append(vals)
+            times, slab_la, slab_lo = ts, sl, so
+        ilat = np.abs(slab_la[:, None] - la[None, :]).argmin(axis=0)
+        ilon = np.abs(slab_lo[:, None] - lo[None, :]).argmin(axis=0)
+        cube = [a[:, ilat, ilon] for a in arrs]
+        return cube[0], cube[1], cube[2], nearest_time_index(times, target_time)
+
     def get_meteorology_at_point(self, lat: float, lon: float, date: str = '2022-07-01', time_slot: str = 'morning'):
         """
         Interpolate data to a specific lat/lon point.
@@ -62,17 +106,21 @@ class DataLoader:
         else:
             try:
                 target_time = np.datetime64(date) if 'T' in date else np.datetime64(f"{date}T08:00:00")
-                u = float(self.ds_u.sel(lat=lat, lon=lon, method='nearest').u.sel(time=target_time, method='nearest').sel(lev=500).values)
-                v = float(self.ds_v.sel(lat=lat, lon=lon, method='nearest').v.sel(time=target_time, method='nearest').sel(lev=500).values)
-                w = float(self.ds_w.sel(lat=lat, lon=lon, method='nearest').w.sel(time=target_time, method='nearest').sel(lev=500).values)
+                pu, pv, pw, ci = self._wind_window_at([lat], [lon], target_time)
+                if pu is None:
+                    raise ValueError("wind window unavailable")
+                u = float(pu[ci, 0])
+                v = float(pv[ci, 0])
+                w = float(pw[ci, 0])
+                tke = float(pulsation_tke(pu, pv, pw)[ci, 0])
+                edr = float(edr_from_tke(tke))
                 tc = float(self.ds_tc.sel(lat=lat, lon=lon, method='nearest').tc.sel(time=target_time, method='nearest').sel(lev=500).values)
                 rh = float(self.ds_rh.sel(lat=lat, lon=lon, method='nearest').rh.sel(time=target_time, method='nearest').sel(lev=500).values)
                 qvapor = float(self.ds_q.sel(lat=lat, lon=lon, method='nearest').qvapor.sel(time=target_time, method='nearest').sel(lev=500).values)
             except Exception as e:
+                # 占位风场是常量，没有脉动可言，湍流只能报 0；此分支仅在数据缺失时命中
                 u, v, w, tc, rh, qvapor = 5.0, 5.0, 0.0, 280.0, 50.0, 0.005
-
-        tke = calculate_tke(u, v, w)
-        edr = calculate_edr(tke)
+                tke, edr = 0.0, 0.0
 
         return {
             "u": u,
@@ -99,6 +147,9 @@ class DataLoader:
         tc = np.full(n, 280.0, dtype=np.float64)
         rh = np.full(n, 50.0, dtype=np.float64)
         qvapor = np.full(n, 0.005, dtype=np.float64)
+        # 占位风场为常量，脉动量恒为 0；仅在数据文件缺失或取数失败时走到这里
+        tke = np.zeros(n, dtype=np.float64)
+        edr = np.zeros(n, dtype=np.float64)
 
         if self.ds_u is not None:
             try:
@@ -106,19 +157,17 @@ class DataLoader:
                 da_lat = xr.DataArray(np.asarray(lats), dims='z')
                 da_lon = xr.DataArray(np.asarray(lons), dims='z')
 
-                u_path = os.path.join(settings.DATA_DIR, settings.U_FILE)
-                v_path = os.path.join(settings.DATA_DIR, settings.V_FILE)
-                w_path = os.path.join(settings.DATA_DIR, settings.W_FILE)
                 tc_path = os.path.join(settings.DATA_DIR, settings.TC_FILE)
                 rh_path = os.path.join(settings.DATA_DIR, settings.RH_FILE)
                 q_path = os.path.join(settings.DATA_DIR, settings.Q_FILE)
 
-                with xr.open_dataset(u_path, chunks=None) as ds:
-                    u = ds.u.sel(time=target_time, method='nearest').sel(lev=500).sel(lat=da_lat, lon=da_lon, method='nearest').values
-                with xr.open_dataset(v_path, chunks=None) as ds:
-                    v = ds.v.sel(time=target_time, method='nearest').sel(lev=500).sel(lat=da_lat, lon=da_lon, method='nearest').values
-                with xr.open_dataset(w_path, chunks=None) as ds:
-                    w = ds.w.sel(time=target_time, method='nearest').sel(lev=500).sel(lat=da_lat, lon=da_lon, method='nearest').values
+                pu, pv, pw, ci = self._wind_window_at(lats, lons, target_time)
+                if pu is not None:
+                    u = pu[ci]
+                    v = pv[ci]
+                    w = pw[ci]
+                    tke, edr = turbulence_from_wind(pu, pv, pw)
+                    tke, edr = tke[ci], edr[ci]
                 with xr.open_dataset(tc_path, chunks=None) as ds:
                     tc = ds.tc.sel(time=target_time, method='nearest').sel(lev=500).sel(lat=da_lat, lon=da_lon, method='nearest').values
                 with xr.open_dataset(rh_path, chunks=None) as ds:
@@ -127,10 +176,6 @@ class DataLoader:
                     qvapor = ds.qvapor.sel(time=target_time, method='nearest').sel(lev=500).sel(lat=da_lat, lon=da_lon, method='nearest').values
             except Exception:
                 pass
-
-        wind_speed_sq = u**2 + v**2 + w**2
-        tke = 0.01 * 0.5 * wind_speed_sq
-        edr = 0.5 * (tke ** 1.5) / 100.0
 
         return {
             "u": u,
@@ -155,7 +200,10 @@ class DataLoader:
             
         target_time = np.datetime64(date) if 'T' in date else np.datetime64(f"{date}T08:00:00")
         end_time = target_time + np.timedelta64(24, 'h')
-        time_slice = slice(target_time, end_time)
+        # 脉动量要扣窗口均值，因此前后各多读 half 小时；多读的部分只用于算窗口，
+        # 返回前按时间裁掉，保持与旧实现完全相同的帧数与时间轴。
+        half = np.timedelta64(int(settings.TURB_WINDOW_HALF_HOURS), 'h')
+        time_slice = slice(target_time - half, end_time + half)
 
         if self.ds_u.lat[0] > self.ds_u.lat[-1]:
             lat_slice = slice(max_lat, min_lat)
@@ -175,9 +223,9 @@ class DataLoader:
             lons = self.ds_u.lon.sel(lon=lon_slice).values
             times = self.ds_u.time.sel(time=time_slice).values
             
-            wind_speed_sq = u_grid**2 + v_grid**2 + w_grid**2
-            tke_grid = 0.01 * 0.5 * wind_speed_sq
-            edr_grid = 0.5 * (tke_grid ** 1.5) / 100.0
+            tke_grid, edr_grid = turbulence_from_wind(u_grid, v_grid, w_grid)
+            keep = np.asarray(times, dtype='datetime64[ns]') >= np.datetime64(target_time, 'ns')
+            tke_grid, edr_grid, times = tke_grid[keep], edr_grid[keep], times[keep]
             
             return tke_grid, edr_grid, lats, lons, times
         except Exception as e:
@@ -278,6 +326,28 @@ class DataLoader:
             self._slab_cache.popitem(last=False)
         return result
 
+    def read_turbulence_field(self, start_time, hours: int, bbox):
+        """读取 [start_time, +hours) 的 TKE / EDR 场。
+
+        返回 (tke, edr, lats, lons, times)，失败时 tke 为 None。
+        内部多读前后各 TURB_WINDOW_HALF_HOURS 小时用于扣脉动窗口均值，
+        返回前裁回请求区间，时间轴语义与 read_slab 一致。
+        """
+        half = int(settings.TURB_WINDOW_HALF_HOURS)
+        hours = int(max(1, hours))
+        t0 = np.datetime64(start_time, 'ns') - np.timedelta64(half, 'h')
+        arrs, times, lats, lons = [], None, None, None
+        for var in ('u', 'v', 'w'):
+            vals, la, lo, ts = self.read_slab(var, t0, hours + 2 * half, bbox)
+            if vals is None:
+                return None, None, None, None, None
+            arrs.append(np.asarray(vals))
+            times, lats, lons = ts, la, lo
+        tke, edr = turbulence_from_wind(arrs[0], arrs[1], arrs[2])
+        idx = np.flatnonzero(np.asarray(times, dtype='datetime64[ns]')
+                             >= np.datetime64(start_time, 'ns'))[:hours]
+        return tke[idx], edr[idx], lats, lons, times[idx]
+
     def check_coverage(self, lat: float, lon: float, tol: float = 0.25) -> bool:
         """判断坐标是否落在气象数据覆盖范围内（带容差）。
 
@@ -303,6 +373,21 @@ class DataLoader:
             data = ds[var_name].sel(time=target_time, method='nearest').sel(lev=500)
             data = data.sel(lat=lat_slice, lon=lon_slice)
             return data.values.squeeze(), data.lat.values, data.lon.values
+        finally:
+            ds.close()
+
+    def _read_overlay_window(self, file_path, var_name, target_time, lat_slice, lon_slice):
+        """读取 target_time 前后各 TURB_WINDOW_HALF_HOURS 小时的 (time, lat, lon) 块。
+
+        脉动方差需要窗口内的多帧数据，单小时切片不够；调用方算完后按时间下标取中心帧。
+        """
+        half = np.timedelta64(int(settings.TURB_WINDOW_HALF_HOURS), 'h')
+        t = np.datetime64(target_time, 'ns')
+        ds = xr.open_dataset(file_path, chunks=None)
+        try:
+            data = ds[var_name].sel(time=slice(t - half, t + half), lev=500,
+                                    lat=lat_slice, lon=lon_slice)
+            return data.values, data.lat.values, data.lon.values, data.time.values
         finally:
             ds.close()
 
@@ -397,8 +482,18 @@ class DataLoader:
                 lon_slice_ol = slice(min_lon - pad, max_lon + pad)
 
             # Read directly without dask (fast I/O, only the needed sub-region)
-            u_vals, u_lats, u_lons = self._read_overlay_slice(u_path, 'u', target_time, lat_slice_ol, lon_slice_ol)
-            v_vals, v_lats, v_lons = self._read_overlay_slice(v_path, 'v', target_time, lat_slice_ol, lon_slice_ol)
+            turb_layer = layer_type in ('tke', 'edr')
+            if turb_layer:
+                # 湍流是脉动方差，单小时切片算不出来：整段多读 ±half 小时
+                u_win, u_lats, u_lons, u_times = self._read_overlay_window(
+                    u_path, 'u', target_time, lat_slice_ol, lon_slice_ol)
+                v_win = self._read_overlay_window(
+                    v_path, 'v', target_time, lat_slice_ol, lon_slice_ol)[0]
+                w_win = self._read_overlay_window(
+                    w_path, 'w', target_time, lat_slice_ol, lon_slice_ol)[0]
+            else:
+                u_vals, u_lats, u_lons = self._read_overlay_slice(u_path, 'u', target_time, lat_slice_ol, lon_slice_ol)
+                v_vals, _, _ = self._read_overlay_slice(v_path, 'v', target_time, lat_slice_ol, lon_slice_ol)
 
             lat_len = len(u_lats)
             lon_len = len(u_lons)
@@ -406,21 +501,16 @@ class DataLoader:
             lat_step = max(1, lat_len // grid_points)
             lon_step = max(1, lon_len // grid_points)
 
-            u_vals = u_vals[::lat_step, ::lon_step]
-            v_vals = v_vals[::lat_step, ::lon_step]
             lats_sub = u_lats[::lat_step]
             lons_sub = u_lons[::lon_step]
             Lons, Lats = np.meshgrid(lons_sub, lats_sub)
 
-            if layer_type == 'tke':
-                w_vals, _, _ = self._read_overlay_slice(w_path, 'w', target_time, lat_slice_ol, lon_slice_ol)
-                w_vals = w_vals[::lat_step, ::lon_step]
-                data = 0.01 * 0.5 * (u_vals**2 + v_vals**2 + w_vals**2)
-            elif layer_type == 'edr':
-                w_vals, _, _ = self._read_overlay_slice(w_path, 'w', target_time, lat_slice_ol, lon_slice_ol)
-                w_vals = w_vals[::lat_step, ::lon_step]
-                tke = 0.01 * 0.5 * (u_vals**2 + v_vals**2 + w_vals**2)
-                data = 0.5 * (tke ** 1.5) / 100.0
+            if turb_layer:
+                # 方差逐格点独立，先抽稀再算，结果与全分辨率算完再抽稀一致
+                thin = (slice(None), slice(None, None, lat_step), slice(None, None, lon_step))
+                tke_all, edr_all = turbulence_from_wind(u_win[thin], v_win[thin], w_win[thin])
+                ci = nearest_time_index(u_times, target_time)
+                data = (tke_all if layer_type == 'tke' else edr_all)[ci]
             elif layer_type == 'temp':
                 tc_vals, _, _ = self._read_overlay_slice(tc_path, 'tc', target_time, lat_slice_ol, lon_slice_ol)
                 data = tc_vals[::lat_step, ::lon_step]
@@ -435,7 +525,7 @@ class DataLoader:
                 w_vals = w_vals[::lat_step, ::lon_step]
                 data = np.sqrt(u_vals**2 + v_vals**2 + w_vals**2)
             else:
-                data = u_vals
+                data = u_vals[::lat_step, ::lon_step]
 
             if Lons.size < 4 or data.size < 4 or Lons.shape != data.shape:
                 # 包围框整体落在数据覆盖范围外时 sel() 给的是空数组而不是 None，
@@ -457,10 +547,11 @@ class DataLoader:
         vmin, vmax = 0.0, 30.0
         if layer_type == 'tke': 
             cmap_name = 'YlOrRd'
-            vmin, vmax = 0.0, 1.5
+            # 上沿取硬阈值 26 之上一点：满红即「完全没法飞」，不再按平均风上色
+            vmin, vmax = 0.0, 30.0
         elif layer_type == 'edr': 
             cmap_name = 'magma'
-            vmin, vmax = 0.0, 0.015
+            vmin, vmax = 0.0, 0.40
         elif layer_type == 'temp': 
             cmap_name = 'coolwarm'
             vmin, vmax = -15.0, 10.0

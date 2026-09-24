@@ -26,6 +26,7 @@
 import { computed, onMounted, onUnmounted } from 'vue';
 import { TriangleAlert, X } from 'lucide-vue-next';
 import { store } from '../store';
+import { TURB } from '../config';
 import type { PlanNoticeReason } from '../store';
 
 interface NoticeCopy {
@@ -42,7 +43,7 @@ interface NoticeCopy {
 const COPY: Record<PlanNoticeReason, NoticeCopy> = {
   blocked: {
     title: '未找到安全航线',
-    body: '当前时刻的起降点或沿途湍流超过硬阈值（TKE ≥ 1.0 或 EDR ≥ 0.3），航线被高危区封死。',
+    body: `当前时刻的起降点或沿途湍流超过硬阈值（TKE ≥ ${TURB.tkeUnflyable} ${TURB.tkeUnit} 或 EDR ≥ ${TURB.edrUnflyable} ${TURB.edrUnit}），航线被高危区封死。`,
     actions: [
       '换一个起飞时刻，或用「时间窗口」标签找出当天的可飞时段',
       '调整起降点位置',

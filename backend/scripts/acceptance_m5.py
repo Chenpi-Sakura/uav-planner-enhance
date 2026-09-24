@@ -8,11 +8,14 @@
 全部用例打印 PASS/FAIL 汇总，便于答辩前快速复跑。
 """
 import json
+import os
 import sys
 import time
 import urllib.request
 
-BASE = "http://127.0.0.1:9090"
+# 默认打本机常驻实例；想在另一个端口上验新起的后端时用它覆盖，
+# 免得为了跑一次验收去改这个脚本。
+BASE = os.environ.get("UAV_API_BASE", "http://127.0.0.1:9090")
 
 ROUTES = [
     ("拉萨-日喀则", (29.65, 91.13), (29.27, 88.88)),

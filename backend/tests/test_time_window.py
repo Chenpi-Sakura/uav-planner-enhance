@@ -14,9 +14,16 @@ if BACKEND_DIR not in sys.path:
 
 import numpy as np
 
+import meteorology
 import time_window as tw
 from config import settings
 from risk import LEVEL_LOW, LEVEL_MODERATE, LEVEL_HIGH, LEVEL_UNFLYABLE
+
+# 合成数据用的三档湍流量。写死 0.1/0.5/1.5 那套数字属于旧的「平均风动能」刻度，
+# 阈值换到脉动方差口径后会整体失配，因此改成从 settings 推导。
+SAFE_TKE = settings.TKE_RISK_MODERATE * 0.2        # 安全区
+MODERATE_TKE = settings.TKE_RISK_MODERATE * 1.5    # 中风险：可飞但记入等级
+UNSAFE_TKE = settings.TKE_THRESHOLD_HIGH * 1.5     # 超硬约束：不可飞
 
 
 def _synth_slab(tke_by_hour, n_lat=5, n_lon=5, base='2022-07-01T00:00:00'):
@@ -28,7 +35,7 @@ def _synth_slab(tke_by_hour, n_lat=5, n_lon=5, base='2022-07-01T00:00:00'):
     tke = np.zeros((nT, n_lat, n_lon))
     for i, v in enumerate(tke_by_hour):
         tke[i] = np.nan if v is None else float(v)
-    edr = 0.5 * (np.where(np.isnan(tke), np.nan, tke) ** 1.5) / 100.0
+    edr = meteorology.edr_from_tke(np.where(np.isnan(tke), np.nan, tke))
     lats = np.linspace(29.0, 29.2, n_lat)
     lons = np.linspace(91.0, 91.2, n_lon)
     times = np.array([np.datetime64(base) + np.timedelta64(i, 'h') for i in range(nT)])
@@ -111,13 +118,13 @@ class TestScanSlots(unittest.TestCase):
                              settings.TKE_THRESHOLD_HIGH, settings.EDR_THRESHOLD_HIGH)
 
     def test_all_safe(self):
-        slots = self._scan([0.1] * 24)
+        slots = self._scan([SAFE_TKE] * 24)
         self.assertEqual(len(slots), 24)
         self.assertTrue(all(s.safe for s in slots))
         self.assertEqual(slots[0].level, LEVEL_LOW)
 
     def test_all_unsafe_by_turbulence(self):
-        slots = self._scan([1.5] * 24)
+        slots = self._scan([UNSAFE_TKE] * 24)
         self.assertFalse(any(s.safe for s in slots))
         self.assertTrue(all(s.level == LEVEL_UNFLYABLE for s in slots))
 
@@ -129,7 +136,7 @@ class TestScanSlots(unittest.TestCase):
     def test_time_progression_picks_later_hour(self):
         # 前 3 小时危险、之后安全；飞行 1 小时（span 60km / 60km/h）
         # 起飞越晚，途中经过危险时段的概率越低 -> 应存在安全槽位且趋势正确
-        hourly = [1.5, 1.5, 1.5] + [0.1] * 21
+        hourly = [UNSAFE_TKE] * 3 + [SAFE_TKE] * 21
         slots = self._scan(hourly)
         safe_idx = [i for i, s in enumerate(slots) if s.safe]
         self.assertTrue(safe_idx, "应存在安全起飞时刻")
@@ -138,7 +145,7 @@ class TestScanSlots(unittest.TestCase):
         self.assertGreaterEqual(min(safe_idx), 3)
 
     def test_moderate_level_reported(self):
-        slots = self._scan([0.5] * 24)
+        slots = self._scan([MODERATE_TKE] * 24)
         self.assertTrue(all(s.safe for s in slots))
         self.assertTrue(all(s.level == LEVEL_MODERATE for s in slots))
 
@@ -211,7 +218,7 @@ class TestCurve(unittest.TestCase):
     """湍流曲线构建。"""
 
     def test_curve_shape_and_labels(self):
-        tke, edr, lats, lons, times = _synth_slab([0.1] * 24)
+        tke, edr, lats, lons, times = _synth_slab([SAFE_TKE] * 24)
         slats, slons, _ = _samples(n=4)
         curve = tw.build_curve(tke, edr, times, slats, slons, lats, lons,
                               np.datetime64('2022-07-01T00:00'),
@@ -220,7 +227,7 @@ class TestCurve(unittest.TestCase):
         self.assertEqual(len(curve['times']), 5)
         self.assertEqual(len(curve['max_tke']), 5)
         self.assertEqual(curve['times'][0], '08:00')
-        self.assertAlmostEqual(curve['max_tke'][0], 0.1, places=3)
+        self.assertAlmostEqual(curve['max_tke'][0], SAFE_TKE, places=3)
 
     def test_empty_on_no_data(self):
         curve = tw.build_curve(np.array([]), np.array([]), np.array([]),
@@ -234,7 +241,7 @@ class TestGeometryBlocked(unittest.TestCase):
     """几何永久阻塞判定（直接检查几何，而非从槽位结果反推）。"""
 
     def test_detects_always_nan_cell(self):
-        tke, edr, lats, lons, times = _synth_slab([0.1] * 24, n_lat=3, n_lon=3)
+        tke, edr, lats, lons, times = _synth_slab([SAFE_TKE] * 24, n_lat=3, n_lon=3)
         tke[:, 1, 1] = np.nan
         edr[:, 1, 1] = np.nan
         slats = np.array([lats[0], lats[1], lats[2]])
@@ -242,14 +249,14 @@ class TestGeometryBlocked(unittest.TestCase):
         self.assertTrue(tw.geometry_blocked(tke, edr, times, lats, lons, slats, slons))
 
     def test_clear_geometry_is_not_blocked(self):
-        tke, edr, lats, lons, times = _synth_slab([0.1] * 24, n_lat=3, n_lon=3)
+        tke, edr, lats, lons, times = _synth_slab([SAFE_TKE] * 24, n_lat=3, n_lon=3)
         slats = np.array([lats[0], lats[1], lats[2]])
         slons = np.array([lons[0], lons[1], lons[2]])
         self.assertFalse(tw.geometry_blocked(tke, edr, times, lats, lons, slats, slons))
 
     def test_partial_nan_is_not_permanent(self):
         """只有个别时次缺失，不算永久阻塞。"""
-        hourly = [0.1] * 24
+        hourly = [SAFE_TKE] * 24
         tke, edr, lats, lons, times = _synth_slab(hourly, n_lat=3, n_lon=3)
         tke[5, 1, 1] = np.nan
         edr[5, 1, 1] = np.nan
@@ -307,7 +314,7 @@ class TestAssessTimeWindow(unittest.TestCase):
             tw._warnings = lambda *a, **k: []
 
     def test_has_window_branch(self):
-        self._install([0.1] * 24 * 4)
+        self._install([SAFE_TKE] * 24 * 4)
         res = tw.assess_time_window(self._Req())
         self.assertTrue(res['has_window'])
         self.assertIsNotNone(res['recommended'])
@@ -317,7 +324,7 @@ class TestAssessTimeWindow(unittest.TestCase):
 
     def test_no_window_then_forecast(self):
         # 当日与次日全天危险，第三天安全 -> 最佳备选日期应落在第三天
-        hourly = [1.5] * 24 + [1.5] * 24 + [0.1] * 24
+        hourly = [UNSAFE_TKE] * 24 + [UNSAFE_TKE] * 24 + [SAFE_TKE] * 24
         self._install(hourly)
         res = tw.assess_time_window(self._Req(forecast_days=2))
         self.assertFalse(res['has_window'])
@@ -330,7 +337,7 @@ class TestAssessTimeWindow(unittest.TestCase):
         self.assertEqual(res['forecast']['first_available_date'], '2022-07-03')
 
     def test_no_window_any_day(self):
-        self._install([1.5] * 24 * 4)
+        self._install([UNSAFE_TKE] * 24 * 4)
         res = tw.assess_time_window(self._Req(forecast_days=2))
         self.assertFalse(res['has_window'])
         self.assertIsNone(res['forecast']['first_available_date'])
@@ -346,7 +353,7 @@ class TestAssessTimeWindow(unittest.TestCase):
 
     def test_no_safe_slot_when_only_turbulence_exceeds(self):
         """只是湍流超标（数据存在）-> 全天无安全时段，不得报永久阻塞。"""
-        self._install([1.5] * 24 * 4)
+        self._install([UNSAFE_TKE] * 24 * 4)
         res = tw.assess_time_window(self._Req(forecast_days=2))
         self.assertFalse(res['has_window'])
         self.assertEqual(res['reason'], tw.REASON_NO_SAFE_SLOT)
@@ -355,19 +362,19 @@ class TestAssessTimeWindow(unittest.TestCase):
 
 
     def test_data_coverage_insufficient(self):
-        self._install([0.1] * 24 * 4)
+        self._install([SAFE_TKE] * 24 * 4)
         tw.data_loader.check_coverage = lambda *a, **k: False
         res = tw.assess_time_window(self._Req())
         self.assertFalse(res['has_window'])
         self.assertEqual(res['reason'], tw.REASON_DATA_MISSING)
 
     def test_geometry_fallback_flag(self):
-        self._install([0.1] * 24 * 4, fallback=True)
+        self._install([SAFE_TKE] * 24 * 4, fallback=True)
         res = tw.assess_time_window(self._Req())
         self.assertTrue(res['meta']['geometry_fallback'])
 
     def test_scan_step_configurable(self):
-        self._install([0.1] * 24 * 4)
+        self._install([SAFE_TKE] * 24 * 4)
         res = tw.assess_time_window(self._Req(scan_step_hours=3))
         self.assertEqual(len(res['slot_analysis']), 8)
         self.assertEqual(res['meta']['scan_step_hours'], 3)
@@ -404,7 +411,7 @@ class TestRegressionFixes(unittest.TestCase):
     def test_scan_slots_flags_out_of_range(self):
         """到达时刻超出 slab 范围时必须判为不可评估，不得吸附到边界值。"""
         # 只有 6 小时数据，但扫描 24 个槽位、每个槽位飞行 3 小时
-        tke, edr, lats, lons, times = _synth_slab([0.1] * 6)
+        tke, edr, lats, lons, times = _synth_slab([SAFE_TKE] * 6)
         slats, slons, cum = _samples(n=5, span_km=180.0)   # 180km / 60km/h = 3h
         slots = tw.scan_slots(tke, edr, times, slats, slons, lats, lons, cum, 60.0,
                               np.datetime64('2022-07-01T00:00:00'), 24, 60,
@@ -421,7 +428,7 @@ class TestRegressionFixes(unittest.TestCase):
 
     def test_narrative_nan_points_do_not_fake_safety(self):
         """NaN 采样点必须使该槽位不可飞（与 planner 硬约束口径一致）。"""
-        hourly = [0.1] * 24
+        hourly = [SAFE_TKE] * 24
         tke, edr, lats, lons, times = _synth_slab(hourly, n_lat=3, n_lon=3)
         tke[:, 1, 1] = np.nan      # 中间格点缺失
         edr[:, 1, 1] = np.nan

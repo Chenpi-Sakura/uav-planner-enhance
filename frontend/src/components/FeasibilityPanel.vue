@@ -87,8 +87,8 @@
         {{ r.risk.overall }}
       </span>
       <div class="risk-metrics">
-        <span>最大 TKE <b>{{ r.risk.stats.max_tke }}</b></span>
-        <span>最大 EDR <b>{{ r.risk.stats.max_edr }}</b></span>
+        <span>最大 TKE <b>{{ fmtTke(r.risk.stats.max_tke) }}</b></span>
+        <span>最大 EDR <b>{{ fmtEdr(r.risk.stats.max_edr) }}</b></span>
         <span>中度以上占比 <b>{{ (r.risk.stats.moderate_ratio * 100).toFixed(1) }}%</b></span>
       </div>
     </div>
@@ -109,7 +109,7 @@
           <span class="seg-dot" :style="{ backgroundColor: riskColor(seg.level) }"></span>
           <span class="seg-names">{{ seg.from_name }} → {{ seg.to_name }}</span>
           <span class="seg-level" :style="{ color: riskColor(seg.level) }">{{ seg.level }}</span>
-          <span class="seg-meta">{{ seg.distance_km }}km · TKE {{ seg.max_tke }}</span>
+          <span class="seg-meta">{{ seg.distance_km }}km · TKE {{ fmtTke(seg.max_tke) }}</span>
         </div>
       </div>
     </div>
@@ -163,7 +163,7 @@
             · 长宽比 {{ reg.aspect_ratio }}
           </div>
           <div class="blocking-meta">
-            峰值 TKE <b>{{ reg.max_tke }}</b> · EDR <b>{{ reg.max_edr }}</b>
+            峰值 TKE <b>{{ fmtTke(reg.max_tke) }}</b> · EDR <b>{{ fmtEdr(reg.max_edr) }}</b>
             · {{ reg.crosses_corridor ? '横亘航线走廊' : '位于航线附近' }}
           </div>
         </div>
@@ -217,7 +217,7 @@ import {
 } from 'lucide-vue-next';
 import { store, RISK_COLORS, PRIORITY_LABELS } from '../store';
 import type { FeasibilityResult } from '../store';
-import { API_BASE } from '../config';
+import { API_BASE, TURB, fmtTke, fmtEdr } from '../config';
 import ReportCard from './ReportCard.vue';
 
 const priorityOptions = [
@@ -253,10 +253,10 @@ const unsafeEndpointText = computed(() => {
   if (!eps || !bad) return '';
   const parts: string[] = [];
   if (eps.start && !eps.start.safe) {
-    parts.push(`起点 ${eps.start.describe} 处 TKE ${eps.start.tke}（超过安全阈值）`);
+    parts.push(`起点 ${eps.start.describe} 处 TKE ${fmtTke(eps.start.tke)} ${TURB.tkeUnit}（超过安全阈值）`);
   }
   if (eps.end && !eps.end.safe) {
-    parts.push(`终点 ${eps.end.describe} 处 TKE ${eps.end.tke}（超过安全阈值）`);
+    parts.push(`终点 ${eps.end.describe} 处 TKE ${fmtTke(eps.end.tke)} ${TURB.tkeUnit}（超过安全阈值）`);
   }
   if (!parts.length) return '';
   return `${bad}自身不满足安全条件：${parts.join('；')}`;
