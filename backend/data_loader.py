@@ -21,6 +21,13 @@ def nearest_time_index(times, target_time) -> int:
     return int(np.abs(tv - tt).argmin())
 
 
+def _nearest_time_indices(times, targets) -> np.ndarray:
+    """时间轴上为每个目标时刻找最近下标（向量化版，供逐点时刻取数用）。"""
+    tv = np.asarray(times, dtype='datetime64[ns]').astype('int64')
+    tt = np.asarray(targets, dtype='datetime64[ns]').astype('int64')
+    return np.abs(tv[None, :] - tt[:, None]).argmin(axis=1)
+
+
 def turbulence_from_wind(u, v, w):
     """三方向风场 -> (TKE, EDR)。全仓库唯一出口，别处不要再写公式。
 
@@ -133,60 +140,94 @@ class DataLoader:
             "edr": edr
         }
 
-    def get_meteorology_at_points(self, lats, lons, date: str = '2022-07-01'):
+    def _gather_slab(self, var: str, la, lo, tt, t0, hours, bbox):
+        """读一块 slab 并算好每个采样点最近的 (时, 纬, 经) 下标。
+
+        返回 (values, ilat, ilon, itime)；取不到时返回 None。
         """
-        Vectorized batch query for multiple points. Uses direct reads (no dask).
+        vals, sl, so, ts = self.read_slab(var, t0, hours, bbox)
+        if vals is None:
+            return None
+        ilat = np.abs(sl[:, None] - la[None, :]).argmin(axis=0)
+        ilon = np.abs(so[:, None] - lo[None, :]).argmin(axis=0)
+        itime = _nearest_time_indices(ts, tt)
+        return vals, ilat, ilon, itime
+
+    def get_meteorology_at_points(self, lats, lons, times):
+        """沿程批量取数：**每个采样点用它自己的时刻**查（4D 口径）。
+
+        参数
+        ----
+        lats, lons : 等长的采样点坐标
+        times : 与 lats 等长的时刻序列（str 或 np.datetime64，数据时间 = UTC 标签）
+
+        为什么不再是"整条线共用一个时刻"：规划时每个点是按【到达时刻】判定的，
+        剖面若仍用起飞时刻那一帧，同一条线上就会出现"规划说这里有值、剖面取到缺测"
+        （或反之）的错位，折线图与结论对不上。
+
+        性能：只读 6 块 slab（u/v/w/tc/rh/qvapor 各一块，覆盖全线的时空包围盒），
+        再逐点在自己的 ±TURB_WINDOW_HALF_HOURS 窗内算脉动方差，不按点次读盘。
+
+        缺测点是 NaN（不是 0）：NaN 经 pydantic 序列化为 JSON null，前端画成断点。
+        数据文件缺失时退回占位常量（与旧实现一致，tke/edr 为 0）。
         """
         if not self._loaded:
             self.load_data()
 
-        n = len(lats)
-        u = np.full(n, 5.0, dtype=np.float64)
-        v = np.full(n, 5.0, dtype=np.float64)
-        w = np.full(n, 0.0, dtype=np.float64)
-        tc = np.full(n, 280.0, dtype=np.float64)
-        rh = np.full(n, 50.0, dtype=np.float64)
-        qvapor = np.full(n, 0.005, dtype=np.float64)
-        # 占位风场为常量，脉动量恒为 0；仅在数据文件缺失或取数失败时走到这里
-        tke = np.zeros(n, dtype=np.float64)
-        edr = np.zeros(n, dtype=np.float64)
+        la = np.asarray(lats, dtype=float).ravel()
+        lo = np.asarray(lons, dtype=float).ravel()
+        n = la.size
+        placeholder = {"u": 5.0, "v": 5.0, "w": 0.0, "tc": 280.0,
+                       "rh": 50.0, "qvapor": 0.005, "tke": 0.0, "edr": 0.0}
+        out = {k: np.full(n, v, dtype=np.float64) for k, v in placeholder.items()}
+        if n == 0 or n != lo.size or self.ds_u is None:
+            return out
 
-        if self.ds_u is not None:
-            try:
-                target_time = np.datetime64(date) if 'T' in date else np.datetime64(f"{date}T08:00:00")
-                da_lat = xr.DataArray(np.asarray(lats), dims='z')
-                da_lon = xr.DataArray(np.asarray(lons), dims='z')
+        try:
+            tt = np.array([np.datetime64(x, 'ns') for x in times], dtype='datetime64[ns]')
+            if tt.size != n:
+                raise ValueError("times 必须与 lats 等长")
 
-                tc_path = os.path.join(settings.DATA_DIR, settings.TC_FILE)
-                rh_path = os.path.join(settings.DATA_DIR, settings.RH_FILE)
-                q_path = os.path.join(settings.DATA_DIR, settings.Q_FILE)
+            half = int(settings.TURB_WINDOW_HALF_HOURS)
+            pad = 0.1
+            bbox = (float(la.min()) - pad, float(la.max()) + pad,
+                    float(lo.min()) - pad, float(lo.max()) + pad)
+            t0 = tt.min() - np.timedelta64(half, 'h')
+            span = int((tt.max() - tt.min()) / np.timedelta64(1, 'h')) + 2 * half + 1
 
-                pu, pv, pw, ci = self._wind_window_at(lats, lons, target_time)
-                if pu is not None:
-                    u = pu[ci]
-                    v = pv[ci]
-                    w = pw[ci]
-                    tke, edr = turbulence_from_wind(pu, pv, pw)
-                    tke, edr = tke[ci], edr[ci]
-                with xr.open_dataset(tc_path, chunks=None) as ds:
-                    tc = ds.tc.sel(time=target_time, method='nearest').sel(lev=500).sel(lat=da_lat, lon=da_lon, method='nearest').values
-                with xr.open_dataset(rh_path, chunks=None) as ds:
-                    rh = ds.rh.sel(time=target_time, method='nearest').sel(lev=500).sel(lat=da_lat, lon=da_lon, method='nearest').values
-                with xr.open_dataset(q_path, chunks=None) as ds:
-                    qvapor = ds.qvapor.sel(time=target_time, method='nearest').sel(lev=500).sel(lat=da_lat, lon=da_lon, method='nearest').values
-            except Exception:
-                pass
+            cols = []
+            itime = None
+            for var in ('u', 'v', 'w'):
+                got = self._gather_slab(var, la, lo, tt, t0, span, bbox)
+                if got is None:
+                    return out
+                vals, ilat, ilon, itime = got
+                cols.append(vals[:, ilat, ilon])          # (T, n)
+            frames = cols[0].shape[0]
 
-        return {
-            "u": u,
-            "v": v,
-            "w": w,
-            "tc": tc,
-            "rh": rh,
-            "qvapor": qvapor,
-            "tke": tke,
-            "edr": edr
-        }
+            # 逐点各自的 ±half 小时窗：(n, W) 的时间下标 -> 转置成 (W, n) 喂给 pulsation_tke。
+            # 越界的帧补 NaN 而不是复制边缘帧 —— 数据真的到头时那是缺测，
+            # 样本不足 TURB_MIN_WINDOW_SAMPLES 会让 pulsation_tke 给出 NaN。
+            raw = itime[:, None] + np.arange(-half, half + 1)[None, :]
+            inside = (raw >= 0) & (raw <= frames - 1)
+            rows = np.clip(raw, 0, frames - 1)
+            cols_idx = np.arange(n)[:, None]
+            win = [np.where(inside.T, c[rows, cols_idx].T, np.nan) for c in cols]
+            tke_all = pulsation_tke(win[0], win[1], win[2])
+            out.update({
+                "u": win[0][half], "v": win[1][half], "w": win[2][half],
+                "tke": tke_all[half], "edr": edr_from_tke(tke_all[half]),
+            })
+
+            for var, key in (('tc', 'tc'), ('rh', 'rh'), ('qvapor', 'qvapor')):
+                got = self._gather_slab(var, la, lo, tt, t0, span, bbox)
+                if got is not None:
+                    vals, ilat, ilon, it = got
+                    out[key] = vals[it, ilat, ilon]
+        except Exception:
+            pass
+
+        return out
 
     def get_meteorology_grid(self, min_lat: float, max_lat: float, min_lon: float, max_lon: float, date: str = '2022-07-01'):
         """

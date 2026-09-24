@@ -127,7 +127,9 @@ def assess_feasibility(req,
 
     # 起终点自身的硬约束校验。规划器在起点不安全时会直接判定 blocked，
     # 若只按「航路被封死」解释，会把原因错误地归到中途湍流区上。
-    endpoints = _check_endpoints(start, end, req)
+    endpoints = _check_endpoints(
+        start, end, req,
+        end_time=plan.times[-1] if (plan.found and plan.times) else None)
     endpoint_bad = _bad_endpoint_label(endpoints)
 
     # 4) 结论判定
@@ -404,21 +406,26 @@ def _analyze_blocking(start, end, req) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _check_endpoints(start, end, req) -> Dict[str, Any]:
+def _check_endpoints(start, end, req, end_time=None) -> Dict[str, Any]:
     """校验起降点自身是否满足硬约束。
 
     返回 {'start': {...}, 'end': {...}}，每项含 safe / tke / edr / describe。
     规划器对「起点不安全」是直接判 blocked 的，若不单独说明，
     用户会误以为是航路中段的湍流区封死了航线。
+
+    终点用 end_time（规划出的到达时刻）查，与「起飞时刻的终点天气」是两回事：
+    三档航线的到达时刻本来就不同，若仍一起用起飞时刻，同一张地图上
+    降落点的湍流值会与沿程剖面差一小时以上。缺 end_time 时退回起飞时刻。
     """
+    takeoff = to_data_time_str(f"{req.date}T{req.start_time}")
     out: Dict[str, Any] = {}
     for key, pt in (("start", start), ("end", end)):
         tke = float("nan")
         edr = float("nan")
         safe = True
         try:
-            vals = data_loader.get_meteorology_at_points(
-                [pt[0]], [pt[1]], date=to_data_time_str(f"{req.date}T{req.start_time}"))
+            t = end_time if (key == "end" and end_time is not None) else takeoff
+            vals = data_loader.get_meteorology_at_points([pt[0]], [pt[1]], [t])
             tke = float(vals["tke"][0])
             edr = float(vals["edr"][0])
             tke_th = req.tke_threshold if req.tke_threshold is not None else settings.TKE_THRESHOLD_HIGH

@@ -9,6 +9,8 @@ class ProfileRequest(BaseModel):
     waypoints: List[Point]
     date: str = '2022-07-01'
     start_time: str = '08:00'
+    # 用于把每个采样点的累计里程换算成到达时刻（4D 口径：沿程不是同一瞬间）
+    speed: float = 60.0
 
 class ProfileDataPoint(BaseModel):
     lat: float

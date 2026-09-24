@@ -34,8 +34,14 @@ class _StubLoader:
 
     ds_u = None
 
-    def get_meteorology_at_points(self, lats, lons, date=None):
+    def __init__(self):
+        self.point_calls = []      # [(单点纬度, 该点用的时刻字符串), ...]
+
+    def get_meteorology_at_points(self, lats, lons, times=None):
         n = len(lats)
+        ts = list(times) if times is not None else [None] * n
+        for lat, t in zip(lats, ts):
+            self.point_calls.append((round(float(lat), 4), str(t)))
         return {"tke": np.full(n, 0.1), "edr": np.full(n, 0.001)}
 
     def get_meteorology_grid(self, *args, **kwargs):
@@ -67,7 +73,8 @@ class TestFeasibilityOrchestration(unittest.TestCase):
     def setUp(self):
         self.saved_plan = feasibility.plan_path_ex
         self.saved_loader = feasibility.data_loader
-        feasibility.data_loader = _StubLoader()
+        self.loader = _StubLoader()
+        feasibility.data_loader = self.loader
 
     def tearDown(self):
         feasibility.plan_path_ex = self.saved_plan
@@ -133,6 +140,23 @@ class TestFeasibilityOrchestration(unittest.TestCase):
         result = self._assess(_fake_plan(340.0))
         self.assertEqual(result.meta['date'], '2022-07-01')
         self.assertEqual(result.meta['start_time'], '08:00')
+
+    def test_endpoint_check_uses_arrival_time_at_the_far_end(self):
+        """起点按起飞时刻、终点按航线到达时刻查（4D 口径的单点版）。
+
+        三档航线到达时刻本就不同，共用起飞时刻会让「降落点天气」
+        与沿程剖面各说一套。
+        """
+        self._assess(_fake_plan(340.0))
+        by_lat = {lat: t for lat, t in self.loader.point_calls}
+        self.assertEqual(by_lat[29.65], '2022-07-01T00:00')   # 数据时间 = 北京 08:00
+        self.assertTrue(by_lat[29.66].startswith('2022-07-01T04:45'),
+                        f"终点仍用起飞时刻：{by_lat[29.66]}")
+
+    def test_endpoint_check_falls_back_without_a_route(self):
+        self._assess(_fake_plan(0.0, found=False))
+        by_lat = {lat: t for lat, t in self.loader.point_calls}
+        self.assertEqual(by_lat[29.65], by_lat[29.66])
 
 
 class TestGeo(unittest.TestCase):

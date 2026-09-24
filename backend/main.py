@@ -10,7 +10,7 @@ from schemas import (
     FeasibilityRequest, FeasibilityResponse, FeasibilityMultiResponse,
 )
 from data_loader import data_loader
-from planner import compute_path_turbulence, plan_path_ex
+from planner import compute_path_turbulence, plan_path_ex, _haversine_km
 from route_options import plan_route_options
 from feasibility import assess_feasibility, assess_feasibility_multi, to_response_dict
 from time_window import assess_time_window
@@ -18,7 +18,7 @@ import assessor
 import geo
 from config import ROOT_DIR, settings
 from timebase import to_data_time_str
-import math
+import numpy as np
 import urllib.request
 import json
 import asyncio
@@ -85,37 +85,39 @@ def _fetch_elevations(waypoints):
 async def get_weather_profile(req: ProfileRequest):
     """
     Get meteorological data along a given route (list of waypoints).
+
+    每个采样点按【自己的到达时刻】取数（累计里程 / 速度），与规划器的 4D 判定同口径；
+    整条线共用起飞时刻那一帧会让折线图与结论对不上。
     """
     loop = asyncio.get_event_loop()
 
     elevations = await loop.run_in_executor(None, _fetch_elevations, req.waypoints)
 
-    total_dist = 0.0
-    for i, wp in enumerate(req.waypoints):
-        if i > 0:
-            prev_wp = req.waypoints[i-1]
-            dist_deg = math.hypot(wp.lat - prev_wp.lat, wp.lon - prev_wp.lon)
-            total_dist += dist_deg * 111.0
-
     lats = [wp.lat for wp in req.waypoints]
     lons = [wp.lon for wp in req.waypoints]
+    # 累计里程（km）与到达时刻：与 planner 的 base_time + dist/speed 同一套算法，
+    # 距离口径也必须跟着 planner 走（大圆距离），否则折线图的时刻比规划判定偏早/偏晚。
+    cum_km: list[float] = []
+    for i, wp in enumerate(req.waypoints):
+        if i == 0:
+            cum_km.append(0.0)
+        else:
+            prev = req.waypoints[i - 1]
+            cum_km.append(cum_km[-1] + _haversine_km(prev.lat, prev.lon, wp.lat, wp.lon))
+
+    speed = float(req.speed) if req.speed else 60.0
     # 剖面图必须跟随用户选择的日期/起飞时刻；北京时间需换算为数据标签时间(UTC)。
-    data_time = to_data_time_str(f"{req.date}T{req.start_time}")
+    base_time = np.datetime64(to_data_time_str(f"{req.date}T{req.start_time}"), 'ns')
+    arrival = [base_time + np.timedelta64(int(d / speed * 3600), 's') for d in cum_km]
     meteo_batch = await loop.run_in_executor(
-        None, data_loader.get_meteorology_at_points, lats, lons, data_time)
+        None, data_loader.get_meteorology_at_points, lats, lons, arrival)
 
     data_points = []
-    running_dist = 0.0
     for i, wp in enumerate(req.waypoints):
-        if i > 0:
-            prev_wp = req.waypoints[i-1]
-            dist_deg = math.hypot(wp.lat - prev_wp.lat, wp.lon - prev_wp.lon)
-            running_dist += dist_deg * 111.0
-
         dp = ProfileDataPoint(
             lat=wp.lat,
             lon=wp.lon,
-            distance_from_start=round(running_dist, 2),
+            distance_from_start=round(cum_km[i], 2),
             elevation=elevations[i] if i < len(elevations) else 3650.0,
             u=float(meteo_batch['u'][i]),
             v=float(meteo_batch['v'][i]),

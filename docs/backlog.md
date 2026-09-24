@@ -115,6 +115,22 @@
 - `/api/route/plan-multi` 保留（几何+风险统计的轻量版，功能二 B10 的 Top-K 要用它，
   不需要每档跑完整评估）。
 
+**同日第三步（09-25）：沿程取数改「按到达时刻逐点取数」**——三档合并后暴露出的口径不一致：
+
+- `get_meteorology_at_points` 的签名从 `date: str` 换成 **`times` 数组**（与 lats 等长，
+  接受 `np.datetime64` 或 ISO 字符串）。旧实现整条线共用起飞时刻那一帧，而 4D 规划器
+  是按每个点的**到达时刻**判定的，于是同一条线上会出现"规划说有值、剖面取到缺测"（或反之）。
+- `POST /api/weather/profile` 由 `累计里程(大圆) / speed` 推进到达时刻，`ProfileRequest`
+  因此新增 `speed`（前端 `DataChartPanel` 传 `store.uavSpeed`）。距离口径一并从
+  `hypot(dlat,dlon)×111`（不给经度乘 cosφ，纬度 30° 处偏大 15%）换成与 `planner._haversine_km`
+  同源的算法，横轴里程与规划结果的 `total_distance` 从此可比。
+- 一次请求仍只读 6 块 slab（覆盖全线的时空包围盒），逐点在自己的 ±6 h 窗内算脉动方差，
+  **不按点次读盘**；越界的帧补 NaN 而不是复制边缘帧，缺测语义不被抹平。
+- 连带修：`_check_endpoints` 的**终点**改用该档航线的到达时刻（`plan.times[-1]`），
+  三档到达时刻本就不同，一起用起飞时刻等于降落点天气与沿程剖面各说一套。
+- 契约由 `tests/test_data_loader_points.py`（替身 slab，验"每点取到自己那一帧"）与
+  `tests/test_feasibility.py` 里新增的两条端点时刻断言钉住。
+
 **倍率是照着自己跑出来的权衡曲线定的，不是拍的**。先做了一次"惩罚是否生效"的普查
 （3 走廊 × 5 日期 × 4 时刻的贪心航线沿途 k），再在生效的场景上扫倍率：
 

@@ -255,7 +255,9 @@ const fetchProfileData = async () => {
           lon: Number(wp.lng)
         })),
         date: store.targetDate,
-        start_time: store.targetTime
+        start_time: store.targetTime,
+        // 后端按累计里程/速度算每个点的到达时刻，横轴时间才和这条线一致
+        speed: Number(store.uavSpeed)
       })
     });
     
