@@ -1,10 +1,12 @@
-"""申报书公式 k 的抽样全年分布（500 hPa，±6 h 滑动窗口脉动方差），用来人工界定风险四档。
+r"""申报书公式 k 的抽样全年分布（500 hPa，±6 h 滑动窗口脉动方差），用来人工界定风险四档。
 
-k = ½·( mean(u'²) + mean(v'²) + mean(w'²) )，u' = u_i − ū（窗口内平均）。
+照抄申报书符号（\overline{\cdot} 即上划线，表示窗口内平均）：
+    u' = u − ū，\overline{u'^2} = (1/N) Σ_i (u_i − ū)²
+    k = ½ · ( \overline{u'^2} + \overline{v'^2} + \overline{w'^2} )   [m²/s²]
 本脚本不设任何结论性阈值：只输出量级、按月/按时分布、与旧刻度的交叉验证。
 阈值定完后的复核脚本见 turbulence_bands_report.py。
 
-用法（要读 600 GB 数据盘，全跑约 25 分钟）：
+用法（要读 600 GB 数据盘，72 个样本日 × 3 个区域，冷读耗时以十分钟计）：
     cd backend
     .python/portable/python.exe scripts/turbulence_bands_probe.py > probe.out
 
