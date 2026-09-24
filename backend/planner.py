@@ -192,7 +192,18 @@ def _deg_to_km(a, b):
     return math.hypot(dx, dy) * 111.0
 
 
-def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_str, initial_g_score, initial_dist, speed_kmh) -> SegmentResult:
+def tier_risk_scale(priority) -> float:
+    """任务优先级 -> 软惩罚倍率；未知或缺省按「平衡」= 1.0。
+
+    三档只改倍率不改形状：TKE 与 EDR 是同一个湍流量的两种单位，分别调会连带改
+    两者之间的相对权重。
+    """
+    key = (priority or settings.DEFAULT_PRIORITY).lower()
+    return float(settings.DETOUR_PENALTY_TIER_SCALE.get(key, 1.0))
+
+
+def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_str,
+                      initial_g_score, initial_dist, speed_kmh, risk_scale: float = 1.0) -> SegmentResult:
     """
     A* path planning algorithm on a 2D grid, with dynamic time progression.
 
@@ -358,10 +369,10 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
 
             # 拐点即风险分档的「中风险」下沿，罚量与硬阈值处的等效绕行公里数对齐
             if tke >= settings.TKE_RISK_MODERATE:
-                penalty += (tke - settings.TKE_RISK_MODERATE) * settings.DETOUR_PENALTY_TKE_COEF
+                penalty += (tke - settings.TKE_RISK_MODERATE) * settings.DETOUR_PENALTY_TKE_COEF * risk_scale
 
             if edr >= settings.EDR_RISK_MODERATE:
-                penalty += (edr - settings.EDR_RISK_MODERATE) * settings.DETOUR_PENALTY_EDR_COEF
+                penalty += (edr - settings.EDR_RISK_MODERATE) * settings.DETOUR_PENALTY_EDR_COEF * risk_scale
                 
             tentative_g_score = g_score[current] + grid_dist + penalty
             
@@ -422,6 +433,7 @@ def plan_path_ex(req: PlanRequest) -> PlanResult:
 
     t_thresh = req.tke_threshold if req.tke_threshold is not None else settings.TKE_THRESHOLD_HIGH
     e_thresh = req.edr_threshold if req.edr_threshold is not None else settings.EDR_THRESHOLD_HIGH
+    risk_scale = tier_risk_scale(getattr(req, "priority", None))
 
     for i in range(len(targets) - 1):
         s = targets[i]
@@ -433,7 +445,8 @@ def plan_path_ex(req: PlanRequest) -> PlanResult:
         seg = plan_path_segment(
             s_node, e_node,
             t_thresh, e_thresh,
-            start_time_str, current_g_score, current_dist, req.speed
+            start_time_str, current_g_score, current_dist, req.speed,
+            risk_scale=risk_scale,
         )
         segment_results.append(seg)
 

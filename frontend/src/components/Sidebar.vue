@@ -139,6 +139,29 @@
               <span v-else style="display:flex; align-items:center; gap:8px;"><Send :size="16" /> 开始规划</span>
             </button>
           </div>
+
+          <!-- 三方案对比：点击即把该档设为当前航线，选中线 100%、其余淡化 -->
+          <div v-if="store.planOptions" class="route-tiers">
+            <button
+              class="route-tier-row"
+              :class="{ active: store.priority === r.priority, dead: !r.feasible }"
+              v-for="r in store.planOptions.routes"
+              :key="r.priority"
+              :disabled="!r.feasible"
+              @click="activateRouteTier(r.priority)"
+            >
+              <span class="tier-label">{{ r.label }}</span>
+              <span v-if="r.feasible" class="tier-metric">
+                {{ r.total_distance }} km
+                <em>+{{ Math.round(((r.detour_ratio ?? 1) - 1) * 100) }}% 绕行</em>
+                <em>k {{ r.max_tke }}</em>
+              </span>
+              <span v-else class="tier-metric">无安全航线</span>
+            </button>
+            <p v-if="store.planOptions.meta.all_identical" class="tier-hint">
+              该时段沿程湍流未超过中风险下沿，三档算出的是同一条线
+            </p>
+          </div>
         </section>
         </template>
 
@@ -167,8 +190,8 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { ChevronLeft, ChevronRight, Clock, Navigation, Layers, Send, Plus, X, Crosshair, Loader, MapPin, ShieldCheck, CalendarClock } from 'lucide-vue-next';
-import { store } from '../store';
-import type { BaseStation } from '../store';
+import { store, activateRouteTier } from '../store';
+import type { BaseStation, RouteOption, PlanNoticeReason } from '../store';
 import { API_BASE } from '../config';
 import FeasibilityPanel from './FeasibilityPanel.vue';
 import TimeWindowPanel from './TimeWindowPanel.vue';
@@ -230,6 +253,7 @@ const handleBaseClick = (base: BaseStation) => {
 /** 清掉上一次航线与派生结果：失败时不能留旧线，否则地图上的线和面板结论会对不上 */
 const clearRoute = () => {
   store.plannedPath = [];
+  store.planOptions = null;
   store.isSimulating = false;
   store.simulationIndex = 0;
   store.feasibility = null;
@@ -248,7 +272,7 @@ const handlePlan = async () => {
   store.planNotice = null;
   clearRoute();
   try {
-    const response = await fetch(`${API_BASE}/api/route/plan`, {
+    const response = await fetch(`${API_BASE}/api/route/plan-multi`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -264,30 +288,24 @@ const handlePlan = async () => {
     if (!response.ok) throw new Error("规划失败");
     
     const result = await response.json();
-    // 后端无安全航线时返回 path=[] + feasible=false + reason，按原因出对应文案
-    if (result && result.feasible === false) {
-      store.planNotice = { reason: result.reason || 'blocked' };
+    const routes: RouteOption[] = result.routes ?? [];
+    if (routes.length === 0) throw new Error("规划失败");
+    store.planOptions = { routes, meta: result.meta };
+    console.log("三方案规划完成:", routes.map(r => `${r.label} ${r.total_distance}km`));
+    
+    // 三档全被封死才算规划失败；部分失败时照常出图，缺的那档在列表里标「无安全航线」
+    const want = store.priority;
+    const active = routes.find(x => x.priority === want && x.feasible) ?? routes.find(x => x.feasible);
+    if (!active) {
+      const probe = routes.find(x => x.priority === 'normal') ?? routes[0];
+      store.planNotice = { reason: (probe.reason ?? 'blocked') as PlanNoticeReason };
       return;
     }
-    if (result && result.path && result.path.length > 0) {
-      const startAlt = Number(store.start.alt || 600);
-      const endAlt = Number(store.end.alt || 600);
-      const n = result.path.length;
-      
-      // Set the planned path to global store with interpolated relative altitude
-      store.plannedPath = result.path.map((p: any, i: number) => ({
-        lat: p.lat,
-        lng: p.lon,
-        alt: n > 1 ? startAlt + (endAlt - startAlt) * (i / (n - 1)) : startAlt
-      }));
-      console.log("规划成功，总距离:", result.total_distance);
-      
-      // Auto toggle layout
-      store.sidebarCollapsed = true;
-      store.chartCollapsed = false;
-      store.isSimulating = false; // Reset simulation
-      store.simulationIndex = 0;
-    }
+    activateRouteTier(active.priority);
+    
+    // Auto toggle layout
+    store.sidebarCollapsed = true;
+    store.chartCollapsed = false;
   } catch (error) {
     console.error("规划请求失败:", error);
     store.planNotice = { reason: 'request_failed' };
@@ -563,6 +581,69 @@ const handlePlan = async () => {
 
 .action-row {
   margin-top: 16px;
+}
+
+/* 三方案对比列表：一行一个档位，点击切主航线 */
+.route-tiers {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.route-tier-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s;
+}
+
+.route-tier-row:hover:not(.dead) {
+  border-color: var(--accent, #38bdf8);
+}
+
+.route-tier-row.active {
+  border-color: var(--accent, #38bdf8);
+  background: rgba(56, 189, 248, 0.12);
+  color: var(--text-primary, #e2e8f0);
+}
+
+.route-tier-row.dead {
+  cursor: not-allowed;
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.route-tier-row .tier-label {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.route-tier-row .tier-metric {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.route-tier-row .tier-metric em {
+  font-style: normal;
+  opacity: 0.75;
+}
+
+.tier-hint {
+  margin: 4px 2px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
 }
 
 /* Custom Checkbox Grid */

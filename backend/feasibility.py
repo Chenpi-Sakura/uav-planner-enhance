@@ -73,7 +73,7 @@ def assess_feasibility(req,
         straight_time_h = 0.0
 
     # 2) 规划（含途经点）
-    plan_req = _to_plan_request(req)
+    plan_req = _to_plan_request(req, priority)
     plan: PlanResult = plan_path_ex(plan_req)
 
     path_dicts: List[Dict[str, float]] = [
@@ -198,7 +198,7 @@ def assess_feasibility(req,
     )
 
 
-def _to_plan_request(req):
+def _to_plan_request(req, priority: str):
     from schemas import PlanRequest
     return PlanRequest(
         start=req.start,
@@ -207,6 +207,7 @@ def _to_plan_request(req):
         date=req.date,
         start_time=req.start_time,
         speed=req.speed,
+        priority=priority,
         tke_threshold=req.tke_threshold,
         edr_threshold=req.edr_threshold,
     )

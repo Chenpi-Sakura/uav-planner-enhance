@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 from pydantic import BaseModel
 
@@ -102,6 +102,17 @@ class Settings(BaseModel):
     # (26-8)*1.7 + (0.376-0.208)*180 ≈ 61
     DETOUR_PENALTY_TKE_COEF: float = 1.7
     DETOUR_PENALTY_EDR_COEF: float = 180.0
+
+    # ---- 任务优先级 -> 软惩罚倍率（乘在上面两个基线值上）----
+    # 两项同倍缩放：EDR = 0.0737·√k 是同一个湍流量换了单位，分别调会改风险价格的形状。
+    # normal 取 1.0，即与既有验收结果同一口径。
+    DETOUR_PENALTY_TIER_SCALE: Dict[str, float] = {
+        "urgent": 0.25,    # 紧急：只为接近封路的湍流绕行
+        "normal": 1.0,     # 平衡：基线
+        "economy": 4.0,    # 经济：宁可绕远也要躲开中风险以上
+    }
+    # 一次规划产出的三方案顺序
+    PLAN_TIERS: List[str] = ["urgent", "normal", "economy"]
 
     # ---- 绕行成本（时间口径）接受比例，按任务优先级 ----
     DETOUR_RATIO_LIMIT: Dict[str, float] = {

@@ -257,9 +257,34 @@ const renderBlockingRegions = () => {
   }
 };
 
+// 非选中档位的对比线：统一灰色，靠虚线疏密区分三档
+const COMPARISON_COLOR = '#94a3b8';
+const COMPARISON_DASH: Record<string, string> = {
+  urgent: '4, 7',
+  normal: '9, 7',
+  economy: '16, 8',
+};
+
+/** 把未被选中的候选航线画成 30% 透明度的细虚线，压在选中线下面供对比。 */
+const renderComparisonRoutes = () => {
+  const opts = store.planOptions;
+  if (!opts) return;
+  for (const r of opts.routes) {
+    if (!r.feasible || r.priority === store.priority) continue;
+    const latlngs: L.LatLngExpression[] = r.path.map(p => [p.lat, p.lon]);
+    L.polyline(latlngs, {
+      color: COMPARISON_COLOR,
+      weight: 4,
+      opacity: 0.3,
+      dashArray: COMPARISON_DASH[r.priority] ?? '8, 8',
+    }).addTo(pathLayer).bindTooltip(`${r.label} ${r.total_distance} km`, { sticky: true });
+  }
+};
+
 const renderPlannedPath = () => {
   if (!map) return;
   pathLayer.clearLayers();
+  renderComparisonRoutes();
   
   const path = store.plannedPath;
   if (!path || path.length === 0) {
@@ -291,11 +316,11 @@ const renderPlannedPath = () => {
       }).addTo(pathLayer);
     });
   } else {
+    // 选中线用实线；虚线现在专用于「未选中的对比线」，不要在这里复用
     L.polyline(latlngs, {
       color: '#FF3300', // Bright red-orange
       weight: 6,
-      opacity: 1.0,
-      dashArray: '10, 10'
+      opacity: 1.0
     }).addTo(pathLayer);
   }
   
@@ -425,6 +450,11 @@ watch(() => [store.start, store.end, store.waypoints], () => {
 }, { deep: true });
 
 watch(() => [store.plannedPath, store.selectedSegmentIndex, store.hoveredSegmentIndex], () => {
+  renderPlannedPath();
+}, { deep: true });
+
+// 切换档位（侧栏三方案列表 / 功能一的优先级按钮都写 store.priority）→ 重画选中与对比线
+watch(() => [store.priority, store.planOptions], () => {
   renderPlannedPath();
 }, { deep: true });
 

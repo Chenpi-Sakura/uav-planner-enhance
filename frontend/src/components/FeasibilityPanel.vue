@@ -1,14 +1,14 @@
 <template>
   <!-- ============ 输入区：任务优先级 ============ -->
   <section class="control-section">
-    <p class="hint-text">优先级决定可接受的绕行成本（时间口径）上限</p>
+    <p class="hint-text">档位决定航线为躲湍流绕多远，以及可接受的绕行成本（时间口径）上限</p>
     <div class="priority-group">
       <button
         v-for="opt in priorityOptions"
         :key="opt.value"
         class="priority-btn"
         :class="{ active: store.priority === opt.value }"
-        @click="store.priority = opt.value"
+        @click="choosePriority(opt.value)"
       >
         <span class="priority-name">{{ opt.label }}</span>
         <span class="priority-limit">{{ opt.hint }}</span>
@@ -215,20 +215,25 @@ import {
   ShieldCheck, Loader, CheckCircle2, XCircle, Route, Timer,
   AlertTriangle, Lightbulb, MapPin, CalendarClock,
 } from 'lucide-vue-next';
-import { store, RISK_COLORS, PRIORITY_LABELS } from '../store';
+import { store, RISK_COLORS, PRIORITY_LABELS, activateRouteTier } from '../store';
 import type { FeasibilityResult } from '../store';
 import { API_BASE, TURB, fmtTke, fmtEdr } from '../config';
 import ReportCard from './ReportCard.vue';
 
 const priorityOptions = [
   { value: 'urgent' as const, label: '紧急', hint: '≤ +25% 时间' },
-  { value: 'normal' as const, label: '常规', hint: '≤ +50% 时间' },
+  { value: 'normal' as const, label: '平衡', hint: '≤ +50% 时间' },
   { value: 'economy' as const, label: '经济', hint: '≤ +100% 时间' },
 ];
 
+/** 点档位：已有三方案时直接把地图主航线切到该档，否则只记下档位供下次评估用。 */
+const choosePriority = (v: 'urgent' | 'normal' | 'economy') => {
+  if (!activateRouteTier(v)) store.priority = v;
+};
+
 const r = computed<FeasibilityResult | null>(() => store.feasibility);
 
-const priorityLabel = computed(() => PRIORITY_LABELS[store.priority] ?? '常规');
+const priorityLabel = computed(() => PRIORITY_LABELS[store.priority] ?? '平衡');
 
 const verdictSub = computed(() => {
   if (!r.value) return '';

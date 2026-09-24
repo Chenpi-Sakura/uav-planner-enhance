@@ -107,6 +107,37 @@ export interface FeasibilityResult {
   };
 }
 
+/** 三方案航线中的一条（后端 /api/route/plan-multi 产出） */
+export interface RouteOption {
+  priority: 'urgent' | 'normal' | 'economy';
+  label: string;
+  risk_scale: number;
+  feasible: boolean;
+  reason: string | null;
+  path: { lat: number; lon: number }[];
+  total_distance: number;
+  detour_ratio: number | null;
+  max_tke: number;
+  max_edr: number;
+  overall_level: RiskLevel | '';
+  moderate_ratio: number;
+  high_ratio: number;
+  risk_engaged: boolean;
+  n_nodes: number;
+}
+
+export interface PlanOptions {
+  routes: RouteOption[];
+  meta: {
+    straight_km: number;
+    tiers: string[];
+    n_feasible: number;
+    /** 三条线几何完全相同：通常是沿程湍流未超过中风险下沿，惩罚未参与代价 */
+    all_identical: boolean;
+    distinct_paths: number;
+  };
+}
+
 export interface StoreState {
   selectingMode: 'start' | 'waypoint' | 'end' | null;
   selectingIndex: number;
@@ -126,7 +157,8 @@ export interface StoreState {
   bases: BaseStation[];
   // ---- 决策平台新增 ----
   sidebarTab: 'plan' | 'feasibility' | 'timeWindow';   // 侧边栏标签页
-  priority: 'urgent' | 'normal' | 'economy';  // 任务优先级
+  priority: 'urgent' | 'normal' | 'economy';  // 当前选中的方案档位
+  planOptions: PlanOptions | null;  // 一次规划产出的三条候选航线（null = 还没规划过）
   assessLoading: boolean;
   feasibility: FeasibilityResult | null; // 功能一评估结果
   highlightRegions: BlockingRegion[];    // 地图高亮：阻塞区
@@ -171,6 +203,7 @@ export const store = reactive<StoreState>({
   ],
   sidebarTab: 'plan',
   priority: 'normal',
+  planOptions: null,
   assessLoading: false,
   feasibility: null,
   highlightRegions: [],
@@ -193,6 +226,34 @@ export const RISK_COLORS: Record<string, string> = {
 
 export const PRIORITY_LABELS: Record<string, string> = {
   urgent: '紧急',
-  normal: '常规',
+  normal: '平衡',
   economy: '经济',
 };
+
+/**
+ * 把主航线切换成指定档位的候选航线。三方案尚未生成时不生效（返回 false）。
+ *
+ * 换线后必须作废上一次评估的分段风险与阻塞区：它们的下标是旧路径的采样点，
+ * 留着会让地图上新旧两条线混着画。
+ */
+export function activateRouteTier(priority: string): boolean {
+  const hit = store.planOptions?.routes.find(r => r.priority === priority && r.feasible);
+  if (!hit) return false;
+
+  store.priority = hit.priority;
+  const startAlt = Number(store.start.alt || 600);
+  const endAlt = Number(store.end.alt || 600);
+  const n = hit.path.length;
+  store.plannedPath = hit.path.map((p, i) => ({
+    lat: p.lat,
+    lng: p.lon,
+    alt: n > 1 ? startAlt + (endAlt - startAlt) * (i / (n - 1)) : startAlt,
+  }));
+  store.feasibility = null;
+  store.highlightRegions = [];
+  store.selectedSegmentIndex = null;
+  store.hoveredSegmentIndex = null;
+  store.isSimulating = false;
+  store.simulationIndex = 0;
+  return true;
+}

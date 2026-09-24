@@ -6,11 +6,12 @@ from schemas import (
     TimeWindowRequest, TimeWindowResponse,
     ReportRequest,
     ProfileRequest, ProfileResponse, ProfileDataPoint,
-    PlanRequest, PlanResponse,
+    PlanRequest, PlanResponse, PlanMultiResponse,
     FeasibilityRequest, FeasibilityResponse,
 )
 from data_loader import data_loader
 from planner import compute_path_turbulence, plan_path_ex
+from route_options import plan_route_options
 from feasibility import assess_feasibility
 from time_window import assess_time_window
 import assessor
@@ -152,6 +153,16 @@ async def plan_route(request: PlanRequest):
         max_edr=max_edr,
         feasible=True,
     )
+
+@app.post("/api/route/plan-multi", response_model=PlanMultiResponse)
+async def plan_route_multi(request: PlanRequest):
+    """一次产出「紧急 / 平衡 / 经济」三条候选航线。
+
+    三档只差湍流软惩罚倍率；硬阈值与 NaN 禁区一致。响应里除几何外还带每档的
+    里程、绕行比与风险统计，供前端叠图与选主。
+    """
+    result = await _run_assess(plan_route_options, request)
+    return PlanMultiResponse(**result)
 
 @app.post("/api/assess/feasibility", response_model=FeasibilityResponse)
 async def assess_route_feasibility(request: FeasibilityRequest):

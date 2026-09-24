@@ -34,6 +34,8 @@ class PlanRequest(BaseModel):
     date: str = '2022-07-01'
     start_time: str = '08:00'
     speed: float = 60.0  # UAV speed in km/h
+    # 任务优先级：决定 A* 湍流软惩罚倍率（urgent/normal/economy）
+    priority: str = "normal"
     # Optional constraints or thresholds
     tke_threshold: Optional[float] = None
     edr_threshold: Optional[float] = None
@@ -48,6 +50,33 @@ class PlanResponse(BaseModel):
     # 失败原因，供前端分文案出提示：blocked 被高危区封死 / no_data 数据未覆盖
     # / iteration_limit 未搜完（不代表没有路）。成功时为 None。
     reason: Optional[str] = None
+
+
+# ==================== 三方案航线（紧急 / 平衡 / 经济）====================
+
+class RouteOption(BaseModel):
+    priority: str
+    label: str
+    risk_scale: float
+    feasible: bool
+    reason: Optional[str] = None
+    path: List[Point] = []
+    total_distance: float = 0.0
+    # 相对直线距离的绕行比；未规划出航线时为 None
+    detour_ratio: Optional[float] = None
+    max_tke: float = 0.0
+    max_edr: float = 0.0
+    overall_level: str = ""
+    moderate_ratio: float = 0.0
+    high_ratio: float = 0.0
+    # 沿程是否出现中风险以上湍流：False 时软惩罚没有参与代价，三档必然同一条线
+    risk_engaged: bool = False
+    n_nodes: int = 0
+
+
+class PlanMultiResponse(BaseModel):
+    routes: List[RouteOption] = []
+    meta: Dict[str, Any] = {}
 
 
 # ==================== 功能一：飞行路径可行性评估 ====================
