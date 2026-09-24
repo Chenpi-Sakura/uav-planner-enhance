@@ -116,8 +116,11 @@ class Settings(BaseModel):
     BLOCKAGE_TOP_N: int = 3                # 最多报告 N 个阻塞区
 
     # ==================== 功能二：飞行时间窗口规划 ====================
-    # 扫描步长（数据实为逐小时 8760 帧；会议口径为 3 小时，可通过该值切换）
-    TW_SCAN_STEP_HOURS: int = 1
+    # 扫描步长（小时）。**产品口径取 3 h**（会议与申报书口径：可飞时段以 3 小时为单位）。
+    # 注意这不是数据限制：`tibet_2022_upper_*.nc` 实为逐小时 8760 帧、相邻帧间隔全为 1 h，
+    # 且已验证不是 3 h 真值的线性内插（详见 docs/backlog.md B2b）。
+    # 也就是说 3 h 是"主动放弃一部分分辨率"，改回 1 即可用满逐小时数据。
+    TW_SCAN_STEP_HOURS: int = 3
     TW_FORECAST_DAYS: int = 7          # 当日无窗口时向前推演天数
     TW_SAMPLE_STEP_DEG: float = 0.05   # 沿路径采样步长（与气象网格分辨率对齐）
     TW_MAX_BACKUP_WINDOWS: int = 3     # 最多返回的备用时段数
