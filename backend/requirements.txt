@@ -5,6 +5,7 @@ scipy
 networkx
 fastapi
 uvicorn
+watchfiles
 pydantic
 aiofiles
 matplotlib

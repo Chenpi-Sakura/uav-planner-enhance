@@ -15,9 +15,10 @@
 ## Build, Test, and Development Commands（构建、测试与开发命令）
 
 - `setup.bat`（Windows 推荐）或 `setup.sh`：检测 Python 3.10+（必要时自动下载便携版）并安装后端依赖。
-- `start.bat`：启动后端（`python main.py`，端口由根目录 `config.json` 决定，默认 9090）与前端（`npm run dev`，端口 5173），自动打开浏览器。
+- `start.bat`：启动后端（`python -m uvicorn main:app --reload`，端口由根目录 `config.json` 决定，默认 9090）与前端（`npm run dev`，端口 5173），自动打开浏览器。
 - `start.bat public`：同上，额外做两件事——`npm run build:watch` 持续产出 dist、启动 `frp\frpc.exe` 把服务挂到公网（关闭本窗口会一并停掉隧道）。不带 `public` 时任何端口都不对外，日常开发默认走这条。
 - 手动开发：后端先 `pip install -r backend/requirements.txt`，再运行 `python main.py`（API 文档见 `/docs`，端口由 `config.json` 决定）；前端先 `npm install`，再 `npm run dev`。
+- 后端热更新靠 `--reload` + `watchfiles`（已列入 `requirements.txt`）。**没装 watchfiles 时 `--reload` 是空转的**：uvicorn 退回轮询实现，实测改了 `backend/*.py` 也不会重启，进程一直跑旧代码——2026-09 那次湍流公式换口径后公网仍在出旧刻度就是这个原因。装好后实测有效：改/新增 `backend/` 下的 `.py` 会在约 1~2 s 内重启 worker，**公网请求会抖一下**，正在跑的规划会中断；不想被打断就去掉 `--reload`。判断某个进程用的是哪套代码，别看端口，看它是不是重启过。
 - `npm run build`：执行 `vue-tsc -b && vite build`（类型检查 + 构建），提交前端改动前必须通过。
 - `npm run build:watch`：`vite build --watch` 增量重建 `frontend/dist`，供后端托管、公网长期访问时使用。**它跳过类型检查**，不能代替 `npm run build`。
 - `npm run preview`：本地预览生产构建。
