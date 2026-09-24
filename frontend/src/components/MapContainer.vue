@@ -7,7 +7,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { store, RISK_COLORS, TIER_COLORS, PRIORITY_LABELS } from '../store';
+import { store, RISK_COLORS, TIER_COLORS, PRIORITY_LABELS, activateRouteTier } from '../store';
 import { API_BASE } from '../config';
 
 const props = defineProps<{
@@ -280,15 +280,20 @@ const renderPlannedPath = (fit = true) => {
 
   for (const r of results) {
     if (r.priority === shown || r.path.length < 2) continue;
-    L.polyline(r.path.map(p => [p.lat, p.lon] as [number, number]), {
+    const line = L.polyline(r.path.map(p => [p.lat, p.lon] as [number, number]), {
       color: TIER_COLORS[r.priority] ?? TIER_FALLBACK_COLOR,
       weight: 5,
-      opacity: 0.3,
+      opacity: 0.5,
       dashArray: TIER_DASH[r.priority] ?? '8, 8',
-    }).addTo(pathLayer).bindTooltip(
+    }).addTo(pathLayer);
+    line.bindTooltip(
       `${PRIORITY_LABELS[r.priority] ?? r.priority} · ${r.distance.route_km ?? '—'} km`,
       { sticky: true }
     );
+    // 直接点地图上的线也能选档，不必回侧栏找卡片
+    line.on('click', () => activateRouteTier(r.priority));
+    line.on('mouseover', () => { if (map) map.getContainer().style.cursor = 'pointer'; });
+    line.on('mouseout', () => { if (map) map.getContainer().style.cursor = ''; });
   }
 
   const active = results.find(r => r.priority === shown);
