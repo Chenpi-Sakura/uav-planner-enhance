@@ -182,5 +182,76 @@ class TestConfigThresholds(unittest.TestCase):
         self.assertLess(settings.EDR_RISK_HIGH, settings.EDR_THRESHOLD_HIGH)
 
 
+class TestFeasibilityMulti(unittest.TestCase):
+    """一次点击同时产出三档评估（合并后的「开始规划」走这条）。"""
+
+    def setUp(self):
+        self.saved_plan = feasibility.plan_path_ex
+        self.saved_loader = feasibility.data_loader
+        self.saved_bases = feasibility._suggest_alt_bases
+        self.saved_windows = feasibility._suggest_alt_windows
+        feasibility.data_loader = _StubLoader()
+
+    def tearDown(self):
+        feasibility.plan_path_ex = self.saved_plan
+        feasibility.data_loader = self.saved_loader
+        feasibility._suggest_alt_bases = self.saved_bases
+        feasibility._suggest_alt_windows = self.saved_windows
+
+    def _req(self, priority='normal'):
+        return FeasibilityRequest(
+            start=Point(lat=29.65, lon=91.13),
+            end=Point(lat=29.66, lon=94.36),
+            date='2022-07-01', start_time='08:00', speed=60.0, priority=priority,
+        )
+
+    def _split_plans(self):
+        """三档各给一条不同几何的航线（_fake_plan 的几何固定，靠纬度错开）。"""
+        plans = {}
+        for tier, km, shift in (('urgent', 340.0, 0.0), ('normal', 360.0, 0.05),
+                                ('economy', 400.0, 0.1)):
+            plan = _fake_plan(km)
+            if shift:
+                plan.path = [Point(lat=float(p.lat) + shift, lon=p.lon) for p in plan.path]
+            plans[tier] = plan
+        feasibility.plan_path_ex = lambda req: plans[req.priority]
+
+    def test_three_tiers_come_back_in_configured_order(self):
+        self._split_plans()
+        out = feasibility.assess_feasibility_multi(self._req())
+        self.assertEqual([r['priority'] for r in out['results']],
+                         ['urgent', 'normal', 'economy'])
+        self.assertEqual(out['active'], 'normal')
+        self.assertEqual(out['meta']['n_feasible'], 3)
+        self.assertFalse(out['meta']['all_identical'])
+        self.assertEqual(out['meta']['distinct_paths'], 3)
+        # 每档带自己的里程，卡片要并排显示 距离/绕行比
+        self.assertEqual([r['distance']['route_km'] for r in out['results']],
+                         [340.0, 360.0, 400.0])
+
+    def test_identical_geometry_is_reported_not_hidden(self):
+        """三档同解时如实标 all_identical，前端据此说明而不是假装有三个方案。"""
+        same = _fake_plan(340.0)
+        feasibility.plan_path_ex = lambda req: same
+        out = feasibility.assess_feasibility_multi(self._req())
+        self.assertTrue(out['meta']['all_identical'])
+        self.assertEqual(out['meta']['distinct_paths'], 1)
+
+    def test_unknown_priority_falls_back_to_default_tier(self):
+        self._split_plans()
+        out = feasibility.assess_feasibility_multi(self._req(priority='urgentt'))
+        self.assertEqual(out['active'], settings.DEFAULT_PRIORITY)
+
+    def test_only_active_tier_pays_for_alt_suggestions(self):
+        """替代起降点/时段服务的是详情面板，三档各算一遍会把取数放大三倍。"""
+        feasibility.plan_path_ex = lambda req: _fake_plan(0.0, found=False)
+        asked = []
+        feasibility._suggest_alt_bases = lambda req, **kw: asked.append(req.priority) or []
+        feasibility._suggest_alt_windows = lambda *a, **kw: []
+        out = feasibility.assess_feasibility_multi(self._req(priority='economy'))
+        self.assertEqual(out['active'], 'economy')
+        self.assertEqual(asked, ['economy'], f"只有当前档该算替代点，实际算了 {asked}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

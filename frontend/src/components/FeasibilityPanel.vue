@@ -1,38 +1,6 @@
 <template>
-  <!-- ============ 输入区：任务优先级 ============ -->
-  <section class="control-section">
-    <p class="hint-text">档位决定航线为躲湍流绕多远，以及可接受的绕行成本（时间口径）上限</p>
-    <div class="priority-group">
-      <button
-        v-for="opt in priorityOptions"
-        :key="opt.value"
-        class="priority-btn"
-        :class="{ active: store.priority === opt.value }"
-        @click="choosePriority(opt.value)"
-      >
-        <span class="priority-name">{{ opt.label }}</span>
-        <span class="priority-limit">{{ opt.hint }}</span>
-      </button>
-    </div>
-
-    <div class="action-row">
-      <button
-        class="capsule-btn full-width"
-        @click="handleAssess"
-        :disabled="store.assessLoading"
-        :class="{ 'disabled-btn': store.assessLoading }"
-      >
-        <span v-if="store.assessLoading" class="loading-icon">
-          <Loader :size="16" class="spin" /> 正在评估可行性...
-        </span>
-        <span v-else style="display:flex;align-items:center;gap:8px;">
-          <ShieldCheck :size="16" /> 开始评估
-        </span>
-      </button>
-    </div>
-  </section>
-
-  <!-- ============ 结果区 ============ -->
+  <!-- ============ 结果区（当前选中档位）============ -->
+  <!-- 输入区已并入「路径规划」：一次「开始规划」同时出三档，档位切换在 RouteTierCards 里 -->
   <section v-if="r" class="control-section">
     <!-- 结论卡 -->
     <div class="verdict-card" :class="r.feasible ? 'ok' : 'bad'">
@@ -212,24 +180,13 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import {
-  ShieldCheck, Loader, CheckCircle2, XCircle, Route, Timer,
+  CheckCircle2, XCircle, Route, Timer,
   AlertTriangle, Lightbulb, MapPin, CalendarClock,
 } from 'lucide-vue-next';
-import { store, RISK_COLORS, PRIORITY_LABELS, activateRouteTier } from '../store';
+import { store, RISK_COLORS, PRIORITY_LABELS } from '../store';
 import type { FeasibilityResult } from '../store';
-import { API_BASE, TURB, fmtTke, fmtEdr } from '../config';
+import { TURB, fmtTke, fmtEdr } from '../config';
 import ReportCard from './ReportCard.vue';
-
-const priorityOptions = [
-  { value: 'urgent' as const, label: '紧急', hint: '≤ +25% 时间' },
-  { value: 'normal' as const, label: '平衡', hint: '≤ +50% 时间' },
-  { value: 'economy' as const, label: '经济', hint: '≤ +100% 时间' },
-];
-
-/** 点档位：已有三方案时直接把地图主航线切到该档，否则只记下档位供下次评估用。 */
-const choosePriority = (v: 'urgent' | 'normal' | 'economy') => {
-  if (!activateRouteTier(v)) store.priority = v;
-};
 
 const r = computed<FeasibilityResult | null>(() => store.feasibility);
 
@@ -302,69 +259,6 @@ const applyAltBase = (alt: { role?: string; end: { lat: number; lon: number } })
   const target = alt.role === 'start' ? store.start : store.end;
   target.lat = String(alt.end.lat);
   target.lng = String(alt.end.lon);
-};
-
-const handleAssess = async () => {
-  if (!store.start.lat || !store.start.lng || !store.end.lat || !store.end.lng) {
-    alert('请先设置起点和终点！');
-    return;
-  }
-
-  store.assessLoading = true;
-  store.highlightRegions = [];
-  try {
-    const response = await fetch(`${API_BASE}/api/assess/feasibility`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        start: { lat: Number(store.start.lat), lon: Number(store.start.lng) },
-        end: { lat: Number(store.end.lat), lon: Number(store.end.lng) },
-        waypoints: store.waypoints
-          .filter(wp => wp.lat !== '' && wp.lng !== '')
-          .map(wp => ({ lat: Number(wp.lat), lon: Number(wp.lng) })),
-        priority: store.priority,
-        date: store.targetDate,
-        start_time: store.targetTime,
-        speed: Number(store.uavSpeed),
-      }),
-    });
-
-    if (!response.ok) throw new Error(`评估失败 (${response.status})`);
-
-    const result: FeasibilityResult = await response.json();
-    store.feasibility = result;
-    store.selectedSegmentIndex = null;
-
-    // 把评估路径同步到地图。不可飞时后端返回的 path 为空，
-    // 必须显式清掉上一条航线，否则结论写着「不可飞」地图上却还留着线。
-    if (result.path && result.path.length > 0) {
-      const startAlt = Number(store.start.alt || 600);
-      const endAlt = Number(store.end.alt || 600);
-      const n = result.path.length;
-      store.plannedPath = result.path.map((p, i) => ({
-        lat: p.lat,
-        lng: p.lon,
-        alt: n > 1 ? startAlt + (endAlt - startAlt) * (i / (n - 1)) : startAlt,
-      }));
-      store.simulationIndex = 0;
-      store.isSimulating = false;
-    } else {
-      store.plannedPath = [];
-      store.simulationIndex = 0;
-      store.isSimulating = false;
-    }
-
-    // 不可飞时自动展示风险分布
-    if (!result.feasible && result.blocking?.regions?.length) {
-      store.highlightRegions = result.blocking.regions;
-      if (!store.overlays.includes('tke')) store.overlays.push('tke');
-    }
-  } catch (error) {
-    console.error('可行性评估请求失败:', error);
-    alert('评估失败，请确保后端服务已启动');
-  } finally {
-    store.assessLoading = false;
-  }
 };
 </script>
 

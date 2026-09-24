@@ -107,36 +107,27 @@ export interface FeasibilityResult {
   };
 }
 
-/** 三方案航线中的一条（后端 /api/route/plan-multi 产出） */
-export interface RouteOption {
-  priority: 'urgent' | 'normal' | 'economy';
-  label: string;
-  risk_scale: number;
-  feasible: boolean;
-  reason: string | null;
-  path: { lat: number; lon: number }[];
-  total_distance: number;
-  detour_ratio: number | null;
-  max_tke: number;
-  max_edr: number;
-  overall_level: RiskLevel | '';
-  moderate_ratio: number;
-  high_ratio: number;
-  risk_engaged: boolean;
-  n_nodes: number;
-}
-
-export interface PlanOptions {
-  routes: RouteOption[];
+/** 三档一次评估的响应（/api/assess/feasibility-multi） */
+export interface RouteOptions {
+  /** 顺序与 meta.tiers 一致：urgent / normal / economy */
+  results: FeasibilityResult[];
+  active: string;
   meta: {
-    straight_km: number;
     tiers: string[];
+    active: string;
     n_feasible: number;
-    /** 三条线几何完全相同：通常是沿程湍流未超过中风险下沿，惩罚未参与代价 */
+    /** 三条几何完全相同：通常是沿程湍流未超过中风险下沿，软惩罚未参与代价 */
     all_identical: boolean;
     distinct_paths: number;
   };
 }
+
+/** 档位 -> 地图上的对比线颜色（选中线用风险色，不用这套） */
+export const TIER_COLORS: Record<string, string> = {
+  urgent: '#38bdf8',
+  normal: '#a78bfa',
+  economy: '#34d399',
+};
 
 export interface StoreState {
   selectingMode: 'start' | 'waypoint' | 'end' | null;
@@ -156,11 +147,11 @@ export interface StoreState {
   simulationIndex: number;
   bases: BaseStation[];
   // ---- 决策平台新增 ----
-  sidebarTab: 'plan' | 'feasibility' | 'timeWindow';   // 侧边栏标签页
+  sidebarTab: 'plan' | 'timeWindow';   // 侧边栏标签页（可行性已并入路径规划）
   priority: 'urgent' | 'normal' | 'economy';  // 当前选中的方案档位
-  planOptions: PlanOptions | null;  // 一次规划产出的三条候选航线（null = 还没规划过）
-  assessLoading: boolean;
-  feasibility: FeasibilityResult | null; // 功能一评估结果
+  routeOptions: RouteOptions | null;  // 一次规划产出的三档评估（null = 还没规划过）
+  hoveredTier: string | null;         // 卡片悬停时临时在地图上展示的档位
+  feasibility: FeasibilityResult | null; // 当前选中档位的评估结果
   highlightRegions: BlockingRegion[];    // 地图高亮：阻塞区
   selectedSegmentIndex: number | null;   // 结果面板：选中的分段
   // ---- 功能二：时间窗口 ----
@@ -203,8 +194,8 @@ export const store = reactive<StoreState>({
   ],
   sidebarTab: 'plan',
   priority: 'normal',
-  planOptions: null,
-  assessLoading: false,
+  routeOptions: null,
+  hoveredTier: null,
   feasibility: null,
   highlightRegions: [],
   selectedSegmentIndex: null,
@@ -231,16 +222,22 @@ export const PRIORITY_LABELS: Record<string, string> = {
 };
 
 /**
- * 把主航线切换成指定档位的候选航线。三方案尚未生成时不生效（返回 false）。
+ * 把当前档位切到指定方案：地图主航线、结论卡、折线图、AI 报告全部跟随。
  *
- * 换线后必须作废上一次评估的分段风险与阻塞区：它们的下标是旧路径的采样点，
- * 留着会让地图上新旧两条线混着画。
+ * 三档的评估结果在同一次请求里已经拿到，所以切换只改状态、不再发请求。
  */
 export function activateRouteTier(priority: string): boolean {
-  const hit = store.planOptions?.routes.find(r => r.priority === priority && r.feasible);
+  const hit = store.routeOptions?.results.find(x => x.priority === priority);
   if (!hit) return false;
 
-  store.priority = hit.priority;
+  store.priority = hit.priority as StoreState['priority'];
+  store.feasibility = hit;
+  store.selectedSegmentIndex = null;
+  store.hoveredSegmentIndex = null;
+  store.highlightRegions = [];
+  store.isSimulating = false;
+  store.simulationIndex = 0;
+
   const startAlt = Number(store.start.alt || 600);
   const endAlt = Number(store.end.alt || 600);
   const n = hit.path.length;
@@ -249,11 +246,11 @@ export function activateRouteTier(priority: string): boolean {
     lng: p.lon,
     alt: n > 1 ? startAlt + (endAlt - startAlt) * (i / (n - 1)) : startAlt,
   }));
-  store.feasibility = null;
-  store.highlightRegions = [];
-  store.selectedSegmentIndex = null;
-  store.hoveredSegmentIndex = null;
-  store.isSimulating = false;
-  store.simulationIndex = 0;
+
+  // 不可飞时把阻塞区摊开：这是旧单档评估的行为，合并后不能丢
+  if (!hit.feasible && hit.blocking?.regions?.length) {
+    store.highlightRegions = hit.blocking.regions;
+    if (!store.overlays.includes('tke')) store.overlays.push('tke');
+  }
   return true;
 }

@@ -280,3 +280,10 @@ class FeasibilityResponse(BaseModel):
     suggestions: SuggestionsModel
     path: List[Point] = []
     meta: Dict[str, Any] = {}
+
+
+class FeasibilityMultiResponse(BaseModel):
+    """三档一次评估的结果：results 顺序与 meta.tiers 一致。"""
+    results: List[FeasibilityResponse] = []
+    active: str = "normal"
+    meta: Dict[str, Any] = {}

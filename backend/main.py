@@ -7,12 +7,12 @@ from schemas import (
     ReportRequest,
     ProfileRequest, ProfileResponse, ProfileDataPoint,
     PlanRequest, PlanResponse, PlanMultiResponse,
-    FeasibilityRequest, FeasibilityResponse,
+    FeasibilityRequest, FeasibilityResponse, FeasibilityMultiResponse,
 )
 from data_loader import data_loader
 from planner import compute_path_turbulence, plan_path_ex
 from route_options import plan_route_options
-from feasibility import assess_feasibility
+from feasibility import assess_feasibility, assess_feasibility_multi, to_response_dict
 from time_window import assess_time_window
 import assessor
 import geo
@@ -174,20 +174,7 @@ async def assess_route_feasibility(request: FeasibilityRequest):
     阻塞原因、绕行成本分析与建议措施。
     """
     result = await _run_assess(assess_feasibility, request)
-    return FeasibilityResponse(**{
-        "feasible": result.feasible,
-        "conclusion": result.conclusion,
-        "reason": result.reason,
-        "priority": result.priority,
-        "detour_limit": result.detour_limit,
-        "distance": result.distance,
-        "flight_time_h": result.flight_time_h,
-        "risk": result.risk,
-        "blocking": result.blocking,
-        "suggestions": result.suggestions,
-        "path": result.path,
-        "meta": result.meta,
-    })
+    return FeasibilityResponse(**to_response_dict(result))
 
 @app.post("/api/assess/time-window", response_model=TimeWindowResponse)
 async def assess_time_window_endpoint(request: TimeWindowRequest):
@@ -203,6 +190,15 @@ async def assess_time_window_endpoint(request: TimeWindowRequest):
     result = await _run_assess(assess_time_window, request)
     return TimeWindowResponse(**result)
 
+
+@app.post("/api/assess/feasibility-multi", response_model=FeasibilityMultiResponse)
+async def assess_route_feasibility_multi(request: FeasibilityRequest):
+    """三档一次评估：紧急 / 平衡 / 经济 各一条航线 + 各自的可行性结论。
+
+    请求体的 `priority` 在这里表示「详情面板要展开哪一档」，不影响另外两档的几何。
+    """
+    result = await _run_assess(assess_feasibility_multi, request)
+    return FeasibilityMultiResponse(**result)
 
 @app.get("/api/assess/report/status")
 async def report_status():

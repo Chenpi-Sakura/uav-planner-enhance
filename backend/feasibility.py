@@ -158,13 +158,12 @@ def assess_feasibility(req,
     # 5) 建议措施
     # 先算替代起降点，再生成文案：文案需要知道是否真的给出了替代点，
     # 否则会出现「文案承诺已给出替代点、但列表为空」的自相矛盾。
-    if include_alt_bases and not feasible:
-        suggestions["alt_bases"] = _suggest_alt_bases(req, endpoints=endpoints)
-    # 「更换飞行时间」建议的数据支撑：扫描当天若干时次，给出可飞备选时段。
-    # 仅在不可飞时计算（可飞时无需替换时间），失败时静默留空不影响主结论。
-    if include_alt_windows and not feasible and data_ok:
-        suggestions["alt_windows"] = _suggest_alt_windows(start, end, req)
-        suggestions["alt_bases"] = _suggest_alt_bases(req, endpoints=endpoints)
+    # 两个开关各自独立、且都只在不可飞时才算——这两项各要再跑若干次规划/取数。
+    if not feasible:
+        if include_alt_windows and data_ok:
+            suggestions["alt_windows"] = _suggest_alt_windows(start, end, req)
+        if include_alt_bases:
+            suggestions["alt_bases"] = _suggest_alt_bases(req, endpoints=endpoints)
     suggestions["has_alt_bases"] = bool(suggestions["alt_bases"])
     suggestions["text"] = _build_suggestion_text(
         feasible, reason, distance_block, blocking_block, risk_profile, priority,
@@ -196,6 +195,62 @@ def assess_feasibility(req,
             "grid_resolution_deg": settings.GRID_RESOLUTION_DEG,
         },
     )
+
+
+def to_response_dict(res: FeasibilityResult) -> Dict[str, Any]:
+    """FeasibilityResult -> FeasibilityResponse 的字段字典（单档与三档共用）。"""
+    return {
+        "feasible": res.feasible,
+        "conclusion": res.conclusion,
+        "reason": res.reason,
+        "priority": res.priority,
+        "detour_limit": res.detour_limit,
+        "distance": res.distance,
+        "flight_time_h": res.flight_time_h,
+        "risk": res.risk,
+        "blocking": res.blocking,
+        "suggestions": res.suggestions,
+        "path": res.path,
+        "meta": res.meta,
+    }
+
+
+def assess_feasibility_multi(req) -> Dict[str, Any]:
+    """一次点击同时产出「紧急 / 平衡 / 经济」三档的完整评估。
+
+    只有当前高亮档（默认平衡）算替代起降点与替代时段：那两项服务的是详情面板，
+    三档各算一遍会把取数放大三倍而卡片上用不到。阻塞区只在不可飞时才分析，
+    且与档位无关，重复开销可控。
+    """
+    tiers = list(settings.PLAN_TIERS)
+    active = (getattr(req, "priority", None) or settings.DEFAULT_PRIORITY).lower()
+    if active not in tiers:
+        active = settings.DEFAULT_PRIORITY
+
+    results: List[Dict[str, Any]] = []
+    sigs: List[tuple] = []
+    for tier in tiers:
+        is_active = tier == active
+        res = assess_feasibility(
+            req.model_copy(update={"priority": tier}),
+            include_alt_bases=is_active,
+            include_alt_windows=is_active,
+        )
+        payload = to_response_dict(res)
+        results.append(payload)
+        if res.path:
+            sigs.append(tuple((round(float(p["lat"]), 4), round(float(p["lon"]), 4))
+                              for p in res.path))
+
+    meta = {
+        "tiers": tiers,
+        "active": active,
+        "n_feasible": sum(1 for r in results if r["feasible"]),
+        # 三档几何完全相同：多半是该时段沿程湍流未超过中风险下沿，软惩罚未参与代价
+        "all_identical": bool(sigs) and len(set(sigs)) == 1,
+        "distinct_paths": len(set(sigs)),
+    }
+    return {"results": results, "active": active, "meta": meta}
 
 
 def _to_plan_request(req, priority: str):

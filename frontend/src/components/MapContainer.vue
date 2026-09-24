@@ -7,7 +7,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { store, RISK_COLORS } from '../store';
+import { store, RISK_COLORS, TIER_COLORS, PRIORITY_LABELS } from '../store';
 import { API_BASE } from '../config';
 
 const props = defineProps<{
@@ -257,37 +257,43 @@ const renderBlockingRegions = () => {
   }
 };
 
-// 非选中档位的对比线：统一灰色，靠虚线疏密区分三档
-const COMPARISON_COLOR = '#94a3b8';
-const COMPARISON_DASH: Record<string, string> = {
+// 未选中档位：各档自己的颜色 + 各自的虚线疏密，压到 30% 只让位不消失
+const TIER_FALLBACK_COLOR = '#94a3b8';
+const TIER_DASH: Record<string, string> = {
   urgent: '4, 7',
   normal: '9, 7',
   economy: '16, 8',
 };
 
-/** 把未被选中的候选航线画成 30% 透明度的细虚线，压在选中线下面供对比。 */
-const renderComparisonRoutes = () => {
-  const opts = store.planOptions;
-  if (!opts) return;
-  for (const r of opts.routes) {
-    if (!r.feasible || r.priority === store.priority) continue;
-    const latlngs: L.LatLngExpression[] = r.path.map(p => [p.lat, p.lon]);
-    L.polyline(latlngs, {
-      color: COMPARISON_COLOR,
-      weight: 4,
-      opacity: 0.3,
-      dashArray: COMPARISON_DASH[r.priority] ?? '8, 8',
-    }).addTo(pathLayer).bindTooltip(`${r.label} ${r.total_distance} km`, { sticky: true });
-  }
-};
-
-const renderPlannedPath = () => {
+/**
+ * 绘制航线：当前选中（或卡片悬停预览）的那一档按风险分段着色画 100%，
+ * 另外两档各按自己的档位色画 30% 虚线。
+ *
+ * @param fit 是否重新套合视野。悬停预览时传 false，否则鼠标每划过一个卡片地图就跳一次。
+ */
+const renderPlannedPath = (fit = true) => {
   if (!map) return;
   pathLayer.clearLayers();
-  renderComparisonRoutes();
-  
-  const path = store.plannedPath;
-  if (!path || path.length === 0) {
+
+  const results = store.routeOptions?.results ?? [];
+  const shown = store.hoveredTier ?? store.priority;
+
+  for (const r of results) {
+    if (r.priority === shown || r.path.length < 2) continue;
+    L.polyline(r.path.map(p => [p.lat, p.lon] as [number, number]), {
+      color: TIER_COLORS[r.priority] ?? TIER_FALLBACK_COLOR,
+      weight: 5,
+      opacity: 0.3,
+      dashArray: TIER_DASH[r.priority] ?? '8, 8',
+    }).addTo(pathLayer).bindTooltip(
+      `${PRIORITY_LABELS[r.priority] ?? r.priority} · ${r.distance.route_km ?? '—'} km`,
+      { sticky: true }
+    );
+  }
+
+  const active = results.find(r => r.priority === shown);
+  const path = active?.path ?? [];
+  if (path.length === 0) {
     // 没有航线时把推演用的无人机标记也清掉，否则上次跑到一半的点会留在原地
     if (uavMarker) {
       map.removeLayer(uavMarker);
@@ -295,13 +301,13 @@ const renderPlannedPath = () => {
     }
     return;
   }
-  
-  const latlngs: L.LatLngExpression[] = path.map(p => [Number(p.lat), Number(p.lng)]);
-  const segments = store.feasibility?.risk?.segments ?? [];
-  const selected = store.selectedSegmentIndex;
-  const hovered = store.hoveredSegmentIndex;
-  
-  // 有分段风险数据时按等级着色（每段一条 polyline），否则回退为单条虚线
+
+  const latlngs: L.LatLngExpression[] = path.map(p => [p.lat, p.lon]);
+  const segments = active?.risk?.segments ?? [];
+  const selected = shown === store.priority ? store.selectedSegmentIndex : null;
+  const hovered = shown === store.priority ? store.hoveredSegmentIndex : null;
+
+  // 按风险等级分段着色：安全绿 / 中风险黄 / 高风险橙 / 不可飞红
   if (segments.length > 0) {
     segments.forEach((seg, idx) => {
       const from = Math.max(0, seg.start_index);
@@ -316,14 +322,15 @@ const renderPlannedPath = () => {
       }).addTo(pathLayer);
     });
   } else {
-    // 选中线用实线；虚线现在专用于「未选中的对比线」，不要在这里复用
     L.polyline(latlngs, {
       color: '#FF3300', // Bright red-orange
       weight: 6,
       opacity: 1.0
     }).addTo(pathLayer);
   }
-  
+
+  if (!fit) return;
+
   // 聚焦到选中分段，便于查看该段风险
   const focusIdx = selected ?? hovered;
   if (focusIdx !== null && segments[focusIdx]) {
@@ -335,7 +342,7 @@ const renderPlannedPath = () => {
       return;
     }
   }
-  
+
   map.fitBounds(L.latLngBounds(latlngs), { padding: [50, 50] });
 };
 
@@ -449,19 +456,19 @@ watch(() => [store.start, store.end, store.waypoints], () => {
   renderMarkers();
 }, { deep: true });
 
-watch(() => [store.plannedPath, store.selectedSegmentIndex, store.hoveredSegmentIndex], () => {
+watch(() => [store.selectedSegmentIndex, store.hoveredSegmentIndex], () => {
   renderPlannedPath();
 }, { deep: true });
 
-// 切换档位（侧栏三方案列表 / 功能一的优先级按钮都写 store.priority）→ 重画选中与对比线
-watch(() => [store.priority, store.planOptions], () => {
+// 三档结果落地或切换选中档 → 重画选中线与两条对比线
+watch(() => [store.priority, store.routeOptions], () => {
   renderPlannedPath();
 }, { deep: true });
 
-// 分段风险变化（重新评估后）也要重绘
-watch(() => store.feasibility?.risk?.segments, () => {
-  renderPlannedPath();
-}, { deep: true });
+// 卡片悬停只做临时预览：不套合视野，否则鼠标划过卡片地图就跳
+watch(() => store.hoveredTier, () => {
+  renderPlannedPath(false);
+});
 watch(() => store.highlightRegions, () => {
   renderBlockingRegions();
 }, { deep: true });
