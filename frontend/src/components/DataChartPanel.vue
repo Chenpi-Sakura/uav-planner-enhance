@@ -270,6 +270,13 @@ const fetchProfileData = async () => {
   }
 };
 
+/**
+ * 剖面里的缺测点：后端 NaN 经 pydantic 序列化成 JSON null，直接 .toFixed 会抛错。
+ * 返回 null 让 ECharts 画成断点——一个空格点不该让整张图什么都不剩。
+ */
+const num = (v: unknown, digits: number, scale = 1): number | null =>
+  typeof v === 'number' && Number.isFinite(v) ? Number((v * scale).toFixed(digits)) : null;
+
 const updateChartWithData = (data: any[]) => {
   if (!chartInstance.value) return;
   
@@ -285,19 +292,19 @@ const updateChartWithData = (data: any[]) => {
   
   // 与湿度(0–100)共用的「气象指数」轴：TKE 新口径已是 0–30 量级，直接画；
   // EDR 只有 0.x，按倍数放大才看得见（倍数写在 config 的 TURB.edrChartFactor）。
-  const tkeData = data.map(d => Number(d.tke.toFixed(2)));
-  const edrData = data.map(d => Number((d.edr * TURB.edrChartFactor).toFixed(2)));
-  const tempData = data.map(d => Number((d.tc > 100 ? d.tc - 273.15 : d.tc).toFixed(1)));
+  const tkeData = data.map(d => num(d.tke, 2));
+  const edrData = data.map(d => num(d.edr, 2, TURB.edrChartFactor));
+  const tempData = data.map(d => num(typeof d.tc === 'number' && d.tc > 100 ? d.tc - 273.15 : d.tc, 1));
   
   // Use REAL elevation data from backend (SRTM90m API)
-  const elevData = data.map(d => Number((d.elevation).toFixed(1))); 
+  const elevData = data.map(d => num(d.elevation, 1));
   // Drone altitude = Ground Elevation + User-defined Relative Altitude
   const relAltData = data.map((_d, i) => Number(store.plannedPath[i]?.alt || 600));
-  const absAltData = elevData.map((elev, i) => elev + relAltData[i]);
+  const absAltData = elevData.map((elev, i) => (elev === null ? null : Number((elev + relAltData[i]).toFixed(1))));
   
   // Real humidity and qvapor data
-  const humData = data.map(d => Number((d.rh).toFixed(1)));
-  const qvaporData = data.map(d => Number((d.qvapor * 1000 * 10).toFixed(2))); // x10
+  const humData = data.map(d => num(d.rh, 1));
+  const qvaporData = data.map(d => num(d.qvapor, 2, 1000 * 10)); // x10
   
   chartInstance.value.setOption({
     xAxis: { data: xAxisData },
