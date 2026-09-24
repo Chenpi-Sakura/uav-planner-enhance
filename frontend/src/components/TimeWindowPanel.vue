@@ -47,10 +47,10 @@
       <div class="verdict-card ok">
         <div class="verdict-icon"><CheckCircle2 :size="22" /></div>
         <div class="verdict-body">
-          <div class="verdict-title">推荐起飞 {{ takeoffTime }}</div>
+          <div class="verdict-title">推荐起飞 {{ takeoffLabel }}</div>
           <div class="verdict-sub">
             飞行时段 {{ r.recommended.window[0] }} – {{ r.recommended.window[1] }}，
-            预计 {{ landingTime }} 降落
+            预计 {{ landingLabel }}降落
           </div>
         </div>
       </div>
@@ -229,6 +229,21 @@ const takeoffTime = computed(() => {
 const landingTime = computed(() => {
   const t = r.value?.recommended?.landing ?? '';
   return t.includes('T') ? t.split('T')[1] : t;
+});
+
+/** 推荐卡的日期时刻。后端给的是完整 ISO（`2022-07-01T07:00`，北京时间），
+ *  只截 `HH:MM` 会让"哪天起飞"丢失；降落跨午夜时还必须标出来，否则读成回退。 */
+const mmdd = (iso: string) => (iso.includes('T') ? iso.slice(5, 10) : '');
+const hhmm = (iso: string) => (iso.includes('T') ? iso.split('T')[1] : iso);
+const takeoffLabel = computed(() => {
+  const t = r.value?.recommended?.takeoff ?? '';
+  return t ? `${mmdd(t)} ${hhmm(t)}` : '';
+});
+const landingLabel = computed(() => {
+  const t = r.value?.recommended?.landing ?? '';
+  if (!t) return '';
+  const nextDay = mmdd(t) !== mmdd(r.value?.recommended?.takeoff ?? '');
+  return `${mmdd(t)} ${hhmm(t)}${nextDay ? '（次日）' : ''}`;
 });
 
 const safeSlotCount = computed(

@@ -177,7 +177,7 @@ const isPlanning = ref(false);
 
 const overlayOptions = [
   { id: 'tke', label: 'TKE (湍动能)' },
-  { id: 'edr', label: 'EDR (耗散率)' },
+  { id: 'edr', label: 'EDR (涡动耗散率)' },
   { id: 'flow', label: '综合风速' },
   { id: 'temp', label: '温度' },
   { id: 'humidity', label: '相对湿度' },
