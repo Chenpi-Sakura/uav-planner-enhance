@@ -10,6 +10,12 @@ from config import settings
 from schemas import Point, PlanRequest
 
 
+# A* 自读气象框相对起终点的外扩（度）。功能二注入扫描场时按同一口径取框。
+SEGMENT_PAD_DEG = 2.0
+# 注入场被探出边界时的段结论原因，只在上层用于判别"该回退自读"，不面向用户。
+REASON_FIELD_ESCAPE = 'field_escape'
+
+
 @dataclass
 class SegmentResult:
     """A* 单段规划结果，携带是否成功与失败原因。"""
@@ -23,6 +29,7 @@ class SegmentResult:
     edrs: List[float] = field(default_factory=list)    # 与 path 一一对应的 EDR（规划时判定值）
     iterations: int = 0
     explored: int = 0
+    escaped: bool = False             # 注入场覆盖不住这次搜索（仅 field= 时可能为 True）
 
 
 @dataclass
@@ -69,6 +76,21 @@ def get_neighbors(node: Tuple[float, float], resolution: float) -> List[Tuple[fl
         (lat - resolution, lon + resolution),
     ]
 
+
+def _half_step(axis) -> float:
+    """轴上相邻格点间距的一半，作为「仍算覆盖内」的容差。
+
+    A* 的节点量化到 round(x, 2)，浮点误差会让恰好落在边界格点上的查询差最后一位；
+    放半个格距过去，越界判定就只剩「真的探到切片外」这一种含义。
+    """
+    a = np.asarray(axis, dtype='float64')
+    if a.size < 2:
+        return 0.0
+    d = np.abs(np.diff(a))
+    d = d[d > 0]
+    return float(np.median(d)) / 2.0 if d.size else 0.0
+
+
 class _GridIndex:
     """把「坐标值 -> 网格下标」的查询从每次 np.abs(arr - v).argmin() 换成等价快查。
 
@@ -80,42 +102,67 @@ class _GridIndex:
 
     lat/lon 的缓存命中率接近 100%，因为 A* 的节点一律量化到 round(x, 2)，
     查询值天然落在 0.01° 的有限格点上。
+
+    strict=True 用于【注入场】（外部给来的有限切片）：越界查询返回 -1 而不是
+    钳到边界格点，否则切片外的值会被当成真实读数。是否发生过越界记在 outside 上。
     """
 
-    __slots__ = ("_lats", "_lons", "_times_ns", "_t0", "_dt", "_n", "_uniform",
-                 "_lat_cache", "_lon_cache")
+    __slots__ = ("_lats", "_lons", "_times_ns", "_t0", "_t_last", "_dt", "_n",
+                 "_uniform", "_strict", "_t_tol", "_lat_lo", "_lat_hi",
+                 "_lon_lo", "_lon_hi", "_lat_cache", "_lon_cache", "outside")
 
-    def __init__(self, lats, lons, times_arr):
+    def __init__(self, lats, lons, times_arr, strict: bool = False):
         self._lats = lats
         self._lons = lons
         self._times_ns = np.asarray(times_arr, dtype='datetime64[ns]').astype('int64')
         n = int(self._times_ns.size)
         self._n = n
         self._t0 = int(self._times_ns[0]) if n else 0
+        self._t_last = int(self._times_ns[-1]) if n else 0
         self._dt = int(self._times_ns[1] - self._times_ns[0]) if n > 1 else 0
         uniform = n > 1 and self._dt > 0
         if uniform and n > 2:
             uniform = bool(np.all(self._times_ns[1:] - self._times_ns[:-1] == self._dt))
         self._uniform = uniform
+        self._strict = strict
+        self._t_tol = self._dt / 2 if uniform else 0
+        lat_tol = _half_step(lats)
+        lon_tol = _half_step(lons)
+        self._lat_lo = float(np.min(lats)) - lat_tol
+        self._lat_hi = float(np.max(lats)) + lat_tol
+        self._lon_lo = float(np.min(lons)) - lon_tol
+        self._lon_hi = float(np.max(lons)) + lon_tol
         self._lat_cache = {}
         self._lon_cache = {}
+        self.outside = False
 
     def lat(self, v):
         i = self._lat_cache.get(v)
         if i is None:
             i = int(np.abs(self._lats - v).argmin())
+            if self._strict and not (self._lat_lo <= v <= self._lat_hi):
+                i = -1
             self._lat_cache[v] = i
+        if i < 0:
+            self.outside = True
         return i
 
     def lon(self, v):
         i = self._lon_cache.get(v)
         if i is None:
             i = int(np.abs(self._lons - v).argmin())
+            if self._strict and not (self._lon_lo <= v <= self._lon_hi):
+                i = -1
             self._lon_cache[v] = i
+        if i < 0:
+            self.outside = True
         return i
 
     def time(self, t_ns):
-        """t_ns 已是自 epoch 起的纳秒整数；返回与 argmin 一致的下标。"""
+        """t_ns 已是自 epoch 起的纳秒整数；返回与 argmin 一致的下标，越界为 -1。"""
+        if self._strict and not (self._t0 - self._t_tol <= t_ns <= self._t_last + self._t_tol):
+            self.outside = True
+            return -1
         if not self._uniform:
             return int(np.abs(self._times_ns - t_ns).argmin())
         q, r = divmod(t_ns - self._t0, self._dt)
@@ -148,6 +195,9 @@ def _is_safe_at(node, base_ns, dist_km, speed_kmh,
     idx_t = lookup.time(t_ns)
     idx_lat = lookup.lat(node[0])
     idx_lon = lookup.lon(node[1])
+    if idx_t < 0 or idx_lat < 0 or idx_lon < 0:
+        # 注入场覆盖不到这里：按缺测处理，上层据 lookup.outside 回退到自读网格
+        return False, float('nan'), float('nan')
     tke = tke_grid[idx_t, idx_lat, idx_lon]
     edr = edr_grid[idx_t, idx_lat, idx_lon]
 
@@ -203,12 +253,16 @@ def tier_risk_scale(priority) -> float:
 
 
 def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_str,
-                      initial_g_score, initial_dist, speed_kmh, risk_scale: float = 1.0) -> SegmentResult:
+                      initial_g_score, initial_dist, speed_kmh, risk_scale: float = 1.0,
+                      field=None) -> SegmentResult:
     """
     A* path planning algorithm on a 2D grid, with dynamic time progression.
 
     返回 SegmentResult：found=False 时不再伪装成直线路径，交由上层判定
     「无法飞行」，避免把兜底直线误当成安全航线。
+
+    field 给定时复用外部已加载的 (tke, edr, lats, lons, times) 切片而不自读 NetCDF；
+    该切片是有限区域，搜索一旦探到切片外，结论按 escaped 交给上层回退。
     """
     open_set = []
     heapq.heappush(open_set, (0, start_node))
@@ -228,13 +282,15 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
     base_time = np.datetime64(start_time_str)
     
     # Pre-fetch vectorized weather grid for the bounding box
-    pad = 2.0 # degrees
-    min_lat = min(start_node[0], end_node[0]) - pad
-    max_lat = max(start_node[0], end_node[0]) + pad
-    min_lon = min(start_node[1], end_node[1]) - pad
-    max_lon = max(start_node[1], end_node[1]) + pad
-    
-    tke_grid, edr_grid, lats, lons, times_arr = data_loader.get_meteorology_grid(min_lat, max_lat, min_lon, max_lon, date=start_time_str)
+    if field is None:
+        pad = SEGMENT_PAD_DEG
+        min_lat = min(start_node[0], end_node[0]) - pad
+        max_lat = max(start_node[0], end_node[0]) + pad
+        min_lon = min(start_node[1], end_node[1]) - pad
+        max_lon = max(start_node[1], end_node[1]) + pad
+        tke_grid, edr_grid, lats, lons, times_arr = data_loader.get_meteorology_grid(min_lat, max_lat, min_lon, max_lon, date=start_time_str)
+    else:
+        tke_grid, edr_grid, lats, lons, times_arr = field
 
     # 日期或区域落在 NetCDF 覆盖之外时，xarray 的 sel 返回的是**空数组**而不是 None，
     # 此前表现为 argmin 打在空序列上抛 ValueError、接口直接 500。这里给出显式结论，
@@ -244,11 +300,22 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
             path=[], found=False, reason='no_data',
             final_g_score=initial_g_score, final_dist=initial_dist,
             times=[], tkes=[], edrs=[], iterations=0, explored=0,
+            escaped=field is not None,      # 注入场是空的：换自读网格重新给结论
         )
 
     # base_time 在整个 A* 过程中恒定，纳秒基准只换算一次
     base_ns = _ns_of(base_time)
-    lookup = None if tke_grid is None else _GridIndex(lats, lons, times_arr)
+    lookup = None if tke_grid is None else _GridIndex(lats, lons, times_arr,
+                                                      strict=field is not None)
+
+    def _finish(res: SegmentResult) -> SegmentResult:
+        """注入场被探出边界时，这次搜索看到的地图是残缺的，结论不可信。
+
+        标成 escaped 让上层改用自读网格重算 —— 不能把「场不够大」说成「不可飞」。
+        """
+        if lookup is not None and lookup.outside:
+            res.escaped = True
+        return res
 
     # 起点安全校验：起点本身处于高危区时不应给出可行结论
     if tke_grid is not None:
@@ -258,11 +325,11 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
         node_tke[start_node] = start_tke
         node_edr[start_node] = start_edr
         if not start_safe:
-            return SegmentResult(
+            return _finish(SegmentResult(
                 path=[], found=False, reason='blocked',
                 final_g_score=initial_g_score, final_dist=initial_dist,
                 times=[], tkes=[], edrs=[], iterations=0, explored=0,
-            )
+            ))
 
     while open_set and iterations < max_iter:
         iterations += 1
@@ -316,7 +383,7 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
                     tkes_out.append(float(node_tke.get(nd, float('nan'))))
                     edrs_out.append(float(node_edr.get(nd, float('nan'))))
             
-            return SegmentResult(
+            return _finish(SegmentResult(
                 path=path,
                 found=True,
                 final_g_score=final_g,
@@ -326,7 +393,7 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
                 edrs=edrs_out,
                 iterations=iterations,
                 explored=len(g_score),
-            )
+            ))
             
         for neighbor in get_neighbors(current, resolution):
             neighbor = (round(neighbor[0], 2), round(neighbor[1], 2))
@@ -350,6 +417,8 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
                 idx_time = lookup.time(current_ns)
                 idx_lat = lookup.lat(neighbor[0])
                 idx_lon = lookup.lon(neighbor[1])
+                if idx_time < 0 or idx_lat < 0 or idx_lon < 0:
+                    continue    # 注入场覆盖不到这里，escaped 已记录，交由上层回退
                 tke = tke_grid[idx_time, idx_lat, idx_lon]
                 edr = edr_grid[idx_time, idx_lat, idx_lon]
             
@@ -385,7 +454,7 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
                 
     # 搜索失败：区分「被障碍物完全封死」与「达到迭代上限」
     reason = 'iteration_limit' if iterations >= max_iter else 'blocked'
-    return SegmentResult(
+    return _finish(SegmentResult(
         path=[],
         found=False,
         reason=reason,
@@ -396,7 +465,7 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
         edrs=[],
         iterations=iterations,
         explored=len(g_score),
-    )
+    ))
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -409,13 +478,24 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * r * math.asin(min(1.0, math.sqrt(a)))
 
 
-def plan_path_ex(req: PlanRequest) -> PlanResult:
+def plan_path_ex(req: PlanRequest, field=None) -> PlanResult:
     """
     Plan a full route connecting start -> waypoints -> end.
 
     失败时不返回「伪装成航线的直线」，而是明确返回 found=False 及失败原因，
     供可行性评估模块判定。
+
+    field=(tke, edr, lats, lons, times) 时全程复用这份已加载的气象切片，
+    不再回盘读取；航线探出切片范围则自动退回自读重算一次。
     """
+    result = _plan_seq(req, field)
+    if field is not None and result.reason == REASON_FIELD_ESCAPE:
+        result = _plan_seq(req, None)
+    return result
+
+
+def _plan_seq(req: PlanRequest, field=None) -> PlanResult:
+    """plan_path_ex 的主体：逐段 A*，累计代价与里程供下一段做时间推进。"""
     targets = [req.start] + req.waypoints + [req.end]
     full_path: List[Point] = []
     full_times: List[object] = []
@@ -446,10 +526,14 @@ def plan_path_ex(req: PlanRequest) -> PlanResult:
             s_node, e_node,
             t_thresh, e_thresh,
             start_time_str, current_g_score, current_dist, req.speed,
-            risk_scale=risk_scale,
+            risk_scale=risk_scale, field=field,
         )
         segment_results.append(seg)
 
+        if seg.escaped:
+            found = False
+            fail_reason = REASON_FIELD_ESCAPE
+            break
         if not seg.found:
             found = False
             fail_reason = seg.reason

@@ -306,6 +306,7 @@ class TWStubbed(unittest.TestCase):
         这样能人为制造「粗排与细排结论相反」的场景来钉排序口径。
         """
         self.plan_requests = []
+        self.plan_fields = []
         calls = {'i': 0}
 
         def pick(spec, default):
@@ -314,9 +315,10 @@ class TWStubbed(unittest.TestCase):
             i = min(calls['i'], len(spec) - 1) if isinstance(spec, (list, tuple)) else 0
             return spec[i] if isinstance(spec, (list, tuple)) else spec
 
-        def fake_plan(plan_req):
+        def fake_plan(plan_req, field=None):
             self.plan_requests.append((plan_req.date, plan_req.start_time,
                                        plan_req.priority))
+            self.plan_fields.append(field)
             tke = float(pick(tke_values, SAFE_TKE))
             km = float(pick(distances, 200.0))
             ok = bool(pick(found, True))
@@ -612,6 +614,19 @@ class TestTopKRoutes(TWStubbed):
         self.assertFalse(bad['feasible'])
         self.assertIsNotNone(bad['reason'])
         self.assertEqual(res['routes'][-1]['takeoff'], '2022-07-01T04:00')
+
+    def test_scan_field_is_injected_into_every_candidate(self):
+        """C：Top-K 复用第一遍读好的扫描场，五元组的顺序不能错位。"""
+        res = self._assess()
+        self.assertEqual(res['meta']['top_k_field'], 'injected')
+        self.assertEqual(len(self.plan_fields), 3)
+        for f in self.plan_fields:
+            self.assertIsNotNone(f, "每个候选都要拿到注入场")
+            tke, edr, la, lo, ts = f
+            self.assertEqual(tke.shape, edr.shape)
+            self.assertEqual(tke.shape[0], ts.size)
+            self.assertEqual(tke.shape[1], la.size)
+            self.assertEqual(tke.shape[2], lo.size)
 
 
 if __name__ == '__main__':

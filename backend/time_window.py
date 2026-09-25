@@ -29,7 +29,7 @@ import numpy as np
 from config import settings
 import timebase
 from data_loader import data_loader
-from planner import plan_path_ex, PlanResult, _haversine_km
+from planner import plan_path_ex, PlanResult, _haversine_km, SEGMENT_PAD_DEG
 from risk import classify_point, LEVEL_LOW, LEVEL_UNFLYABLE
 from route_options import summarize_plan
 import geo
@@ -39,8 +39,9 @@ REASON_NO_SAFE_SLOT = "no_safe_slot"                        # 全天 / 推演期
 REASON_PERMANENTLY_BLOCKED = "route_permanently_blocked"    # 航路本身被地形或 NaN 区封死
 REASON_DATA_MISSING = "data_coverage_insufficient"          # 起降点超出数据覆盖范围
 
-# 数据覆盖 / bbox 外扩（度）
-_BBOX_PAD_DEG = 1.0
+# 扫描场 bbox 外扩（度）。取 A* 自读时的同一口径：功能二把这份场注入给规划器复用，
+# 场比 A* 自己的搜索框还小就必然触发越界回退，注入也就省不下任何一次读盘。
+_BBOX_PAD_DEG = SEGMENT_PAD_DEG
 
 
 @dataclass
@@ -392,11 +393,13 @@ def _user_pair(data_time) -> Tuple[str, str]:
     return s[:10], s[11:16]
 
 
-def _plan_one_candidate(req, slot, straight_km) -> Dict[str, Any]:
+def _plan_one_candidate(req, slot, straight_km, field=None) -> Dict[str, Any]:
     """按候选自己的起飞时刻规划一条真实航线（功能二 B10 的第二遍）。
 
     只按「平衡」档规划：Top-K 已经乘过一次成本，再乘三档不值；
     切档回功能一，那里有完整的三档评估。
+
+    field 是本函数第一遍已经读好的扫描场，注入后这一遍不再碰 NetCDF。
     """
     from schemas import PlanRequest
     date, hhmm = _user_pair(slot.data_time)
@@ -405,7 +408,7 @@ def _plan_one_candidate(req, slot, straight_km) -> Dict[str, Any]:
         date=date, start_time=hhmm, speed=req.speed,
         tke_threshold=req.tke_threshold, edr_threshold=req.edr_threshold,
         priority=settings.DEFAULT_PRIORITY,
-    ))
+    ), field=field)
     return summarize_plan(plan, straight_km, float(req.speed or 0.0))
 
 
@@ -438,7 +441,7 @@ def _top_k_candidates(slots: List[SlotResult], recommended: Window,
 
 def plan_top_k_routes(req, slots: List[SlotResult], windows: List[Window],
                       recommended: Window, backups: List[Window],
-                      straight_km: float) -> List[Dict[str, Any]]:
+                      straight_km: float, field=None) -> List[Dict[str, Any]]:
     """对 Top-K 候选各按【自身起飞时刻】规划一条航线，并做第二遍（细）排序。
 
     第一遍是「一条固定走廊 × 24 个槽位」的查表，快但带时刻偏置：
@@ -447,11 +450,14 @@ def plan_top_k_routes(req, slots: List[SlotResult], windows: List[Window],
 
     不可飞的候选照样留在结果里（带 reason）—— 悄悄消失会让人以为
     「那条备用时段没风险，只是没排上」。
+
+    field 把第一遍的扫描场交给 A* 复用：每个候选各自读一次 31 帧的话，
+    Top-K=4 会把接口从 1 秒拖到 3 秒以上，而这份场本来就在工作内存里。
     """
     k = max(1, int(settings.TW_TOP_K_ROUTES))
     routes: List[Dict[str, Any]] = []
     for win, slot in _top_k_candidates(slots, recommended, backups, k):
-        summary = _plan_one_candidate(req, slot, straight_km)
+        summary = _plan_one_candidate(req, slot, straight_km, field=field)
         routes.append({
             **summary,
             "takeoff": str(to_user_time(slot.data_time))[:16],
@@ -528,8 +534,13 @@ def assess_time_window(req, run_planner: bool = True) -> Dict[str, Any]:
 
     raw_lats = np.array([p[0] for p in raw])
     raw_lons = np.array([p[1] for p in raw])
-    bbox = (float(raw_lats.min()) - _BBOX_PAD_DEG, float(raw_lats.max()) + _BBOX_PAD_DEG,
-            float(raw_lons.min()) - _BBOX_PAD_DEG, float(raw_lons.max()) + _BBOX_PAD_DEG)
+    # 兜底几何只有起终点，途经点会被漏出 bbox；而注入给 A* 的场必须罩住每一段
+    # 的搜索框（途经点前后各 SEGMENT_PAD_DEG），所以把途经点也计入取框范围。
+    wp = req.waypoints or []
+    lat_ext = [float(raw_lats.min()), float(raw_lats.max())] + [float(p.lat) for p in wp]
+    lon_ext = [float(raw_lons.min()), float(raw_lons.max())] + [float(p.lon) for p in wp]
+    bbox = (min(lat_ext) - _BBOX_PAD_DEG, max(lat_ext) + _BBOX_PAD_DEG,
+            min(lon_ext) - _BBOX_PAD_DEG, max(lon_ext) + _BBOX_PAD_DEG)
 
     # 3) 用户日期 -> 数据时间；扫描窗口覆盖「北京时间的这一天」
     day_start_user = np.datetime64(f"{req.date}T00:00:00")
@@ -596,9 +607,11 @@ def assess_time_window(req, run_planner: bool = True) -> Dict[str, Any]:
         # 「推荐 09:00、曲线画的却是 08:00 那条走廊」。
         straight_km = _haversine_km(start[0], start[1], end[0], end[1])
         t_k = time.perf_counter()
-        routes = plan_top_k_routes(req, slots, windows, recommended, backups, straight_km)
+        routes = plan_top_k_routes(req, slots, windows, recommended, backups, straight_km,
+                                   field=(tke, edr, slab_lats, slab_lons, slab_times))
         meta["top_k_planned"] = len(routes)
         meta["top_k_cost_ms"] = int((time.perf_counter() - t_k) * 1000)
+        meta["top_k_field"] = "injected"
         meta["route_priority"] = settings.DEFAULT_PRIORITY
 
         best = routes[0]
