@@ -5,6 +5,8 @@
   ① 可飞分支（低风险 + 绕行在阈值内）；
   ② 绕行超阈分支（detour_exceeds_threshold），并验证阈值随任务优先级变化；
   ③ 无安全路径分支（blocked → no_safe_path）。
+结论四态（可飞 / 不可飞 / 超预算 / 未算出）由 verdict 承载：绕行超阈与搜索
+未收敛都不是「飞不了」，各自有独立用例守着，改动时不要把两者压回同一个字。
 
 风险分级 / 阻塞区 / 地理分段的用例已拆分到 test_risk.py、test_blockage.py、
 test_geo（见 test_feasibility.py 的 TestGeo 与 TestConfigThresholds）；
@@ -48,8 +50,12 @@ class _StubLoader:
         return None, None, None, None, None
 
 
-def _fake_plan(total_distance: float, found: bool = True):
-    """构造一条拉萨→林芝的合成航线（20 点），沿程风险恒为低。"""
+def _fake_plan(total_distance: float, found: bool = True, reason: str = 'blocked'):
+    """构造一条拉萨→林芝的合成航线（20 点），沿程风险恒为低。
+
+    found=False 时 reason 决定规划失败的性质：blocked 真没有路，
+    iteration_limit 只是没搜完。
+    """
     n = 20
     lats = np.linspace(29.65, 29.66, n)
     lons = np.linspace(91.13, 94.36, n)
@@ -60,7 +66,7 @@ def _fake_plan(total_distance: float, found: bool = True):
         total_distance=total_distance if found else 0.0,
         total_grid_cost=0.0,
         found=found,
-        reason=None if found else 'blocked',
+        reason=None if found else reason,
         times=times if found else [],
         tkes=[0.1] * n if found else [],
         edrs=[0.001] * n if found else [],
@@ -97,6 +103,7 @@ class TestFeasibilityOrchestration(unittest.TestCase):
         result = self._assess(_fake_plan(340.0))
         self.assertTrue(result.feasible)
         self.assertEqual(result.conclusion, '可飞')
+        self.assertEqual(result.verdict, 'feasible')
         self.assertIsNone(result.reason)
         self.assertEqual(result.risk['overall'], '低风险')
         self.assertEqual(result.distance['applicable'], True)
@@ -106,7 +113,9 @@ class TestFeasibilityOrchestration(unittest.TestCase):
         # 航线 480 km -> 绕行比约 1.54，超过 normal(1.5)
         result = self._assess(_fake_plan(480.0), priority='normal')
         self.assertFalse(result.feasible)
-        self.assertEqual(result.conclusion, '不可飞')
+        # 线是有的，只是超预算 —— 结论不能印成「不可飞」
+        self.assertEqual(result.conclusion, '超预算')
+        self.assertEqual(result.verdict, 'over_budget')
         self.assertEqual(result.reason, 'detour_exceeds_threshold')
         self.assertTrue(result.distance['time_cost_h']['exceeded'])
         # 距离仍可用（有真实航线，只是成本超阈）
@@ -128,12 +137,25 @@ class TestFeasibilityOrchestration(unittest.TestCase):
         result = self._assess(_fake_plan(0.0, found=False))
         self.assertFalse(result.feasible)
         self.assertEqual(result.conclusion, '不可飞')
+        self.assertEqual(result.verdict, 'infeasible')
         self.assertEqual(result.reason, 'no_safe_path')
         # 无航线时距离/时间成本标记为不适用，前端显示「不适用」
         self.assertEqual(result.distance['applicable'], False)
         self.assertIsNone(result.distance['route_km'])
         self.assertIsNone(result.distance['time_cost_h']['extra'])
         self.assertEqual(result.path, [])
+
+    def test_iteration_limit_is_not_reported_as_unflyable(self):
+        """A* 没搜完 ≠ 没有安全航线：越保守的档惩罚越大、越容易撞上上限。"""
+        result = self._assess(_fake_plan(0.0, found=False, reason='iteration_limit'))
+        self.assertFalse(result.feasible)
+        self.assertEqual(result.conclusion, '未算出')
+        self.assertEqual(result.verdict, 'undetermined')
+        self.assertEqual(result.reason, 'search_iteration_limit')
+        self.assertEqual(result.meta['plan_reason'], 'iteration_limit')
+        # 建议文案要给出可操作的下一步，而不是只说「放宽时间窗口」
+        self.assertIn('没有收敛', result.suggestions['text'])
+        self.assertIn('途经点', result.suggestions['text'])
 
     def test_user_facing_time_contract(self):
         # meta 回传的是用户输入口径（北京时间），不是换算后的数据标签

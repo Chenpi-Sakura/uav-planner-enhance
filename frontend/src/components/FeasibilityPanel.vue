@@ -2,10 +2,12 @@
   <!-- ============ 结果区（当前选中档位）============ -->
   <!-- 输入区已并入「路径规划」：一次「开始规划」同时出三档，档位切换在 RouteTierCards 里 -->
   <section v-if="r" class="control-section">
-    <!-- 结论卡 -->
-    <div class="verdict-card" :class="r.feasible ? 'ok' : 'bad'">
+    <!-- 结论卡：四态各有颜色与图标，只有「不可飞」才是红 -->
+    <div class="verdict-card" :class="tone">
       <div class="verdict-icon">
-        <CheckCircle2 v-if="r.feasible" :size="22" />
+        <CheckCircle2 v-if="tone === 'ok'" :size="22" />
+        <AlertTriangle v-else-if="tone === 'warn'" :size="22" />
+        <HelpCircle v-else-if="tone === 'unknown'" :size="22" />
         <XCircle v-else :size="22" />
       </div>
       <div class="verdict-body">
@@ -108,7 +110,7 @@
         </p>
       </template>
       <p v-else class="hint-text small">
-        尚未规划出安全航线，绕行成本无法计算。{{ priorityLabel }}任务允许额外耗时
+        本档没有得出可展示的航线，绕行成本无法计算。{{ priorityLabel }}任务允许额外耗时
         +{{ r.distance.time_cost_h.limit }} h（{{ r.distance.time_cost_h.limit_ratio }}×）。
       </p>
     </div>
@@ -181,9 +183,9 @@
 import { computed } from 'vue';
 import {
   CheckCircle2, XCircle, Route, Timer,
-  AlertTriangle, Lightbulb, MapPin, CalendarClock,
+  AlertTriangle, Lightbulb, MapPin, CalendarClock, HelpCircle,
 } from 'lucide-vue-next';
-import { store, RISK_COLORS, PRIORITY_LABELS } from '../store';
+import { store, RISK_COLORS, PRIORITY_LABELS, FEAS_REASON_TEXT, verdictTone } from '../store';
 import type { FeasibilityResult } from '../store';
 import { TURB, fmtTke, fmtEdr } from '../config';
 import ReportCard from './ReportCard.vue';
@@ -192,18 +194,14 @@ const r = computed<FeasibilityResult | null>(() => store.feasibility);
 
 const priorityLabel = computed(() => PRIORITY_LABELS[store.priority] ?? '平衡');
 
+const tone = computed(() => verdictTone(r.value?.verdict));
+
 const verdictSub = computed(() => {
   if (!r.value) return '';
   if (r.value.feasible) {
     return `存在安全可行航线，可在 ${r.value.distance.flight_time_h} 小时内完成飞行`;
   }
-  const map: Record<string, string> = {
-    detour_exceeds_threshold: '存在安全航线，但绕行成本超出阈值',
-    no_safe_path: '航路被高强度湍流区封死，无法规划安全航线',
-    data_coverage_insufficient: '起降点超出气象数据覆盖范围',
-    search_iteration_limit: '搜索达到迭代上限，未能确认安全航线',
-  };
-  return map[r.value.reason ?? ''] ?? '当前条件下不建议执行飞行任务';
+  return FEAS_REASON_TEXT[r.value.reason ?? ''] ?? '当前条件下不建议执行飞行任务';
 });
 
 const riskColor = (level: string) => RISK_COLORS[level] ?? '#94a3b8';
@@ -356,6 +354,17 @@ const applyAltBase = (alt: { role?: string; end: { lat: number; lon: number } })
   background: rgba(239, 68, 68, 0.12);
   border-color: rgba(239, 68, 68, 0.45);
   color: #f87171;
+}
+/* 超预算：黄；未算出：灰。都不是「飞不了」，不能用红色 */
+.verdict-card.warn {
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.45);
+  color: #fbbf24;
+}
+.verdict-card.unknown {
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.4);
+  color: #cbd5e1;
 }
 .verdict-title { font-size: 18px; font-weight: 700; }
 .verdict-sub { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }

@@ -36,9 +36,9 @@ interface NoticeCopy {
 }
 
 /**
- * 三类失败的后端语义互斥，文案不能混用：
- * no_data 是「查不到」，blocked 是「确实被封死」，iteration_limit 是「没搜完」——
- * 最后一种不能说成「没有航线」。
+ * 几类结论的后端语义互斥，文案不能混用：
+ * no_data 是「查不到」，blocked 是「确实被封死」，over_budget 是「有线但太贵」，
+ * iteration_limit 是「没搜完」—— 后两种都不能说成「没有航线」。
  */
 const COPY: Record<PlanNoticeReason, NoticeCopy> = {
   blocked: {
@@ -48,6 +48,15 @@ const COPY: Record<PlanNoticeReason, NoticeCopy> = {
       '换一个起飞时刻，或用「时间窗口」标签找出当天的可飞时段',
       '调整起降点位置',
       '到「可行性评估」查看具体是哪片湍流区挡住了路',
+    ],
+  },
+  over_budget: {
+    title: '这一档有安全航线，只是绕行超出预算',
+    body: '寻路找到了避开高危湍流区的航线，但绕行比例超过该档任务接受的时间上限。这是成本不达标，不代表飞不了。',
+    actions: [
+      '换一个湍流更弱的起飞时刻，绕行距离通常会明显缩短',
+      '接受这份额外耗时，按绕行比最小的那一档执行',
+      '调整起降点，缩短需要绕开的走廊',
     ],
   },
   no_data: {

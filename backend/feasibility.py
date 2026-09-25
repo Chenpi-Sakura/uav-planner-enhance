@@ -1,9 +1,12 @@
 """
 功能一 · 飞行路径可行性评估编排。
 
-输出明确的「可飞 / 不可飞」结论：
+输出四态结论，而不是「能飞 / 不能飞」两态：
   - 可飞：给出航线总距离、直线距离、预计飞行时间、全程与分段风险等级；
-  - 不可飞：给出阻塞原因、风险分布、绕行成本分析与建议措施。
+  - 不可飞：湍流确实封死了走廊，或起降点落在数据范围外；
+  - 超预算：找到了安全航线，只是绕行成本超出该档阈值 —— 线是存在的；
+  - 未算出：A* 没搜完，安全航线存不存在尚未可知。
+后两态若一并印成「不可飞」，三档对比会被读反（越保守的档越容易撞预算/上限）。
 
 成本口径：按会议决议，仅考虑【时间成本】（绕行时间增量与优先级阈值比较）。
 """
@@ -16,14 +19,14 @@ import numpy as np
 from config import settings
 from planner import plan_path_ex, PlanResult, _haversine_km
 from data_loader import data_loader
+from schemas import (
+    VERDICT_FEASIBLE, VERDICT_INFEASIBLE, VERDICT_LABELS,
+    VERDICT_OVER_BUDGET, VERDICT_UNDETERMINED, verdict_of,
+)
 from timebase import to_data_time_str
 from risk import build_risk_profile, RiskProfile, LEVEL_UNFLYABLE
 import blockage as blockage_mod
 import geo
-
-# 结论常量
-FEASIBLE = "可飞"
-INFEASIBLE = "不可飞"
 
 # 替代方案排序用：风险越低越优先
 RISK_ORDER = {"低风险": 0, "中风险": 1, "高风险": 2, "不可飞": 3}
@@ -34,11 +37,22 @@ REASON_DETOUR = "detour_exceeds_threshold"      # 绕行成本超阈值
 REASON_DATA_MISSING = "data_coverage_insufficient"
 REASON_ITERATION = "search_iteration_limit"
 
+# 四种「feasible=False」的性质不同：只有前两种真的没有安全航线，
+# 后两种分别对应「有线但超预算」与「没算完」，不能一起说成飞不了。
+# 结论文案（conclusion）由 schemas.VERDICT_LABELS 单点给出，与功能二共用。
+REASON_VERDICT = {
+    REASON_NO_PATH: VERDICT_INFEASIBLE,
+    REASON_DATA_MISSING: VERDICT_INFEASIBLE,
+    REASON_DETOUR: VERDICT_OVER_BUDGET,
+    REASON_ITERATION: VERDICT_UNDETERMINED,
+}
+
 
 @dataclass
 class FeasibilityResult:
     feasible: bool
     conclusion: str
+    verdict: str
     reason: Optional[str]
     priority: str
     detour_limit: float
@@ -157,10 +171,13 @@ def assess_feasibility(req,
         feasible = True
         reason = None
 
+    verdict = verdict_of(feasible, reason, REASON_VERDICT)
+    conclusion = VERDICT_LABELS[verdict]
+
     # 5) 建议措施
     # 先算替代起降点，再生成文案：文案需要知道是否真的给出了替代点，
     # 否则会出现「文案承诺已给出替代点、但列表为空」的自相矛盾。
-    # 两个开关各自独立、且都只在不可飞时才算——这两项各要再跑若干次规划/取数。
+    # 两个开关各自独立、且都只在结论不是「可飞」时才算——这两项各要再跑若干次规划/取数。
     if not feasible:
         if include_alt_windows and data_ok:
             suggestions["alt_windows"] = _suggest_alt_windows(start, end, req)
@@ -175,7 +192,8 @@ def assess_feasibility(req,
 
     return FeasibilityResult(
         feasible=feasible,
-        conclusion=FEASIBLE if feasible else INFEASIBLE,
+        conclusion=conclusion,
+        verdict=verdict,
         reason=reason,
         priority=priority,
         detour_limit=detour_limit,
@@ -204,6 +222,7 @@ def to_response_dict(res: FeasibilityResult) -> Dict[str, Any]:
     return {
         "feasible": res.feasible,
         "conclusion": res.conclusion,
+        "verdict": res.verdict,
         "reason": res.reason,
         "priority": res.priority,
         "detour_limit": res.detour_limit,
@@ -632,7 +651,11 @@ def _build_suggestion_text(feasible: bool, reason: Optional[str],
         return "起降点超出当前气象数据覆盖范围，无法评估，请调整任务区域或更新数据源。"
 
     if reason == REASON_ITERATION:
-        return "搜索达到迭代上限，未能确认安全航线。建议放宽时间窗口或降低评估粒度后重试。"
+        return (
+            "本次搜索在迭代上限内没有收敛，安全航线是否存在尚未确定 —— 这是「没算完」，"
+            "不是「没有航线」。建议考虑：① 缩短航程或减少途经点后重试；"
+            "② 适当放宽 TKE/EDR 阈值；③ 换一个起飞时刻或稍后重试（数据更新后可能收敛）。"
+        )
 
     if reason == REASON_DETOUR:
         return (

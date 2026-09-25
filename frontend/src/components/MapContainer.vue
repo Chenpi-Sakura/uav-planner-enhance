@@ -330,7 +330,7 @@ const shownResult = () => {
   return store.routeOptions?.results.find(r => r.priority === shown) ?? store.feasibility;
 };
 
-/** 替代起降点：只在当前档不可飞、且后端确实给出替代点时画 */
+/** 替代起降点：只在当前档未得出可飞结论、且后端确实给出替代点时画 */
 const renderAltBases = () => {
   altLayer.clearLayers();
   if (!map) return;

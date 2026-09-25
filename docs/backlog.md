@@ -176,6 +176,53 @@ P2 的 B10 于 2026-09-25 落地（Top-K 两遍 + 扫描场注入）。
   本条原先记的「1~5 s（热态）、首条冷读十秒级」是**没有缓存时**的数，不要再引用。
 - 与功能二的联动（时间窗口 Top-K 各出一条航线）见 **B10**，本条只覆盖功能一/规划侧。
 
+### 追加（2026-09-25）：三档卡片把「超预算 / 未算出」印成了「不可飞」
+
+**现象与复现**：卡片的结论只有两个值（`opt.feasible ? '可飞' : '不可飞'`），而后端判
+`feasible=False` 的原因混着三类性质完全不同的事。实测（旧口径，`priority=normal`、
+60 km/h、昌都→拉萨 2022-02-05 08:00）：紧急「可飞」，平衡与安全两格都印**红字「不可飞」**，
+而它们的 `reason` 是 `search_iteration_limit` —— A\* 展开满 20000 次没算完，
+**有没有安全航线还不知道**。读出来就是"越保守反而越危险"，正是三档对比要传达的东西被印反。
+这不是偶发：安全档软惩罚 ×4，代价函数逼它绕开一切中风险区，搜索空间更大、线更长，
+因此它比另外两档更容易撞上 `max_iter` 或该档绕行预算（`detour_exceeds_threshold` 同理，
+后端自己的解释文本都写着"存在安全航线但绕行成本超出当前优先级阈值"）。
+
+**取向**：三选一里选了 **A（结论改四态）**，顺手带上 C 的那半条可操作文案。
+没选 B（只改措辞成"本档无线"）——"没算完"和"真封死"在卡片上仍然一眼分不开；
+没选 C 的参数部分（提额 `max_iter` / 随网格自适应）——治标，换个更大的框照样撞上限，
+且 A\* 变慢会直接拖公网响应。**只改口径、不改参数。**
+
+**落地**：
+
+- 词汇表进 `backend/schemas.py`：`VERDICT_*` 四个机器码 + `VERDICT_LABELS` 中文 +
+  `PLANNER_REASON_VERDICT`（planner 的 `blocked/no_data/iteration_limit`）。
+  `feasibility.REASON_VERDICT` 与 `route_options.summarize_plan()` 各取所需，
+  响应里 `verdict`（前端选色/选图标）与 `conclusion`（同一个词的中文）并存。
+- 四态 = 可飞（绿）/ 不可飞（红，仅 `no_safe_path`、`data_coverage_insufficient`）/
+  超预算（黄，`detour_exceeds_threshold`）/ 未算出（灰，`search_iteration_limit`）。
+- `RouteTierCards.vue` 与 `FeasibilityPanel.vue` 的颜色与图标一律改跟 `verdict` 走，
+  文字取后端 `conclusion`；卡片 tooltip 分四态各写各的（超预算那条直接给
+  "绕行 X× 超出本档上限 Y×"）。reason→中文 的映射收进 `store.FEAS_REASON_TEXT` 一份，
+  原先结论卡自己抄了一份、卡片抄了另一份。
+- `NoticeDialog` 补 `over_budget` 一档。**这是同一个 bug 的另一半**：三档全无可飞结论时，
+  绕行超阈原先弹的标题是"航线被高危区封死"。
+- 功能二共用：候选行的 `verdict/conclusion` 由 `summarize_plan()` 给出（那里没有预算判定，
+  只会出现 infeasible/undetermined），风险档那一格未算出时显示灰色「未算出」。
+  注意同页时段表里的「不可飞」是**风险档**（`risk.LEVEL_UNFLYABLE`），不是结论，没跟着改。
+- 报告侧：`assessor._render_feasibility` 首行改用 `conclusion`，「操作建议」段按 verdict
+  给专属建议；`build_feasibility_context` 透传 `verdict`，LLM 版拿到的是同一个四态。
+- 用例钉住语义：`test_feasibility.py::test_iteration_limit_is_not_reported_as_unflyable`、
+  `test_route_options.py::TestSummarizePlanVerdict`、
+  `test_assessor.py::test_over_budget_report_does_not_say_unflyable`。
+  `scripts/acceptance_m5.py` 的 `distance_applicable` 判据顺手修了：它原来写的是
+  `route_km is not None == feasible`，而超阈分支**有真实航线却 feasible=False**，
+  这条判据在旧口径下就会误判，只是当时的验收矩阵没跑出一个超阈案例。
+
+**残留**：`docs/无人机决策平台0812.md` 里"输出明确的'可飞/不可飞'结论"是申报书原文，
+没动（同 B1 第一条：10-01 那版要不要一起跟改，等拍板）。
+M5 验收记录只在那条 `search_iteration_limit` 手工用例后加了一句追注说明界面词已换，
+正文里的旧词是当时的实测响应原文，按存档不改写。
+
 ---
 
 ## B10 · 时间窗口只给时刻不给航线（**已落地** 2026-09-25）

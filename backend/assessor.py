@@ -76,6 +76,7 @@ def build_feasibility_context(result: Dict[str, Any]) -> Dict[str, Any]:
         "task": "feasibility",
         "feasible": result.get("feasible"),
         "conclusion": result.get("conclusion"),
+        "verdict": result.get("verdict"),
         "reason": result.get("reason"),
         "priority": result.get("priority"),
         "distance": {
@@ -184,6 +185,20 @@ def render_rule_report(ctx: Dict[str, Any]) -> str:
     return _render_feasibility(ctx)
 
 
+# 四态里最容易被读反的两种：报告必须自己说清性质，否则「超预算/未算出」
+# 会被用户当成「飞不了」，进而以为越保守的档越危险。
+VERDICT_ADVICE = {
+    "over_budget": (
+        "本次结论是「不满足该档时间预算」，安全航线本身已经找到："
+        "可改选绕行上限更大的档位、更换起飞时刻，或直接接受这份额外耗时。"
+    ),
+    "undetermined": (
+        "本次结论只是「搜索未收敛」，不能据此判定没有安全航线："
+        "可缩短航程或减少途经点、放宽湍流阈值，或稍后重试。"
+    ),
+}
+
+
 def _render_feasibility(ctx: Dict[str, Any]) -> str:
     lines: List[str] = []
     feasible = bool(ctx.get("feasible"))
@@ -211,7 +226,7 @@ def _render_feasibility(ctx: Dict[str, Any]) -> str:
             "search_iteration_limit": "搜索达到迭代上限，未能确认安全航线",
         }
         lines.append(
-            f"本次航线评估结论为「不可飞」。主要原因："
+            f"本次航线评估结论为「{ctx.get('conclusion') or '不可飞'}」。主要原因："
             f"{reason_map.get(str(ctx.get('reason')), '当前条件下不建议执行飞行任务')}。"
         )
 
@@ -263,7 +278,7 @@ def _render_feasibility(ctx: Dict[str, Any]) -> str:
             f"{'已超出该上限' if tc.get('exceeded') else '在该上限之内'}。"
         )
     else:
-        lines.append("未规划出安全航线，绕行成本无法计算。")
+        lines.append("本档没有得出可展示的航线，绕行成本无法计算。")
     lines.append("可切换到「时间窗口」标签页，扫描当日及后续日期的更优起飞时段。")
 
     # 5. 操作建议
@@ -272,7 +287,10 @@ def _render_feasibility(ctx: Dict[str, Any]) -> str:
     if feasible:
         lines.append("当前条件下可执行任务，建议按计划起飞并保持对湍流高发区段的关注。")
     else:
-        lines.append("建议调整起降点、更换飞行时间，或推迟任务等待更优气象条件。")
+        lines.append(VERDICT_ADVICE.get(
+            str(ctx.get("verdict")),
+            "建议调整起降点、更换飞行时间，或推迟任务等待更优气象条件。",
+        ))
     if alts:
         alt_txt = "；".join(
             f"{a.get('role')}→{a.get('description')}（{a.get('level')}，{_fmt(a.get('distance_km'), 1, ' km')}）"

@@ -171,9 +171,9 @@ async def assess_route_feasibility(request: FeasibilityRequest):
     """
     功能一 · 飞行路径可行性评估。
 
-    基于 4D 气象数据评估起降点之间是否存在安全可行航线，输出
-    「可飞 / 不可飞」结论、距离与时间成本、风险等级（全程 + 分城市段）、
-    阻塞原因、绕行成本分析与建议措施。
+    基于 4D 气象数据评估起降点之间是否存在安全可行航线，输出四态结论
+    （可飞 / 不可飞 / 超预算 / 未算出）、距离与时间成本、风险等级（全程 +
+    分城市段）、阻塞原因、绕行成本分析与建议措施。
     """
     result = await _run_assess(assess_feasibility, request)
     return FeasibilityResponse(**to_response_dict(result))

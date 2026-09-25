@@ -4,7 +4,9 @@
   1. 三档只改湍流软惩罚倍率，硬阈值对三档一致（安全底线不由档位决定）；
   2. 风险场真的有差别时三档要出不同的线，且"越愿意绕 -> 越短的风险暴露"；
   3. 沿程湍流都没超过中风险下沿时，三档必然重合，此时要如实报 all_identical，
-     不能让前端把同一条线包装成"三个方案"。
+     不能让前端把同一条线包装成"三个方案"；
+  4. 结论四态由 summarize_plan 给出（功能一三档与功能二 Top-K 共用）：
+     没搜完（iteration_limit）报「未算出」，不压成「不可飞」。
 """
 import sys
 import unittest
@@ -133,6 +135,41 @@ class TestPlanRouteOptions(unittest.TestCase):
         by = {r.priority: r for r in model.routes}
         self.assertIsNotNone(by['urgent'].detour_ratio, "detour_ratio 未声明进模型会被过滤成 None")
         self.assertGreater(by['economy'].detour_ratio, by['urgent'].detour_ratio)
+        self.assertEqual(by['urgent'].verdict, 'feasible', "verdict 漏定义会被 pydantic 丢掉")
+        self.assertEqual(by['urgent'].conclusion, '可飞')
+
+
+class TestSummarizePlanVerdict(unittest.TestCase):
+    """summarize_plan 是功能一三档与功能二 Top-K 共用的汇总，结论四态从这里出。"""
+
+    def _plan(self, found: bool, reason=None):
+        from planner import PlanResult
+        path = [START, END] if found else []
+        return PlanResult(
+            path=path, total_distance=300.0 if found else 0.0, total_grid_cost=0.0,
+            found=found, reason=None if found else reason,
+            times=[np.datetime64('2022-07-01T00:00')] * len(path),
+            tkes=[1.0] * len(path), edrs=[0.01] * len(path),
+            waypoints_reached=[1] if found else [], segment_results=[],
+        )
+
+    def _sum(self, found, reason=None):
+        return route_options.summarize_plan(self._plan(found, reason), 200.0, 60.0)
+
+    def test_found_is_feasible(self):
+        item = self._sum(True)
+        self.assertEqual((item['verdict'], item['conclusion']), ('feasible', '可飞'))
+
+    def test_blocked_is_infeasible(self):
+        item = self._sum(False, 'blocked')
+        self.assertEqual((item['verdict'], item['conclusion']), ('infeasible', '不可飞'))
+
+    def test_iteration_limit_is_not_called_unflyable(self):
+        """没搜完 ≠ 没有航线：功能二候选行的风险档那一格要显示「未算出」。"""
+        item = self._sum(False, 'iteration_limit')
+        self.assertFalse(item['feasible'])
+        self.assertEqual((item['verdict'], item['conclusion']), ('undetermined', '未算出'))
+        self.assertEqual(item['reason'], 'iteration_limit')
 
 
 if __name__ == "__main__":

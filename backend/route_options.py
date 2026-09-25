@@ -11,6 +11,7 @@ from typing import Any, Dict, List
 from config import settings
 from planner import plan_path_ex, tier_risk_scale, _haversine_km
 from risk import build_risk_profile
+from schemas import PLANNER_REASON_VERDICT, VERDICT_LABELS, verdict_of
 
 TIER_LABELS: Dict[str, str] = {
     "urgent": "紧急",
@@ -30,9 +31,14 @@ def summarize_plan(plan, straight_km: float, speed: float = 0.0) -> Dict[str, An
     风险统计直接取规划期逐节点的 tke/edr（A* 判定时看到的值），不重采样。
     """
     feasible = bool(plan.found and plan.path)
+    reason = None if feasible else (plan.reason or "blocked")
+    verdict = verdict_of(feasible, reason, PLANNER_REASON_VERDICT)
     item: Dict[str, Any] = {
         "feasible": feasible,
-        "reason": None if feasible else (plan.reason or "blocked"),
+        # 「没搜完」不是「没有航线」：功能二的候选行要用它替换风险档那一格
+        "verdict": verdict,
+        "conclusion": VERDICT_LABELS[verdict],
+        "reason": reason,
         "path": [],
         "total_distance": 0.0,
         "detour_ratio": None,

@@ -1,6 +1,40 @@
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Tuple
 
+# ==================== 结论四态（功能一 / 功能二共用） ====================
+# feasible=False 不等于「飞不了」。verdict 是给前端的机器码（选色、选图标），
+# conclusion 是按它渲染的中文。两套 reason 码各自映射到这里的一个枚举：
+#   planner:  blocked / no_data / iteration_limit
+#   feasibility: no_safe_path / data_coverage_insufficient / detour_exceeds_threshold
+#                / search_iteration_limit
+VERDICT_FEASIBLE = "feasible"
+VERDICT_INFEASIBLE = "infeasible"
+VERDICT_OVER_BUDGET = "over_budget"
+VERDICT_UNDETERMINED = "undetermined"
+
+VERDICT_LABELS: Dict[str, str] = {
+    VERDICT_FEASIBLE: "可飞",
+    VERDICT_INFEASIBLE: "不可飞",
+    VERDICT_OVER_BUDGET: "超预算",
+    VERDICT_UNDETERMINED: "未算出",
+}
+
+# planner 层还没有「档位预算」概念，因此只会出现 infeasible / undetermined。
+# no_data 归 infeasible 是有意的：它性质上确实飞不了，具体原因由 reason 字段区分。
+PLANNER_REASON_VERDICT: Dict[str, str] = {
+    "blocked": VERDICT_INFEASIBLE,
+    "no_data": VERDICT_INFEASIBLE,
+    "iteration_limit": VERDICT_UNDETERMINED,
+}
+
+
+def verdict_of(feasible: bool, reason: Optional[str], mapping: Dict[str, str]) -> str:
+    """把「是否成功 + 失败原因码」折成结论四态。"""
+    if feasible:
+        return VERDICT_FEASIBLE
+    return mapping.get(reason or "", VERDICT_INFEASIBLE)
+
+
 class Point(BaseModel):
     lat: float
     lon: float
@@ -61,6 +95,9 @@ class RouteOption(BaseModel):
     label: str
     risk_scale: float
     feasible: bool
+    # 结论四态，见文件头 VERDICT_* 定义
+    verdict: str
+    conclusion: str
     reason: Optional[str] = None
     path: List[Point] = []
     total_distance: float = 0.0
@@ -271,6 +308,10 @@ class TimeWindowRoute(BaseModel):
     scan_max_tke: Optional[float] = None
     planned_level: str = ""
     feasible: bool = False
+    # 结论四态（planner 层只会出现 infeasible / undetermined）：
+    # 「未算出」是搜索没收敛，不能和「不可飞」共用一个词
+    verdict: str
+    conclusion: str
     reason: Optional[str] = None
     path: List[Point] = []
     total_distance: Optional[float] = None
@@ -301,6 +342,8 @@ class TimeWindowResponse(BaseModel):
 class FeasibilityResponse(BaseModel):
     feasible: bool
     conclusion: str
+    # 结论机器码：feasible / infeasible / over_budget / undetermined（见文件头 VERDICT_*）
+    verdict: str
     reason: Optional[str] = None
     priority: str
     detour_limit: float

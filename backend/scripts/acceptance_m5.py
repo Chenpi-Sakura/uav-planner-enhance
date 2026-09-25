@@ -58,9 +58,11 @@ def run():
             rec = tw.get("recommended") or {}
             # 验收判据：接口可用 + 结论自洽 + 窗口输出项齐全
             checks = {
-                "conclusion": fe.get("conclusion") in ("可飞", "不可飞"),
+                "conclusion": fe.get("conclusion") in ("可飞", "不可飞", "超预算", "未算出"),
+                "verdict_consistent": (fe.get("verdict") == "feasible") == bool(fe.get("feasible")),
                 "reason_consistent": (fe.get("reason") is None) == bool(fe.get("feasible")),
-                "distance_applicable": (dist.get("route_km") is not None) == bool(fe.get("feasible")),
+                # 超预算有真实航线，route_km 是否给出只看 applicable，不看 feasible
+                "distance_applicable": bool(dist.get("applicable")) == (dist.get("route_km") is not None),
                 "tw_has_recommended": bool(rec.get("takeoff")) if tw.get("has_window") else True,
                 "tw_slots": len(tw.get("slot_analysis") or []) > 0,
                 "tw_meta_tz": (tw.get("meta") or {}).get("tz_offset_hours") == 8,

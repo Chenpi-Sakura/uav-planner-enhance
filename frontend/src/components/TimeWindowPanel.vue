@@ -85,15 +85,13 @@
         <h4 class="sub-title"><Navigation :size="14" /> 候选起飞时刻</h4>
         <div class="slot-list">
           <div v-for="(rt, idx) in routes" :key="rt.takeoff" class="slot-item">
-            <span class="seg-dot"
-                  :style="{ backgroundColor: riskColor(rt.feasible ? rt.planned_level : '不可飞') }"></span>
+            <span class="seg-dot" :style="{ backgroundColor: riskColor(routeLevel(rt)) }"></span>
             <span class="slot-time">
               {{ hhmm(rt.takeoff) }}
               <em v-if="idx === 0" class="route-flag">推荐</em>
             </span>
-            <span class="slot-level"
-                  :style="{ color: riskColor(rt.feasible ? rt.planned_level : '不可飞') }">
-              {{ rt.feasible ? rt.planned_level : '不可飞' }}
+            <span class="slot-level" :style="{ color: riskColor(routeLevel(rt)) }">
+              {{ routeLevel(rt) }}
             </span>
             <span class="seg-meta">{{ routeMeta(rt) }}</span>
             <button class="route-btn" :disabled="store.planLoading"
@@ -277,7 +275,7 @@ const landingLabel = computed(() => {
   return `${mmdd(t)} ${hhmm(t)}${nextDay ? '（次日）' : ''}`;
 });
 
-/** 候选行的补充文案：里程 / 绕行比 / 不可飞原因 */
+/** 候选行的补充文案：里程 / 绕行比 / 未得出航线的原因 */
 const fmtKm = (v: number | null | undefined) =>
   v === null || v === undefined ? '—' : `${v.toFixed(1)} km`;
 const fmtDetour = (v: number | null | undefined) =>
@@ -290,6 +288,11 @@ const PLAN_REASON_TEXT: Record<string, string> = {
 const routeMeta = (rt: TimeWindowRoute) =>
   rt.feasible ? `${fmtKm(rt.total_distance)}${fmtDetour(rt.detour_ratio)}`
     : (PLAN_REASON_TEXT[rt.reason ?? ''] ?? '未规划出航线');
+/**
+ * 候选行的风险档。没得出航线时印后端的结论词而不是写死「不可飞」——
+ * iteration_limit 的候选是「没算完」，riskColor 的兜底灰正好把它和真封死的红分开。
+ */
+const routeLevel = (rt: TimeWindowRoute) => (rt.feasible ? rt.planned_level : rt.conclusion);
 /** 两遍排序口径不同，结论可能相反；这条差异必须让用户看见而不是被抹平 */
 const rankNote = computed(() => {
   const coarse = r.value?.recommended;

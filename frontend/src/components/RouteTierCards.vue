@@ -6,7 +6,7 @@
         v-for="opt in cards"
         :key="opt.priority"
         class="tier-card"
-        :class="[opt.feasible ? 'ok' : 'bad', { selected: store.priority === opt.priority }]"
+        :class="[opt.tone, { selected: store.priority === opt.priority }]"
         :style="{ borderLeftColor: TIER_COLORS[opt.priority] }"
         :title="opt.title"
         @click="choose(opt.priority)"
@@ -14,7 +14,7 @@
         @mouseleave="store.hoveredTier = null"
       >
         <span class="card-tier">{{ PRIORITY_LABELS[opt.priority] ?? opt.priority }}</span>
-        <span class="card-verdict">{{ opt.feasible ? '可飞' : '不可飞' }}</span>
+        <span class="card-verdict">{{ opt.conclusion }}</span>
         <span class="card-metric">{{ opt.routeKm ?? '—' }}<i v-if="opt.routeKm"> km</i></span>
         <span class="card-metric">绕行 {{ opt.detour ?? '—' }}</span>
         <span class="card-metric">{{ opt.level || '—' }}</span>
@@ -28,23 +28,37 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { store, PRIORITY_LABELS, TIER_COLORS } from '../store';
+import { store, FEAS_REASON_TEXT, PRIORITY_LABELS, TIER_COLORS, verdictTone } from '../store';
 import { activateRouteTier } from '../store';
+import type { FeasibilityResult } from '../store';
 
 const meta = computed(() => store.routeOptions?.meta ?? null);
+
+/**
+ * 悬停提示按结论四态各说各的话：三档只差湍流软惩罚倍率，越保守的档越容易
+ * 撞上绕行预算或迭代上限，把这两种也写成「不可飞」正好把对比读反。
+ */
+const tipFor = (r: FeasibilityResult) => {
+  const label = PRIORITY_LABELS[r.priority] ?? r.priority;
+  const d = r.distance;
+  if (r.feasible) return `${label}：飞行 ${(d.flight_time_h ?? 0).toFixed(2)} h`;
+  if (r.verdict === 'over_budget') {
+    return `${label}：存在安全航线，绕行 ${d.detour_ratio}× 超出本档上限 ${d.time_cost_h.limit_ratio}×`;
+  }
+  return `${label}：${FEAS_REASON_TEXT[r.reason ?? ''] ?? r.conclusion}`;
+};
 
 const cards = computed(() =>
   (store.routeOptions?.results ?? []).map(r => {
     const d = r.distance;
     return {
       priority: r.priority,
-      feasible: r.feasible,
+      tone: verdictTone(r.verdict),
+      conclusion: r.conclusion,
       routeKm: d.applicable ? d.route_km : null,
       detour: d.applicable && d.detour_ratio != null ? `${d.detour_ratio}×` : null,
       level: r.risk?.overall ?? null,
-      title: r.feasible
-        ? `${PRIORITY_LABELS[r.priority] ?? r.priority}：飞行 ${(d.flight_time_h ?? 0).toFixed(2)} h`
-        : `不可飞：${r.reason ?? ''}`,
+      title: tipFor(r),
     };
   })
 );
@@ -83,6 +97,9 @@ const choose = (priority: string) => {
 
 .tier-card.ok .card-verdict { color: #4ade80; }
 .tier-card.bad .card-verdict { color: #f87171; }
+/* 超预算=黄（线存在，只是贵），未算出=灰（还没结论）：都不是红色那种「飞不了」 */
+.tier-card.warn .card-verdict { color: #fbbf24; }
+.tier-card.unknown .card-verdict { color: #94a3b8; }
 
 .tier-card:hover {
   background: rgba(255, 255, 255, 0.09);

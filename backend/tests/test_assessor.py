@@ -16,6 +16,7 @@ from config import settings  # noqa: E402
 FEAS_PAYLOAD = {
     "feasible": True,
     "conclusion": "可飞",
+    "verdict": "feasible",
     "reason": None,
     "priority": "normal",
     "distance": {
@@ -47,6 +48,7 @@ FEAS_PAYLOAD = {
 BLOCKED_PAYLOAD = {
     "feasible": False,
     "conclusion": "不可飞",
+    "verdict": "infeasible",
     "reason": "no_safe_path",
     "priority": "urgent",
     "distance": {"straight_km": 220.0, "route_km": None, "detour_ratio": None,
@@ -61,6 +63,22 @@ BLOCKED_PAYLOAD = {
                                    "distance_km": 20.0}]},
     "meta": {},
 }
+
+# 「有安全航线但超预算」与「没算完」：这两档的报告不得写成「飞不了」
+OVER_BUDGET_PAYLOAD = dict(
+    BLOCKED_PAYLOAD,
+    conclusion="超预算", verdict="over_budget", reason="detour_exceeds_threshold",
+    blocking={"regions": []},
+    distance={"straight_km": 312.11, "route_km": 640.0, "detour_ratio": 2.05,
+              "flight_time_h": 10.7,
+              "time_cost_h": {"applicable": True, "extra": 5.4, "limit": 2.6,
+                              "limit_ratio": 1.5, "exceeded": True}},
+)
+UNDETERMINED_PAYLOAD = dict(
+    BLOCKED_PAYLOAD,
+    conclusion="未算出", verdict="undetermined", reason="search_iteration_limit",
+    blocking={"regions": []}, risk=None,
+)
 
 TW_PAYLOAD = {
     "date": "2022-07-01",
@@ -156,6 +174,18 @@ class TestRuleReport(unittest.TestCase):
         self.assertIn("不可飞", text)
         self.assertIn("航路被高强度湍流区封死", text)
         self.assertIn("替代终点", text)
+
+    def test_over_budget_report_does_not_say_unflyable(self):
+        """绕行超阈是成本不达标，报告印成「不可飞」会让三档对比被读反。"""
+        text = assessor.render_rule_report(assessor.build_feasibility_context(OVER_BUDGET_PAYLOAD))
+        self.assertIn("「超预算」", text)
+        self.assertNotIn("「不可飞」", text)
+        self.assertIn("安全航线本身已经找到", text)
+
+    def test_undetermined_report_states_search_did_not_converge(self):
+        text = assessor.render_rule_report(assessor.build_feasibility_context(UNDETERMINED_PAYLOAD))
+        self.assertIn("「未算出」", text)
+        self.assertIn("未收敛", text)
 
     def test_time_window_report_mentions_timezone_and_forecast(self):
         text = assessor.render_rule_report(assessor.build_time_window_context(TW_PAYLOAD))

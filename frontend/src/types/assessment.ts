@@ -76,9 +76,13 @@ export interface TimeWindowRoute {
   /** 粗排（固定走廊查表）看到的风险档 */
   scan_level: RiskLevel | '';
   scan_max_tke: number | null;
-  /** 该时刻真实航线的整体风险档；不可飞时为空。后端字段名是 planned_level（与 scan_level 成对） */
+  /** 该时刻真实航线的整体风险档；没得出航线时为空。后端字段名是 planned_level（与 scan_level 成对） */
   planned_level: string;
   feasible: boolean;
+  /** 结论四态（与功能一同源）：这里只会出现 infeasible / undetermined */
+  verdict: string;
+  /** 结论中文：未算出 ≠ 不可飞，风险档那一格用它占位 */
+  conclusion: string;
   reason: string | null;
   path: { lat: number; lon: number }[];
   total_distance: number | null;
@@ -117,7 +121,7 @@ export interface TimeWindowResult {
   };
 }
 
-/** 功能二「不可飞原因」文案映射 */
+/** 功能二「无安全窗口」原因文案映射（顶层 reason，与候选行的规划失败原因不是一套码） */
 export const TIME_WINDOW_REASONS: Record<string, string> = {
   no_safe_slot: '当日及推演期内均无安全时段',
   route_permanently_blocked: '航线被地形或数据缺失区永久封死',

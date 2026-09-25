@@ -63,9 +63,28 @@ export interface CoverageBox {
   lon_max: number;
 }
 
+/**
+ * 结论四态。feasible=False 不等于「飞不了」：
+ * over_budget 是「有安全航线、只是超出本档时间预算」，
+ * undetermined 是「A* 没搜完，有没有航线还不知道」。
+ * 文案取后端的 conclusion，这里只管选色调与图标。
+ */
+export type Verdict = 'feasible' | 'infeasible' | 'over_budget' | 'undetermined';
+
+export const VERDICT_TONES: Record<Verdict, 'ok' | 'bad' | 'warn' | 'unknown'> = {
+  feasible: 'ok',
+  infeasible: 'bad',
+  over_budget: 'warn',
+  undetermined: 'unknown',
+};
+
+export const verdictTone = (verdict: Verdict | undefined | null) =>
+  VERDICT_TONES[verdict as Verdict] ?? 'bad';
+
 export interface FeasibilityResult {
   feasible: boolean;
   conclusion: string;
+  verdict: Verdict;
   reason: string | null;
   priority: string;
   detour_limit: number;
@@ -183,8 +202,9 @@ export interface StoreState {
   planNotice: PlanNotice | null;         // 路径规划失败弹窗（null = 不显示）
 }
 
-/** 规划失败原因：后端 reason 直接透传，request_failed 表示请求本身没走通 */
-export type PlanNoticeReason = 'blocked' | 'no_data' | 'iteration_limit' | 'request_failed';
+/** 规划弹窗种类：由后端 reason 映射而来，request_failed 表示请求本身没走通 */
+export type PlanNoticeReason =
+  | 'blocked' | 'over_budget' | 'no_data' | 'iteration_limit' | 'request_failed';
 
 export interface PlanNotice {
   reason: PlanNoticeReason;
@@ -283,7 +303,8 @@ export function activateRouteTier(priority: string): boolean {
     alt: n > 1 ? startAlt + (endAlt - startAlt) * (i / (n - 1)) : startAlt,
   }));
 
-  // 不可飞时把阻塞区摊开：这是旧单档评估的行为，合并后不能丢
+  // 未得出可飞结论时把阻塞区摊开：这是旧单档评估的行为，合并后不能丢
+  //（超预算档后端不产阻塞区，所以这里实际只会摊出「不可飞 / 未算出」的）
   if (!hit.feasible && hit.blocking?.regions?.length) {
     store.highlightRegions = hit.blocking.regions;
     if (!store.overlays.includes('tke')) store.overlays.push('tke');
@@ -323,12 +344,21 @@ export async function fetchCoverage(): Promise<void> {
   }
 }
 
-/** 评估接口的不可飞原因 -> 弹窗文案键 */
+/** 评估接口的「未得出可飞结论」原因码 -> 弹窗文案键 */
 const FEAS_REASON_TO_NOTICE: Record<string, PlanNoticeReason> = {
   no_safe_path: 'blocked',
-  detour_exceeds_threshold: 'blocked',
+  // 超预算与「没算完」各有自己的弹窗：说成「被封死」就是另一种误导了
+  detour_exceeds_threshold: 'over_budget',
   data_coverage_insufficient: 'no_data',
   search_iteration_limit: 'iteration_limit',
+};
+
+/** 评估接口的 reason 码 -> 中文说明（结论卡与三档卡片共用一份） */
+export const FEAS_REASON_TEXT: Record<string, string> = {
+  no_safe_path: '航路被高强度湍流区封死，无法规划安全航线',
+  detour_exceeds_threshold: '存在安全航线，但绕行成本超出本档时间预算',
+  data_coverage_insufficient: '起降点超出气象数据覆盖范围',
+  search_iteration_limit: '搜索未收敛，是否存在安全航线尚未确定',
 };
 
 /**
@@ -370,8 +400,8 @@ export async function runPlan(): Promise<void> {
     if (results.length === 0) throw new Error('规划失败');
     store.routeOptions = { results, active: result.active, meta: result.meta };
 
-    // 三档都不可飞也要把详情摊开（阻塞区、替代起降点就在里面），
-    // 所以照样 activate 一档，只是额外补一个失败弹窗。
+    // 三档都没得出「可飞」也要把详情摊开（阻塞区、替代起降点就在里面），
+    // 所以照样 activate 一档，只是额外补一个说明弹窗。
     const wanted = store.priority;
     const target = results.find(x => x.priority === wanted && x.feasible)
       ?? results.find(x => x.feasible)
