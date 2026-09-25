@@ -19,7 +19,7 @@ import time_window as tw
 from config import settings
 from planner import PlanResult
 from risk import LEVEL_LOW, LEVEL_MODERATE, LEVEL_HIGH, LEVEL_UNFLYABLE
-from schemas import Point
+from schemas import Point, TimeWindowResponse
 
 # 合成数据用的三档湍流量。写死 0.1/0.5/1.5 那套数字属于旧的「平均风动能」刻度，
 # 阈值换到脉动方差口径后会整体失配，因此改成从 settings 推导。
@@ -565,7 +565,7 @@ class TestTopKRoutes(TWStubbed):
                            distances=[200.0, 250.0, 300.0])
         best = res['routes'][0]
         self.assertEqual(best['takeoff'], '2022-07-01T04:00')
-        self.assertEqual(best['overall_level'], LEVEL_LOW)
+        self.assertEqual(best['planned_level'], LEVEL_LOW)
         self.assertEqual(res['recommended_final']['takeoff'], '2022-07-01T04:00')
         self.assertEqual(res['recommended_final']['level'], LEVEL_LOW)
         self.assertEqual(res['recommended']['takeoff'], '2022-07-01T00:00',
@@ -603,7 +603,7 @@ class TestTopKRoutes(TWStubbed):
                            distances=[200.0, 200.0, 200.0])
         # 三条给同样的档位（具体是中风险还是被 moderate_ratio 抬成高风险不重要，
         # 重要的是它们相等），这样比较的才只能是「沿程最坏点」。
-        self.assertEqual(len({r['overall_level'] for r in res['routes']}), 1)
+        self.assertEqual(len({r['planned_level'] for r in res['routes']}), 1)
         self.assertEqual(res['routes'][0]['takeoff'], '2022-07-01T04:00')
 
     def test_infeasible_candidate_stays_visible_and_ranks_last(self):
@@ -614,6 +614,24 @@ class TestTopKRoutes(TWStubbed):
         self.assertFalse(bad['feasible'])
         self.assertIsNotNone(bad['reason'])
         self.assertEqual(res['routes'][-1]['takeoff'], '2022-07-01T04:00')
+
+    def test_response_model_carries_the_planned_level(self):
+        """字典 → response_model → JSON 这一整条链要钉住。
+
+        2026-09-25 真实接口探针发现：编排层给的是 overall_level，而
+        TimeWindowRoute 声明的是 planned_level，pydantic 把未知键静默丢掉，
+        于是每条候选的风险等级在浏览器里是空的 —— 只测编排层字典的单元测试看不见，
+        只在浏览器里点才看得见，而本机截不了图。
+        """
+        res = self._assess()
+        resp = TimeWindowResponse(**res)
+        dumped = resp.model_dump()
+        self.assertEqual(len(dumped['routes']), 3)
+        for r in dumped['routes']:
+            self.assertEqual(r['planned_level'], LEVEL_LOW,
+                             "细排等级必须活着到达前端")
+        self.assertIsNotNone(resp.recommended_final)
+        self.assertEqual(resp.recommended_final.level, LEVEL_LOW)
 
     def test_scan_field_is_injected_into_every_candidate(self):
         """C：Top-K 复用第一遍读好的扫描场，五元组的顺序不能错位。"""

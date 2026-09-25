@@ -86,14 +86,14 @@
         <div class="slot-list">
           <div v-for="(rt, idx) in routes" :key="rt.takeoff" class="slot-item">
             <span class="seg-dot"
-                  :style="{ backgroundColor: riskColor(rt.feasible ? rt.overall_level : '不可飞') }"></span>
+                  :style="{ backgroundColor: riskColor(rt.feasible ? rt.planned_level : '不可飞') }"></span>
             <span class="slot-time">
               {{ hhmm(rt.takeoff) }}
               <em v-if="idx === 0" class="route-flag">推荐</em>
             </span>
             <span class="slot-level"
-                  :style="{ color: riskColor(rt.feasible ? rt.overall_level : '不可飞') }">
-              {{ rt.feasible ? rt.overall_level : '不可飞' }}
+                  :style="{ color: riskColor(rt.feasible ? rt.planned_level : '不可飞') }">
+              {{ rt.feasible ? rt.planned_level : '不可飞' }}
             </span>
             <span class="seg-meta">{{ routeMeta(rt) }}</span>
             <button class="route-btn" :disabled="store.planLoading"

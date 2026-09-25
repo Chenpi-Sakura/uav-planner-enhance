@@ -76,8 +76,8 @@ export interface TimeWindowRoute {
   /** 粗排（固定走廊查表）看到的风险档 */
   scan_level: RiskLevel | '';
   scan_max_tke: number | null;
-  /** 该时刻真实航线的整体风险档；不可飞时为空 */
-  overall_level: string;
+  /** 该时刻真实航线的整体风险档；不可飞时为空。后端字段名是 planned_level（与 scan_level 成对） */
+  planned_level: string;
   feasible: boolean;
   reason: string | null;
   path: { lat: number; lon: number }[];

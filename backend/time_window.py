@@ -492,8 +492,16 @@ def rank_routes(routes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def _route_dict(r: Dict[str, Any]) -> Dict[str, Any]:
-    """输出给前端的航线字典：剥掉内部字段（takeoff_data）。"""
-    return {k: v for k, v in r.items() if k != "takeoff_data"}
+    """输出给前端的航线字典。
+
+    剥掉内部字段（takeoff_data），并把 overall_level 改名成 schemas 里的 planned_level：
+    功能一/风险模块统一叫 overall_level，功能二的响应要跟走廊级 scan_level 成对，
+    不在这一步对齐的话，pydantic 会把未知键丢掉、前端拿到的风险等级是空的。
+    """
+    out = {k: v for k, v in r.items() if k != "takeoff_data"}
+    if "overall_level" in out:
+        out["planned_level"] = out.pop("overall_level")
+    return out
 
 
 def assess_time_window(req, run_planner: bool = True) -> Dict[str, Any]:
