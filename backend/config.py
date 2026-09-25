@@ -138,7 +138,15 @@ class Settings(BaseModel):
     TW_MAX_BACKUP_WINDOWS: int = 3     # 最多返回的备用时段数
     TW_CURVE_STEP_MINUTES: int = 30    # 湍流曲线采样步长
     TW_CURVE_PAD_HOURS: int = 1        # 曲线评估域相对飞行时段的外扩小时数
-    TW_SLAB_CACHE_SIZE: int = 6        # 按天 slab 的 LRU 缓存条目上限
+    # slab LRU 的条目上限。6 曾经够用，但剖面改「逐点到达时刻取数」后
+    # 一次 get_meteorology_at_points 就要占 6 个键（u/v/w/tc/rh/qvapor），
+    # 起终点两次校验需要 12 个 —— 上限 6 等于第二次校验必然把第一次全逐出，
+    # 三档评估更是一次都命中不了。提到 12 让同一次请求内的复用真正发生。
+    TW_SLAB_CACHE_SIZE: int = 12
+    # 同时按字节封顶：功能二 8 天扫描的 u/v/w 每块约 20 MB，只数条数会失控。
+    TW_SLAB_CACHE_MAX_BYTES: int = 384 * 1024 * 1024
+    # A* 湍流场的缓存条数（一条约 5–13 MB）。三档共用同一条，跨日期/走廊切换留几格。
+    TW_GRID_CACHE_SIZE: int = 4
     TW_MAX_SCAN_SLOTS: int = 48        # 单日最多扫描槽位（防御异常步长）
 
     # 其他预警阈值（除湍流外的飞行提示）

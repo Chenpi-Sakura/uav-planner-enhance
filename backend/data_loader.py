@@ -47,6 +47,11 @@ class DataLoader:
         self._loaded = False
         # 功能二：按天 slab 的 LRU 缓存（键 = 变量+起始时刻+小时数+量化 bbox）
         self._slab_cache = OrderedDict()
+        self._slab_bytes = 0
+        # A* 用的「整块湍流场」缓存（键 = 时间+bbox）。三档规划是同一个键，
+        # 没有这层就要把同一块数据从 USB 盘上捞三遍。
+        self._grid_cache = OrderedDict()
+        self._axis_bounds_cache = None
 
     def load_data(self):
         u_path = os.path.join(settings.DATA_DIR, settings.U_FILE)
@@ -162,51 +167,78 @@ class DataLoader:
 
         return out
 
-    def get_meteorology_grid(self, min_lat: float, max_lat: float, min_lon: float, max_lon: float, date: str = '2022-07-01'):
+    def _axis_bounds(self):
+        """数据集 lat / lon / time 三轴的取值范围（进程内只算一次）。"""
+        if self._axis_bounds_cache is None:
+            la = np.asarray(self.ds_u.lat.values, dtype=float)
+            lo = np.asarray(self.ds_u.lon.values, dtype=float)
+            tv = np.asarray(self.ds_u.time.values, dtype='datetime64[ns]')
+            self._axis_bounds_cache = {
+                "lat": (float(la.min()), float(la.max())),
+                "lon": (float(lo.min()), float(lo.max())),
+                "time": (tv[0], tv[-1]),
+            }
+        return self._axis_bounds_cache
+
+    @staticmethod
+    def _empty_grid():
+        """覆盖不足时的返回值，必须是空数组而不是 None。
+
+        planner 靠 ``times.size == 0 / lats.size == 0`` 区分「日期或区域在数据之外
+        （no_data）」与「被湍流封死（blocked）」，返回 None 会把前者伪装成后者。
         """
-        Pre-fetch a 2D grid of meteorology data for fast A* lookup.
+        return (np.empty((0, 0, 0)), np.empty((0, 0, 0)),
+                np.empty((0,)), np.empty((0,)),
+                np.empty((0,), dtype='datetime64[ns]'))
+
+    def get_meteorology_grid(self, min_lat: float, max_lat: float, min_lon: float, max_lon: float, date: str = '2022-07-01'):
+        """A* 用的整块 TKE / EDR 场，时间轴 [date, date+30h] 逐小时。
+
+        帧数 = 24 + TURB_WINDOW_HALF_HOURS + 1：旧实现用 label 化
+        ``.sel(time=slice(t-6h, t+24h+6h))``（两端含），裁掉前 pad 后尾巴自然
+        多出 6 帧。这里刻意保持同一条时间轴，不给下游对帧数的隐含假设留破口；
+        A* 实际查到的时刻不会超过 date + 飞行时长。
+
+        取数走 read_slab 的 isel 路径（不再经 dask 的 .sel），并对同键结果做场级
+        缓存：三档规划的 bbox 只由起终点决定、date 也相同，是逐比特一样的三次读；
+        带途经点的航线原本每段各读一次，现在也收敛成一次。
         """
         if not self._loaded:
             self.load_data()
-            
+
         if self.ds_u is None:
             return None, None, None, None, None
-            
+
         target_time = np.datetime64(date) if 'T' in date else np.datetime64(f"{date}T08:00:00")
+        target_time = np.datetime64(target_time, 'ns')
+        frames = 24 + int(settings.TURB_WINDOW_HALF_HOURS) + 1
+        bbox = (float(min_lat), float(max_lat), float(min_lon), float(max_lon))
+
+        key = (str(target_time), round(bbox[0], 4), round(bbox[1], 4),
+               round(bbox[2], 4), round(bbox[3], 4))
+        cached = self._grid_cache.get(key)
+        if cached is not None:
+            self._grid_cache.move_to_end(key)
+            return cached
+
+        # 越界要显式判：read_slab 的 searchsorted 会把越界时刻静默钳到数据集
+        # 最后一帧，拿边界值冒充真实数值（同一个坑见 time_window.py:239 的注释）。
+        b = self._axis_bounds()
         end_time = target_time + np.timedelta64(24, 'h')
-        # 脉动量要扣窗口均值，因此前后各多读 half 小时；多读的部分只用于算窗口，
-        # 返回前按时间裁掉，保持与旧实现完全相同的帧数与时间轴。
-        half = np.timedelta64(int(settings.TURB_WINDOW_HALF_HOURS), 'h')
-        time_slice = slice(target_time - half, end_time + half)
+        if (bbox[0] > b['lat'][1] or bbox[1] < b['lat'][0]
+                or bbox[2] > b['lon'][1] or bbox[3] < b['lon'][0]
+                or target_time > b['time'][1] or end_time < b['time'][0]):
+            return self._empty_grid()
 
-        if self.ds_u.lat[0] > self.ds_u.lat[-1]:
-            lat_slice = slice(max_lat, min_lat)
-        else:
-            lat_slice = slice(min_lat, max_lat)
-        if self.ds_u.lon[0] > self.ds_u.lon[-1]:
-            lon_slice = slice(max_lon, min_lon)
-        else:
-            lon_slice = slice(min_lon, max_lon)
+        tke, edr, lats, lons, times = self.read_turbulence_field(target_time, frames, bbox)
+        if tke is None:
+            return self._empty_grid()
 
-        try:
-            u_grid = self.ds_u.u.sel(time=time_slice).sel(lev=500).sel(lat=lat_slice, lon=lon_slice).values
-            v_grid = self.ds_v.v.sel(time=time_slice).sel(lev=500).sel(lat=lat_slice, lon=lon_slice).values
-            w_grid = self.ds_w.w.sel(time=time_slice).sel(lev=500).sel(lat=lat_slice, lon=lon_slice).values
-            
-            lats = self.ds_u.lat.sel(lat=lat_slice).values
-            lons = self.ds_u.lon.sel(lon=lon_slice).values
-            times = self.ds_u.time.sel(time=time_slice).values
-            
-            tke_grid, edr_grid = turbulence_from_wind(u_grid, v_grid, w_grid)
-            keep = np.asarray(times, dtype='datetime64[ns]') >= np.datetime64(target_time, 'ns')
-            tke_grid, edr_grid, times = tke_grid[keep], edr_grid[keep], times[keep]
-            
-            return tke_grid, edr_grid, lats, lons, times
-        except Exception as e:
-            print(f"Error fetching meteorology grid: {e}")
-            import traceback
-            traceback.print_exc()
-            return None, None, None, None, None
+        result = (tke, edr, lats, lons, times)
+        self._grid_cache[key] = result
+        while len(self._grid_cache) > int(settings.TW_GRID_CACHE_SIZE):
+            self._grid_cache.popitem(last=False)
+        return result
 
     # ==================== 功能二：时间窗口规划的批量读取 ====================
 
@@ -295,10 +327,24 @@ class DataLoader:
 
         result = (np.asarray(data), np.asarray(lats), np.asarray(lons), np.asarray(times))
 
-        self._slab_cache[key] = result
-        while len(self._slab_cache) > int(settings.TW_SLAB_CACHE_SIZE):
-            self._slab_cache.popitem(last=False)
+        self._cache_slab(key, result)
         return result
+
+    def _cache_slab(self, key, result) -> None:
+        """把一块 slab 放进 LRU，按「条数 + 字节」双上限淘汰。
+
+        只按条数不够：功能二一次 8 天扫描的 u/v/w 每块约 20 MB，
+        而沿程取数（±6h 窗）的小块只有约 1 MB，同一个数字上限对两者差一个量级；
+        反过来只按字节会让一堆小块把键空间撑爆。两条都要。
+        """
+        self._slab_cache[key] = result
+        self._slab_bytes += int(result[0].nbytes)
+        max_items = int(settings.TW_SLAB_CACHE_SIZE)
+        max_bytes = int(settings.TW_SLAB_CACHE_MAX_BYTES)
+        while self._slab_cache and (len(self._slab_cache) > max_items
+                                    or self._slab_bytes > max_bytes):
+            _, dropped = self._slab_cache.popitem(last=False)
+            self._slab_bytes -= int(dropped[0].nbytes)
 
     def read_turbulence_field(self, start_time, hours: int, bbox):
         """读取 [start_time, +hours) 的 TKE / EDR 场。
