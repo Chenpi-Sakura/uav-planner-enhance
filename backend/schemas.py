@@ -256,10 +256,37 @@ class ForecastInfo(BaseModel):
     first_available_date: Optional[str] = None
 
 
+class TimeWindowRoute(BaseModel):
+    """Top-K 候选之一的**真实航线**：按该候选自己的起飞时刻规划，而不是沿用走廊。
+
+    两套风险字段并存是有意的：`scan_*` 是粗排（固定走廊查表）看到的，
+    `planned_*` 是该时刻真正该走的那条线看到的。两者可能给出相反结论
+    （绕得更远不等于风险更低），前端要并排摊开而不是只报一个。
+    """
+    takeoff: str                   # 北京时间 ISO，如 2022-07-02T05:00
+    window: List[str] = []         # 该候选所属时间窗口 [起, 止] HH:MM
+    scan_level: str = ""
+    scan_max_tke: Optional[float] = None
+    planned_level: str = ""
+    feasible: bool = False
+    reason: Optional[str] = None
+    path: List[Point] = []
+    total_distance: Optional[float] = None
+    detour_ratio: Optional[float] = None
+    flight_time_h: Optional[float] = None
+    max_tke: Optional[float] = None
+    max_edr: Optional[float] = None
+    moderate_ratio: Optional[float] = None
+    high_ratio: Optional[float] = None
+    priority: str = "normal"       # 功能二只按「平衡」档规划，切档回功能一
+
+
 class TimeWindowResponse(BaseModel):
     date: str
     has_window: bool
     recommended: Optional[RecommendedWindow] = None
+    recommended_final: Optional[RecommendedWindow] = None
+    routes: List[TimeWindowRoute] = []
     curve: TurbulenceCurve = TurbulenceCurve()
     backup_windows: List[TimeWindowWindow] = []
     warnings: List[Dict[str, Any]] = []

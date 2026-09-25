@@ -23,6 +23,51 @@ def _signature(path) -> tuple:
     return tuple((round(float(p.lat), 2), round(float(p.lon), 2)) for p in path)
 
 
+def summarize_plan(plan, straight_km: float, speed: float = 0.0) -> Dict[str, Any]:
+    """把一次规划压成公共形状：几何 + 里程 + 绕行比 + 沿程风险统计。
+
+    功能一（三档）与功能二（Top-K）都要这套汇总，各写一遍迟早会漂移。
+    风险统计直接取规划期逐节点的 tke/edr（A* 判定时看到的值），不重采样。
+    """
+    feasible = bool(plan.found and plan.path)
+    item: Dict[str, Any] = {
+        "feasible": feasible,
+        "reason": None if feasible else (plan.reason or "blocked"),
+        "path": [],
+        "total_distance": 0.0,
+        "detour_ratio": None,
+        "flight_time_h": None,
+        "max_tke": 0.0,
+        "max_edr": 0.0,
+        "overall_level": "",
+        "moderate_ratio": 0.0,
+        "high_ratio": 0.0,
+        "risk_engaged": False,
+        "n_nodes": 0,
+    }
+    if not feasible:
+        return item
+
+    samples = [{"lat": float(p.lat), "lon": float(p.lon), "tke": t, "edr": e}
+               for p, t, e in zip(plan.path, plan.tkes, plan.edrs)]
+    prof = build_risk_profile(samples)
+    km = float(plan.total_distance)
+    item.update({
+        "path": [{"lat": float(p.lat), "lon": float(p.lon)} for p in plan.path],
+        "total_distance": round(km, 1),
+        "detour_ratio": (round(km / straight_km, 4) if straight_km > 1e-6 else None),
+        "flight_time_h": (round(km / float(speed), 2) if speed else None),
+        "max_tke": prof.stats.max_tke,
+        "max_edr": prof.stats.max_edr,
+        "overall_level": prof.overall,
+        "moderate_ratio": prof.stats.moderate_ratio,
+        "high_ratio": prof.stats.high_ratio,
+        "risk_engaged": prof.stats.moderate_ratio > 0 or prof.stats.high_ratio > 0,
+        "n_nodes": len(plan.path),
+    })
+    return item
+
+
 def plan_route_options(req) -> Dict[str, Any]:
     """按 settings.PLAN_TIERS 逐档规划。req 需为 schemas.PlanRequest。"""
     straight_km = _haversine_km(float(req.start.lat), float(req.start.lon),
@@ -31,45 +76,14 @@ def plan_route_options(req) -> Dict[str, Any]:
     sigs: List[tuple] = []
 
     for tier in settings.PLAN_TIERS:
-        scale = tier_risk_scale(tier)
         plan = plan_path_ex(req.model_copy(update={"priority": tier}))
         item: Dict[str, Any] = {
             "priority": tier,
             "label": TIER_LABELS.get(tier, tier),
-            "risk_scale": scale,
-            "feasible": bool(plan.found and plan.path),
-            "reason": None if (plan.found and plan.path) else (plan.reason or "blocked"),
-            "path": [],
-            "total_distance": 0.0,
-            "detour_ratio": None,
-            "max_tke": 0.0,
-            "max_edr": 0.0,
-            "overall_level": "",
-            "moderate_ratio": 0.0,
-            "high_ratio": 0.0,
-            "risk_engaged": False,
-            "n_nodes": 0,
+            "risk_scale": tier_risk_scale(tier),
+            **summarize_plan(plan, straight_km),
         }
         if item["feasible"]:
-            samples = [
-                {"lat": float(p.lat), "lon": float(p.lon),
-                 "tke": t, "edr": e}
-                for p, t, e in zip(plan.path, plan.tkes, plan.edrs)
-            ]
-            prof = build_risk_profile(samples)
-            item.update({
-                "path": [{"lat": float(p.lat), "lon": float(p.lon)} for p in plan.path],
-                "total_distance": round(float(plan.total_distance), 1),
-                "detour_ratio": (round(float(plan.total_distance) / straight_km, 4)
-                                 if straight_km > 1e-6 else None),
-                "max_tke": prof.stats.max_tke,
-                "max_edr": prof.stats.max_edr,
-                "overall_level": prof.overall,
-                "moderate_ratio": prof.stats.moderate_ratio,
-                "high_ratio": prof.stats.high_ratio,
-                "risk_engaged": prof.stats.moderate_ratio > 0 or prof.stats.high_ratio > 0,
-                "n_nodes": len(plan.path),
-            })
             sigs.append(_signature(plan.path))
         routes.append(item)
 

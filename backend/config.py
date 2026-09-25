@@ -136,6 +136,10 @@ class Settings(BaseModel):
     TW_FORECAST_DAYS: int = 7          # 当日无窗口时向前推演天数
     TW_SAMPLE_STEP_DEG: float = 0.05   # 沿路径采样步长（与气象网格分辨率对齐）
     TW_MAX_BACKUP_WINDOWS: int = 3     # 最多返回的备用时段数
+    # Top-K 两遍：粗筛之后，取「推荐 + 备用时段」里前 K 个候选时刻，各按【自身时刻】
+    # 规划一条真实航线再重排推荐（backlog B10）。取 4 = 推荐 1 + 备用 3，
+    # 正好覆盖现有全部候选，不会出现「某条备用时段配不到航线」。
+    TW_TOP_K_ROUTES: int = 4
     TW_CURVE_STEP_MINUTES: int = 30    # 湍流曲线采样步长
     TW_CURVE_PAD_HOURS: int = 1        # 曲线评估域相对飞行时段的外扩小时数
     # slab LRU 的条目上限。6 曾经够用，但剖面改「逐点到达时刻取数」后

@@ -22,6 +22,7 @@
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Tuple
 import math
+import time
 
 import numpy as np
 
@@ -30,6 +31,7 @@ import timebase
 from data_loader import data_loader
 from planner import plan_path_ex, PlanResult, _haversine_km
 from risk import classify_point, LEVEL_LOW, LEVEL_UNFLYABLE
+from route_options import summarize_plan
 import geo
 
 # 不可飞行原因
@@ -380,6 +382,114 @@ def build_curve(tke: np.ndarray, edr: np.ndarray, times: np.ndarray,
 
 # ==================== 编排层 ====================
 
+def _user_pair(data_time) -> Tuple[str, str]:
+    """数据时刻（UTC 标签）-> (北京日期, 北京时刻)。
+
+    PlanRequest 的 date / start_time 是北京时间口径，而候选起飞时刻来自数据时间轴，
+    跨午夜时必须连日期一起换 —— 只换时刻会让整条航线偏 8 小时。
+    """
+    s = str(np.datetime64(to_user_time(data_time), 'm'))     # '2022-07-02T05:00'
+    return s[:10], s[11:16]
+
+
+def _plan_one_candidate(req, slot, straight_km) -> Dict[str, Any]:
+    """按候选自己的起飞时刻规划一条真实航线（功能二 B10 的第二遍）。
+
+    只按「平衡」档规划：Top-K 已经乘过一次成本，再乘三档不值；
+    切档回功能一，那里有完整的三档评估。
+    """
+    from schemas import PlanRequest
+    date, hhmm = _user_pair(slot.data_time)
+    plan = plan_path_ex(PlanRequest(
+        start=req.start, end=req.end, waypoints=req.waypoints or [],
+        date=date, start_time=hhmm, speed=req.speed,
+        tke_threshold=req.tke_threshold, edr_threshold=req.edr_threshold,
+        priority=settings.DEFAULT_PRIORITY,
+    ))
+    return summarize_plan(plan, straight_km, float(req.speed or 0.0))
+
+
+def _top_k_candidates(slots: List[SlotResult], recommended: Window,
+                      backups: List[Window], k: int) -> List[Tuple[Window, SlotResult]]:
+    """第二遍要规划的候选：推荐窗口 + 备用时段，各取其窗口内风险最优的槽位。
+
+    全天都安全时这些会合并成一整个窗口，Top-K 就只剩 1 条候选 —— 而用户问的恰恰是
+    「我要 14:00 起飞，那条线长什么样」。所以候选不足 K 时，在推荐窗口内再均匀取几个
+    起飞时刻补齐：它们同属一个安全窗口，区别只是给用户多条可以照着飞的线。
+    """
+    out: List[Tuple[Window, SlotResult]] = []
+    taken = set()
+    for win in [recommended] + list(backups):
+        if len(out) >= k:
+            break
+        out.append((win, slots[win.best_slot]))
+        taken.add(win.best_slot)
+
+    if len(out) < k:
+        pool = [i for i in range(recommended.start_index, recommended.end_index + 1)
+                if i not in taken]
+        need = k - len(out)
+        if pool:
+            step = max(1, len(pool) // need)
+            for i in pool[::step][:need]:
+                out.append((recommended, slots[i]))
+    return out
+
+
+def plan_top_k_routes(req, slots: List[SlotResult], windows: List[Window],
+                      recommended: Window, backups: List[Window],
+                      straight_km: float) -> List[Dict[str, Any]]:
+    """对 Top-K 候选各按【自身起飞时刻】规划一条航线，并做第二遍（细）排序。
+
+    第一遍是「一条固定走廊 × 24 个槽位」的查表，快但带时刻偏置：
+    在 08:00 的路 上评 21:00 安不安全。第二遍只给进了 Top-K 的少数候选补上
+    它们各自该走的那条线，于是推荐依据从「走廊级 max_tke」换成「真实航线」。
+
+    不可飞的候选照样留在结果里（带 reason）—— 悄悄消失会让人以为
+    「那条备用时段没风险，只是没排上」。
+    """
+    k = max(1, int(settings.TW_TOP_K_ROUTES))
+    routes: List[Dict[str, Any]] = []
+    for win, slot in _top_k_candidates(slots, recommended, backups, k):
+        summary = _plan_one_candidate(req, slot, straight_km)
+        routes.append({
+            **summary,
+            "takeoff": str(to_user_time(slot.data_time))[:16],
+            "takeoff_data": slot.data_time,
+            "window": [win.start_label, win.end_label],
+            "scan_level": slot.level,
+            "scan_max_tke": slot.max_tke,
+            "priority": settings.DEFAULT_PRIORITY,
+        })
+    return rank_routes(routes)
+
+
+def rank_routes(routes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """细排：可飞 > 整体风险档 > 沿程最坏点 > 里程 > 起飞时刻。
+
+    刻意不把「风险」与「里程」混成一个加权键 —— backlog B1 留档第 2 条：
+    绕得更远的线风险可能更高，混排会产出「推荐那条反而更危险」的结论。
+
+    「沿程最坏点」必须排在「里程」前面：一条走廊全天平静的日子里四条候选线
+    几何完全相同、里程也一样，此时若直接比起飞时刻，冠军会因为时钟而跳到半夜，
+    把走廊级那个更有信息量的信号（谁的 TKE 峰值更低）白白丢掉。
+    """
+    def key(r: Dict[str, Any]):
+        km = r["total_distance"] if r["feasible"] else float('inf')
+        peak = r["max_tke"] if r.get("max_tke") is not None else float('inf')
+        return (0 if r["feasible"] else 1,
+                _level_rank(r.get("overall_level") or ""),
+                peak,
+                km,
+                r["takeoff"])
+    return sorted(routes, key=key)
+
+
+def _route_dict(r: Dict[str, Any]) -> Dict[str, Any]:
+    """输出给前端的航线字典：剥掉内部字段（takeoff_data）。"""
+    return {k: v for k, v in r.items() if k != "takeoff_data"}
+
+
 def assess_time_window(req, run_planner: bool = True) -> Dict[str, Any]:
     """执行功能二评估。req 需为 schemas.TimeWindowRequest。"""
     speed = float(req.speed or 60.0)
@@ -478,19 +588,32 @@ def assess_time_window(req, run_planner: bool = True) -> Dict[str, Any]:
         # ---- 情况一：当日存在安全时间窗口 ----
         rec = slots[recommended.best_slot]
         takeoff_data = rec.data_time
-        landing_data = takeoff_data + np.timedelta64(int(round(flight_time_h * 3600)), 's')
+        backups = rank_backup_windows(windows, recommended)
+        meta["window_count"] = len(windows)
+
+        # 第二遍：Top-K 候选各按自身起飞时刻规划真实航线，再按真实航线重排。
+        # 曲线与预警跟着【细排冠军】走 —— 跟着粗排结果算，就会出现
+        # 「推荐 09:00、曲线画的却是 08:00 那条走廊」。
+        straight_km = _haversine_km(start[0], start[1], end[0], end[1])
+        t_k = time.perf_counter()
+        routes = plan_top_k_routes(req, slots, windows, recommended, backups, straight_km)
+        meta["top_k_planned"] = len(routes)
+        meta["top_k_cost_ms"] = int((time.perf_counter() - t_k) * 1000)
+        meta["route_priority"] = settings.DEFAULT_PRIORITY
+
+        best = routes[0]
+        best_takeoff = best["takeoff_data"]
+        best_flight_h = float(best.get("flight_time_h") or flight_time_h)
+        landing_data = best_takeoff + np.timedelta64(int(round(best_flight_h * 3600)), 's')
 
         pad = np.timedelta64(int(settings.TW_CURVE_PAD_HOURS), 'h')
         curve = build_curve(
             tke, edr, slab_times, lats, lons, slab_lats, slab_lons,
-            max(takeoff_data - pad, np.datetime64(slab_times[0])),
+            max(best_takeoff - pad, np.datetime64(slab_times[0])),
             min(landing_data + pad, np.datetime64(slab_times[-1])),
             int(settings.TW_CURVE_STEP_MINUTES),
         )
-        warnings = _warnings(lats, lons, takeoff_data, landing_data, bbox)
-
-        backups = rank_backup_windows(windows, recommended)
-        meta["window_count"] = len(windows)
+        warnings = _warnings(lats, lons, best_takeoff, landing_data, bbox)
 
         return {
             "date": req.date,
@@ -498,11 +621,21 @@ def assess_time_window(req, run_planner: bool = True) -> Dict[str, Any]:
             "recommended": {
                 "takeoff": str(to_user_time(takeoff_data))[:16],
                 "window": [recommended.start_label, recommended.end_label],
-                "landing": str(to_user_time(landing_data))[:16],
+                "landing": str(to_user_time(
+                    takeoff_data + np.timedelta64(int(round(flight_time_h * 3600)), 's')))[:16],
                 "level": rec.level,
                 "max_tke": rec.max_tke,
                 "max_edr": rec.max_edr,
             },
+            "recommended_final": {
+                "takeoff": best["takeoff"],
+                "window": best["window"],
+                "landing": str(to_user_time(landing_data))[:16],
+                "level": best.get("overall_level") or LEVEL_UNFLYABLE,
+                "max_tke": best.get("max_tke"),
+                "max_edr": best.get("max_edr"),
+            },
+            "routes": [_route_dict(r) for r in routes],
             "curve": curve,
             "backup_windows": [_window_dict(w) for w in backups],
             "warnings": warnings,

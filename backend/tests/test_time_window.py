@@ -17,7 +17,9 @@ import numpy as np
 import meteorology
 import time_window as tw
 from config import settings
+from planner import PlanResult
 from risk import LEVEL_LOW, LEVEL_MODERATE, LEVEL_HIGH, LEVEL_UNFLYABLE
+from schemas import Point
 
 # 合成数据用的三档湍流量。写死 0.1/0.5/1.5 那套数字属于旧的「平均风动能」刻度，
 # 阈值换到脉动方差口径后会整体失配，因此改成从 settings 推导。
@@ -264,13 +266,16 @@ class TestGeometryBlocked(unittest.TestCase):
         slons = np.array([lons[0], lons[1], lons[2]])
         self.assertFalse(tw.geometry_blocked(tke, edr, times, lats, lons, slats, slons))
 
-class TestAssessTimeWindow(unittest.TestCase):
-    """编排层：用替换掉 data_loader / planner 的桩函数验证分支。"""
+class TWStubbed(unittest.TestCase):
+    """公共替身：既不碰 NetCDF 也不跑真 A*，只验编排层的分支与字段。"""
 
     class _Req:
         def __init__(self, **kw):
-            self.start = type('P', (), {'lat': 29.0, 'lon': 91.0})()
-            self.end = type('P', (), {'lat': 29.1, 'lon': 91.2})()
+            # 必须是真的 schemas.Point：Top-K 会拿它构造 PlanRequest，
+            # 用鸭子类型的替身会在 pydantic 校验上炸 —— 而 _geometry 的
+            # 那层 except Exception 会把它伪装成「直线兜底」悄悄过去。
+            self.start = Point(lat=29.0, lon=91.0)
+            self.end = Point(lat=29.1, lon=91.2)
             self.waypoints = []
             self.date = '2022-07-01'
             self.start_time = '08:00'
@@ -285,14 +290,51 @@ class TestAssessTimeWindow(unittest.TestCase):
         self._orig_geom = tw._geometry
         self._orig_cov = tw.data_loader.check_coverage
         self._orig_warn = tw._warnings
+        self._orig_plan = tw.plan_path_ex
 
     def tearDown(self):
         tw._load_turbulence = self._orig_load
         tw._geometry = self._orig_geom
         tw.data_loader.check_coverage = self._orig_cov
         tw._warnings = self._orig_warn
+        tw.plan_path_ex = self._orig_plan
 
-    def _install(self, tke_by_hour, fallback=False, stub_warnings=True):
+    def _stub_plans(self, tke_values=None, distances=None, found=None):
+        """把 Top-K 用的规划换成桩：记录每个候选收到的 date/start_time，返回合成航线。
+
+        三个参数都可以给标量或列表（列表按调用顺序取，超出部分沿用最后一项），
+        这样能人为制造「粗排与细排结论相反」的场景来钉排序口径。
+        """
+        self.plan_requests = []
+        calls = {'i': 0}
+
+        def pick(spec, default):
+            if spec is None:
+                return default
+            i = min(calls['i'], len(spec) - 1) if isinstance(spec, (list, tuple)) else 0
+            return spec[i] if isinstance(spec, (list, tuple)) else spec
+
+        def fake_plan(plan_req):
+            self.plan_requests.append((plan_req.date, plan_req.start_time,
+                                       plan_req.priority))
+            tke = float(pick(tke_values, SAFE_TKE))
+            km = float(pick(distances, 200.0))
+            ok = bool(pick(found, True))
+            path = ([Point(lat=29.0, lon=91.0), Point(lat=29.1, lon=91.2)] if ok else [])
+            n = max(1, len(path))
+            result = PlanResult(
+                path=path, total_distance=km if ok else 0.0, total_grid_cost=0.0,
+                found=ok, reason=None if ok else 'blocked',
+                times=[np.datetime64('2022-07-01T00:00')] * n,
+                tkes=[tke] * n, edrs=[float(meteorology.edr_from_tke(tke))] * n,
+                waypoints_reached=[1] if ok else [], segment_results=[],
+            )
+            calls['i'] += 1
+            return result
+
+        tw.plan_path_ex = fake_plan
+
+    def _install(self, tke_by_hour, fallback=False, stub_warnings=True, plan=None):
         """安装桩函数。
 
         注意：合成数据的 time 轴必须以「请求的数据起始时刻」为基准，
@@ -312,6 +354,12 @@ class TestAssessTimeWindow(unittest.TestCase):
         if stub_warnings:
             # 预警会读真实数据文件，单元测试里直接桩掉
             tw._warnings = lambda *a, **k: []
+        # Top-K 会真的去规划，桩掉免得碰 NetCDF / A*
+        self._stub_plans(**(plan or {}))
+
+
+class TestAssessTimeWindow(TWStubbed):
+    """编排层：用替换掉 data_loader / planner 的桩函数验证分支。"""
 
     def test_has_window_branch(self):
         self._install([SAFE_TKE] * 24 * 4)
@@ -456,6 +504,114 @@ class TestWarningsGraceful(unittest.TestCase):
             self.assertEqual(out, [])
         finally:
             twm.data_loader.read_slab = orig
+
+
+class TestTopKRoutes(TWStubbed):
+    """B10：粗筛之后，Top-K 候选各按【自身起飞时刻】规划真实航线，再按真实航线重排。
+
+    合成场景给出三个互不相邻的安全窗口（北京时 00:00 / 02:00 / 04:00），
+    于是「粗排冠军」与「细排冠军」可以被人为拧反 —— 这正是排序口径要钉的地方。
+    """
+
+    PATTERN = ([SAFE_TKE, UNSAFE_TKE, MODERATE_TKE, UNSAFE_TKE, SAFE_TKE]
+               + [UNSAFE_TKE] * 19)
+
+    def _assess(self, **plan):
+        self._install(self.PATTERN, plan=plan)
+        return tw.assess_time_window(self._Req())
+
+    def test_three_windows_give_three_candidates(self):
+        res = self._assess()
+        self.assertEqual(len(res['backup_windows']), 2)
+        self.assertEqual(len(res['routes']), 3)
+        self.assertEqual(len(self.plan_requests), 3)
+        self.assertEqual(res['meta']['top_k_planned'], 3)
+
+    def test_each_candidate_uses_its_own_takeoff_in_beijing_time(self):
+        """规划请求里的时刻必须是【北京时间口径的该候选自身起飞时刻】。
+
+        数据时间轴比北京早 8 小时，忘了换算就会去规划 16:00/18:00/20:00 三条线。
+        """
+        res = self._assess()
+        given = {f'{d}T{t}' for d, t, _ in self.plan_requests}
+        self.assertEqual(given, {'2022-07-01T00:00', '2022-07-01T02:00',
+                                 '2022-07-01T04:00'})
+        self.assertEqual(given, {r['takeoff'] for r in res['routes']})
+
+    def test_routes_only_plan_the_balance_tier(self):
+        self._assess()
+        self.assertEqual({p for _, _, p in self.plan_requests},
+                         {settings.DEFAULT_PRIORITY})
+
+    def test_k_caps_candidates_but_not_backup_slots(self):
+        saved = settings.TW_TOP_K_ROUTES
+        settings.TW_TOP_K_ROUTES = 2
+        try:
+            res = self._assess()
+        finally:
+            settings.TW_TOP_K_ROUTES = saved
+        self.assertEqual(len(res['routes']), 2)
+        self.assertEqual(len(self.plan_requests), 2)
+        self.assertEqual(len(res['backup_windows']), 2, "备用时段仍按粗排全给，不该被 K 砍掉")
+
+    def test_fine_rank_prefers_lower_risk_over_shorter_distance(self):
+        """粗排冠军规划出来是中风险 200 km，次候选是安全 250 km —— 必须选后者。
+
+        风险与里程不能混成一个加权键（backlog B1 留档第 2 条）。
+        """
+        res = self._assess(tke_values=[MODERATE_TKE, SAFE_TKE, MODERATE_TKE],
+                           distances=[200.0, 250.0, 300.0])
+        best = res['routes'][0]
+        self.assertEqual(best['takeoff'], '2022-07-01T04:00')
+        self.assertEqual(best['overall_level'], LEVEL_LOW)
+        self.assertEqual(res['recommended_final']['takeoff'], '2022-07-01T04:00')
+        self.assertEqual(res['recommended_final']['level'], LEVEL_LOW)
+        self.assertEqual(res['recommended']['takeoff'], '2022-07-01T00:00',
+                         "粗排结果原样保留，供前端展示「走廊级 vs 真实航线」的差异")
+
+    def test_curve_follows_the_final_recommendation(self):
+        res = self._assess(tke_values=[MODERATE_TKE, SAFE_TKE, MODERATE_TKE],
+                           distances=[200.0, 250.0, 300.0])
+        # 曲线从细排冠军起飞前 1 h 起算；若仍跟着粗排冠军走，起点会是 00:00
+        self.assertEqual(res['curve']['times'][0], '03:00')
+
+    def test_one_big_window_still_fills_k_candidates(self):
+        """全天安全会合并成一个窗口，Top-K 只剩 1 条 —— 必须在窗口内补点凑满。
+
+        否则 B10 的原始抱怨（「我要 14:00 起飞的那条线」）在最常见的场景里没被解决。
+        """
+        self._install([SAFE_TKE] * 24)
+        res = tw.assess_time_window(self._Req())
+        self.assertEqual(len(res['backup_windows']), 0, "合成场景本就只有一个连续窗口")
+        self.assertEqual(len(res['routes']), int(settings.TW_TOP_K_ROUTES))
+        takeoffs = [r['takeoff'] for r in res['routes']]
+        self.assertEqual(len(set(takeoffs)), len(takeoffs), "补出来的时刻必须互不相同")
+        safe_iso = {'2022-07-01T' + s['time'] for s in res['slot_analysis'] if s['safe']}
+        self.assertLessEqual(set(takeoffs), safe_iso, "只能取扫描确认过安全的整点")
+        self.assertIn(res['recommended']['takeoff'], takeoffs, "粗排冠军不能被挤掉")
+
+    def test_equal_tier_and_distance_break_on_peak_tke_not_clock(self):
+        """档位与里程都一样时，要比沿程最坏点，而不是让时钟决定冠军。
+
+        候选顺序是 00:00 / 04:00 / 02:00，给它们的 TKE 峰值分别是 12 / 9 / 15.2，
+        三条都是中风险、里程写死一样 —— 冠军必须是 04:00 那条。
+        """
+        m = settings.TKE_RISK_MODERATE
+        res = self._assess(tke_values=[m * 1.5, m * 1.125, m * 1.9],
+                           distances=[200.0, 200.0, 200.0])
+        # 三条给同样的档位（具体是中风险还是被 moderate_ratio 抬成高风险不重要，
+        # 重要的是它们相等），这样比较的才只能是「沿程最坏点」。
+        self.assertEqual(len({r['overall_level'] for r in res['routes']}), 1)
+        self.assertEqual(res['routes'][0]['takeoff'], '2022-07-01T04:00')
+
+    def test_infeasible_candidate_stays_visible_and_ranks_last(self):
+        res = self._assess(found=[True, False, True], distances=[200.0, 200.0, 300.0])
+        by_takeoff = {r['takeoff']: r for r in res['routes']}
+        self.assertEqual(len(by_takeoff), 3, "不可飞的候选不能悄悄消失")
+        bad = by_takeoff['2022-07-01T04:00']
+        self.assertFalse(bad['feasible'])
+        self.assertIsNotNone(bad['reason'])
+        self.assertEqual(res['routes'][-1]['takeoff'], '2022-07-01T04:00')
 
 
 if __name__ == '__main__':
