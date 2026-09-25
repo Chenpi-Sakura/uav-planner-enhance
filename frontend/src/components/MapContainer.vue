@@ -7,7 +7,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { store, RISK_COLORS, TIER_COLORS, PRIORITY_LABELS, activateRouteTier } from '../store';
+import { store, RISK_COLORS, TIER_COLORS, PRIORITY_LABELS, activateRouteTier, fetchCoverage } from '../store';
 import { API_BASE } from '../config';
 
 const props = defineProps<{
@@ -21,6 +21,10 @@ let mockOverlaysLayer = L.layerGroup();
 let pathLayer = L.layerGroup(); // layer for the planned route line
 let blockLayer = L.layerGroup(); // layer for blocking turbulence regions
 let basesLayer = L.layerGroup(); // layer for city bases
+// 数据覆盖框单独一层：它要压在热图底下，否则框外的暗色会盖住航线与热图
+let coverageLayer = L.layerGroup();
+let altLayer = L.layerGroup();    // 替代起降点（后端 suggestions.alt_bases）
+let peakLayer = L.layerGroup();   // 沿程最危险点（risk.stats.worst_index）
 
 // Map Layers
 const layers: Record<string, L.TileLayer> = {
@@ -52,13 +56,23 @@ onMounted(() => {
 
   L.control.zoom({ position: 'topright' }).addTo(map);
 
+  // 覆盖框图层要落在底图之上、热图(overlayPane=400)之下，所以给它一个专用 pane
+  map.createPane('coveragePane');
+  const coveragePane = map.getPane('coveragePane');
+  if (coveragePane) coveragePane.style.zIndex = '350';
+
   currentLayer = layers[props.activeLayer];
   currentLayer.addTo(map);
+  coverageLayer.addTo(map);
   basesLayer.addTo(map); // Add bases layer
   markersLayer.addTo(map);
   mockOverlaysLayer.addTo(map);
   pathLayer.addTo(map);
   blockLayer.addTo(map);
+  altLayer.addTo(map);
+  peakLayer.addTo(map);
+  renderCoverageBox();
+  void fetchCoverage().then(renderCoverageBox);
 
   // Handle clicks for point selection
   map.on('click', (e: L.LeafletMouseEvent) => {
@@ -257,6 +271,140 @@ const renderBlockingRegions = () => {
   }
 };
 
+// ==================== 三个「后端早就算出来了、地图上一直没表达」的标注 ====================
+
+/** 全世界外环，和覆盖框组成带洞的多边形，用来把框外压暗 */
+const WORLD_RING: L.LatLngExpression[] = [[-90, -180], [-90, 180], [90, 180], [90, -180]];
+
+const degKm = (a: [number, number], b: [number, number]) => {
+  const midRad = ((a[0] + b[0]) / 2) * Math.PI / 180;
+  return Math.hypot((b[1] - a[1]) * Math.cos(midRad), b[0] - a[0]) * 111.0;
+};
+
+/**
+ * 数据覆盖框：框外压暗 + 边界虚线 + 角标。
+ *
+ * 存在的理由只有一条：热图在框外本来就是全透明，"这里没数据"和"这里很安全"
+ * 在屏幕上长得一模一样，用户会照着前者起飞。
+ */
+const renderCoverageBox = () => {
+  coverageLayer.clearLayers();
+  if (!map || !store.coverage) return;
+  const c = store.coverage;
+  const box: L.LatLngExpression[] = [
+    [c.lat_min, c.lon_min], [c.lat_min, c.lon_max],
+    [c.lat_max, c.lon_max], [c.lat_max, c.lon_min],
+  ];
+  L.polygon([WORLD_RING, box], {
+    pane: 'coveragePane',
+    color: 'transparent',
+    weight: 0,
+    fillColor: '#0b1220',
+    fillOpacity: 0.35,
+    fillRule: 'evenodd',
+    interactive: false,      // 别挡住取点点击
+  }).addTo(coverageLayer);
+  L.polygon(box, {
+    pane: 'coveragePane',
+    color: '#cbd5e1',
+    weight: 1.5,
+    opacity: 0.75,
+    dashArray: '6, 6',
+    fill: false,
+    interactive: false,
+  }).addTo(coverageLayer);
+  L.marker([c.lat_max, c.lon_min], {
+    interactive: false,
+    icon: L.divIcon({
+      className: 'coverage-marker',
+      html: '<div class="coverage-tag">气象数据覆盖范围</div>',
+      iconSize: [160, 18],
+      iconAnchor: [6, 22],
+    }),
+  }).addTo(coverageLayer);
+};
+
+/** 当前在地图上展示的那一档（悬停卡片时是悬停档，不是选中档） */
+const shownResult = () => {
+  const shown = store.hoveredTier ?? store.priority;
+  return store.routeOptions?.results.find(r => r.priority === shown) ?? store.feasibility;
+};
+
+/** 替代起降点：只在当前档不可飞、且后端确实给出替代点时画 */
+const renderAltBases = () => {
+  altLayer.clearLayers();
+  if (!map) return;
+  const feas = shownResult();
+  if (!feas || feas.feasible) return;
+  const bases = feas.suggestions?.alt_bases ?? [];
+
+  bases.forEach(b => {
+    const anchor = b.role === 'start' ? store.start : store.end;
+    const a: [number, number] = [Number(anchor.lat), Number(anchor.lng)];
+    const p: [number, number] = [Number(b.end.lat), Number(b.end.lon)];
+    if (!Number.isFinite(a[0]) || !Number.isFinite(a[1])) return;
+
+    // 虚线把"原来的点"和"挪到的点"连起来，方向一眼可读
+    L.polyline([a, p], {
+      color: '#e2e8f0', weight: 2, opacity: 0.7, dashArray: '2, 6', interactive: false,
+    }).addTo(altLayer);
+    L.circleMarker(p, {
+      color: '#e2e8f0', weight: 2, fillColor: RISK_COLORS[b.level] ?? '#94a3b8',
+      fillOpacity: 1, radius: 7,
+    }).addTo(altLayer).bindTooltip(
+      `${b.role_label} · ${b.level}<br>${b.description}<br>`
+      + `距原点 ${degKm(a, p).toFixed(0)} km · 按此起飞里程 ${b.distance_km} km`,
+      { direction: 'top', offset: [0, -10] }
+    );
+    L.marker(p, {
+      interactive: false,
+      icon: L.divIcon({
+        className: 'alt-marker',
+        html: `<div class="alt-tag">${b.role_label}</div>`,
+        iconSize: [92, 16],
+        iconAnchor: [46, -10],
+      }),
+    }).addTo(altLayer);
+  });
+};
+
+/** 沿程最危险点：risk.stats.worst_index 指向的那个样本，标在真正飞的那条线上 */
+const renderPeakWorst = () => {
+  peakLayer.clearLayers();
+  if (!map) return;
+  const feas = shownResult();
+  const risk = feas?.risk;
+  if (!risk) return;
+  const idx = risk.stats?.worst_index;
+  const s = (risk.samples ?? []).find(x => x.i === idx);
+  if (!s || s.lat == null || s.lon == null) return;
+
+  const p: [number, number] = [Number(s.lat), Number(s.lon)];
+  const color = RISK_COLORS[s.level] ?? '#94a3b8';
+  L.circleMarker(p, {
+    color: '#0b1220', weight: 2, fillColor: color, fillOpacity: 1, radius: 7,
+  }).addTo(peakLayer);
+
+  const cum = typeof s.cum_km === 'number' ? s.cum_km : null;
+  const lines = [`${s.level} · TKE ${s.tke.toFixed(2)} / EDR ${s.edr.toFixed(3)}`];
+  if (cum !== null) {
+    lines.push(`距起点 ${cum.toFixed(0)} km`);
+    const speed = Number(store.uavSpeed) || 60;
+    const [h0, m0] = String(store.targetTime).split(':');
+    const mins = (parseInt(h0 || '0') * 60 + (parseInt(m0 || '0') || 0)) + Math.round(cum / speed * 60);
+    lines.push(`到达约 ${String(Math.floor(mins / 60) % 24).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`);
+  }
+  L.marker(p, {
+    interactive: false,
+    icon: L.divIcon({
+      className: 'peak-marker',
+      html: `<div class="peak-tag" style="border-color:${color};color:${color}">沿程最危险</div>`,
+      iconSize: [100, 16],
+      iconAnchor: [50, -12],
+    }),
+  }).addTo(peakLayer).bindTooltip(lines.join('<br>'), { direction: 'top', offset: [0, -18] });
+};
+
 // 未选中档位：各档自己的颜色 + 各自的虚线疏密，压到 30% 只让位不消失
 const TIER_FALLBACK_COLOR = '#94a3b8';
 const TIER_DASH: Record<string, string> = {
@@ -264,6 +412,9 @@ const TIER_DASH: Record<string, string> = {
   normal: '9, 7',
   economy: '16, 8',
 };
+
+/** 当前档主线的线宽。选中/悬停不改它，只改别的段的透明度。 */
+const SEGMENT_WEIGHT = 6;
 
 /**
  * 绘制航线：当前选中（或卡片悬停预览）的那一档按风险分段着色画 100%，
@@ -313,17 +464,28 @@ const renderPlannedPath = (fit = true) => {
   const hovered = shown === store.priority ? store.hoveredSegmentIndex : null;
 
   // 按风险等级分段着色：安全绿 / 中风险黄 / 高风险橙 / 不可飞红
+  //
+  // 每段画两条：先一条深色"描边"再叠彩色主线。卫星图/地形图本身就是土黄色系，
+  // 单靠提亮主线压不住底图，描边给出一条与底图无关的暗色边界，线段才分得出来。
   if (segments.length > 0) {
+    const anyFocus = selected !== null || hovered !== null;
     segments.forEach((seg, idx) => {
       const from = Math.max(0, seg.start_index);
       const to = Math.min(path.length - 1, seg.end_index);
       if (to <= from) return;
       const piece = latlngs.slice(from, to + 1);
       const isFocused = selected === idx || hovered === idx;
+      const dimmed = anyFocus && !isFocused;
+      L.polyline(piece, {
+        color: '#0b1220',
+        weight: SEGMENT_WEIGHT + 4,
+        opacity: dimmed ? 0.18 : 0.5,
+      }).addTo(pathLayer);
       L.polyline(piece, {
         color: RISK_COLORS[seg.level] ?? '#94a3b8',
-        weight: isFocused ? 9 : 6,
-        opacity: selected !== null && !isFocused ? 0.6 : 1.0,
+        weight: SEGMENT_WEIGHT,
+        // 选中只靠"别的段变淡"来表达：加粗会让航线在点击瞬间粗一截，视觉直跳
+        opacity: dimmed ? 0.3 : 1.0,
       }).addTo(pathLayer);
     });
   } else {
@@ -397,7 +559,8 @@ const renderRealOverlays = () => {
 
   const { minLat, maxLat, minLon, maxLon, dec } = quantizeBounds(map.getBounds());
 
-  const currentHour = parseInt(store.targetTime.split(':')[0] || '8');
+  // 热图跟着推演游标走（未推演时游标就等于起飞时间）
+  const currentHour = parseInt(store.simulationTime.split(':')[0] || '8');
   // State guard to prevent flickering: only re-fetch if layers, date, HOUR, or quantized bounds change
   const currentStateStr = `${store.overlays.join(',')}_${store.targetDate}_${currentHour}_${minLat}_${maxLat}_${minLon}_${maxLon}`;
 
@@ -478,7 +641,17 @@ watch(() => store.highlightRegions, () => {
   renderBlockingRegions();
 }, { deep: true });
 
-watch([() => store.overlays, () => store.targetDate, () => store.targetTime], () => {
+watch(() => store.coverage, () => {
+  renderCoverageBox();
+});
+
+// 切档 / 悬停预览 / 重新规划都要跟着重画：这三项全部跟着「地图上那条线」走
+watch([() => store.routeOptions, () => store.priority, () => store.hoveredTier], () => {
+  renderAltBases();
+  renderPeakWorst();
+});
+
+watch([() => store.overlays, () => store.targetDate, () => store.simulationTime], () => {
   renderRealOverlays();
 }, { deep: true });
 
@@ -622,5 +795,39 @@ onUnmounted(() => {
   white-space: nowrap;
   box-shadow: 0 2px 6px rgba(0,0,0,0.5);
   border: 1px solid rgba(255,255,255,0.5);
+}
+
+/* 三类新标注的标签沿用同一形状语言：小胶囊 + 半透明深底，
+   只有颜色区分「数据边界（中性灰）/ 替代点（中性灰）/ 危险点（风险色）」 */
+:deep(.coverage-marker),
+:deep(.alt-marker),
+:deep(.peak-marker) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+:deep(.coverage-tag),
+:deep(.alt-tag),
+:deep(.peak-tag) {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+:deep(.coverage-tag) {
+  background: rgba(15, 23, 42, 0.78);
+  color: #e2e8f0;
+  border: 1px dashed rgba(203, 213, 225, 0.9);
+}
+:deep(.alt-tag) {
+  background: rgba(15, 23, 42, 0.82);
+  color: #e2e8f0;
+  border: 1px solid rgba(226, 232, 240, 0.65);
+}
+:deep(.peak-tag) {
+  background: rgba(15, 23, 42, 0.82);
+  border: 1px solid;
 }
 </style>

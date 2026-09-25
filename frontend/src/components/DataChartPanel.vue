@@ -30,6 +30,9 @@
                 <Play v-else :size="16" />
               </button>
               <button class="sim-btn stop" @click="stopSimulation"><Square :size="16" /></button>
+              <span class="sim-clock" title="推演游标当前时刻，起飞时间以上方输入框为准">
+                {{ store.simulationTime }}
+              </span>
             </div>
             <div class="sim-speed">
               <label>速度: {{ (store.simulationSpeed / 1000).toFixed(1) }}s/步</label>
@@ -55,7 +58,7 @@
 import { ref, onMounted, onUnmounted, shallowRef, watch } from 'vue';
 import { ChevronDown, ChevronUp, Activity, Play, Pause, Square } from 'lucide-vue-next';
 import * as echarts from 'echarts';
-import { store } from '../store';
+import { store, anchorSimulationClock } from '../store';
 import { API_BASE, TURB } from '../config';
 const chartRef = ref<HTMLElement | null>(null);
 const chartInstance = shallowRef<echarts.ECharts | null>(null);
@@ -324,7 +327,6 @@ const updateChartWithData = (data: any[]) => {
 
 // --- Simulation Logic ---
 let simInterval: number | null = null;
-let originalStartTimeMinutes = 8 * 60; // Track original start time in minutes
 
 const toggleSimulation = () => {
   if (store.isSimulating) {
@@ -336,24 +338,17 @@ const toggleSimulation = () => {
 
 const startSimulation = () => {
   if (store.plannedPath.length === 0) return;
-  
-  // If we are at the end, reset to start automatically
+
+  // 跑到头再按播放 = 从头再来一遍（起飞时刻仍取侧栏那个输入值）
   if (store.simulationIndex >= store.plannedPath.length - 1) {
-    store.simulationIndex = 0;
-    const hStr = Math.floor(originalStartTimeMinutes / 60).toString().padStart(2, '0');
-    const mStr = (originalStartTimeMinutes % 60).toString().padStart(2, '0');
-    store.targetTime = `${hStr}:${mStr}`;
-  } else if (store.simulationIndex === 0) {
-    const parts = store.targetTime.split(':');
-    const h = parseInt(parts[0] || '8');
-    const m = parseInt(parts[1] || '0');
-    originalStartTimeMinutes = h * 60 + m;
+    anchorSimulationClock();
   }
-  
+
   store.isSimulating = true;
   runSimulationStep();
 };
 
+/** 游标所在点的到达时刻 = 起飞时刻 + 已飞里程 / 速度。只写游标，不碰起飞时间。 */
 const updateTimeForIndex = (index: number) => {
   let totalDist = 0;
   for (let i = 0; i < index; i++) {
@@ -362,12 +357,11 @@ const updateTimeForIndex = (index: number) => {
     totalDist += Math.hypot(dx, dy) * 111.0;
   }
   const elapsedHours = totalDist / store.uavSpeed;
-  const totalMinutes = originalStartTimeMinutes + Math.round(elapsedHours * 60);
-  const currentHour = Math.floor(totalMinutes / 60);
-  const m = totalMinutes % 60;
-  const hStr = (currentHour % 24).toString().padStart(2, '0');
-  const mStr = m.toString().padStart(2, '0');
-  store.targetTime = `${hStr}:${mStr}`;
+  const [h0, m0] = store.targetTime.split(':');
+  const totalMinutes = (parseInt(h0 || '8') * 60 + (parseInt(m0 || '0') || 0)) + Math.round(elapsedHours * 60);
+  const hStr = (Math.floor(totalMinutes / 60) % 24).toString().padStart(2, '0');
+  const mStr = (totalMinutes % 60).toString().padStart(2, '0');
+  store.simulationTime = `${hStr}:${mStr}`;
 };
 
 const runSimulationStep = () => {
@@ -395,13 +389,8 @@ const pauseSimulation = () => {
 
 const stopSimulation = () => {
   pauseSimulation();
-  store.simulationIndex = 0;
+  anchorSimulationClock();
   updateChartMarkLine(-1);
-  if (store.plannedPath.length > 0) {
-    const hStr = Math.floor(originalStartTimeMinutes / 60).toString().padStart(2, '0');
-    const mStr = (originalStartTimeMinutes % 60).toString().padStart(2, '0');
-    store.targetTime = `${hStr}:${mStr}`;
-  }
 };
 
 const updateChartMarkLine = (index: number) => {
@@ -600,6 +589,16 @@ onUnmounted(() => {
   display: flex;
   gap: 6px;
   margin-bottom: 6px;
+}
+/* 推演游标时刻：只读，不参与任何请求，所以和播放按钮同一行占一小格 */
+.sim-clock {
+  flex: 0 0 auto;
+  align-self: center;
+  min-width: 46px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
 }
 .sim-btn {
   flex: 1;

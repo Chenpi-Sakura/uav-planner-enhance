@@ -1,4 +1,4 @@
-import { reactive } from 'vue';
+import { reactive, watch } from 'vue';
 import { API_BASE } from './config';
 import type { TimeWindowResult, TimeWindowRoute } from './types/assessment';
 
@@ -55,6 +55,14 @@ export interface BlockingRegion {
   polygon?: [number, number][] | null;
 }
 
+/** 气象数据的经纬度覆盖框（GET /api/meta/coverage） */
+export interface CoverageBox {
+  lat_min: number;
+  lat_max: number;
+  lon_min: number;
+  lon_max: number;
+}
+
 export interface FeasibilityResult {
   feasible: boolean;
   conclusion: string;
@@ -80,7 +88,7 @@ export interface FeasibilityResult {
   risk: null | {
     overall: RiskLevel;
     stats: RiskStats;
-    samples: { i: number; lat?: number; lon?: number; tke: number; edr: number; level: RiskLevel }[];
+    samples: { i: number; lat?: number; lon?: number; cum_km?: number | null; tke: number; edr: number; level: RiskLevel }[];
     segments: RiskSegment[];
   };
   blocking: null | { regions: BlockingRegion[]; dominant_shape: string | null };
@@ -146,7 +154,17 @@ export interface StoreState {
   isSimulating: boolean;
   simulationSpeed: number;
   simulationIndex: number;
+  /**
+   * 推演游标当前指示的时刻（HH:MM）。
+   *
+   * 它和 targetTime 必须分开：targetTime 是「起飞时间」这个输入项，会进规划请求、
+   * 剖面请求和热图取数；旧实现让推演直接改写它，于是播放到哪儿、下次就从哪儿起飞，
+   * 切档/换线时也不会归位（演示时表现为"点了另一条线，时间没回到这条线的起点"）。
+   */
+  simulationTime: string;
   bases: BaseStation[];
+  /** 气象数据覆盖框；null = 后端数据未加载或还没问到（地图据此跳过该图层） */
+  coverage: CoverageBox | null;
   // ---- 决策平台新增 ----
   sidebarTab: 'plan' | 'timeWindow';   // 侧边栏标签页（可行性已并入路径规划）
   planLoading: boolean;                // 一次「开始规划」请求是否在飞（侧栏与功能二共用）
@@ -188,12 +206,14 @@ export const store = reactive<StoreState>({
   isSimulating: false,
   simulationSpeed: 500,
   simulationIndex: 0,
+  simulationTime: '08:00',
   bases: [
     { name: '拉萨', lat: '29.650000', lng: '91.130000', alt: '600' },
     { name: '日喀则', lat: '29.270000', lng: '88.880000', alt: '600' },
     { name: '林芝', lat: '29.660000', lng: '94.360000', alt: '600' },
     { name: '昌都', lat: '31.150000', lng: '97.180000', alt: '600' }
   ],
+  coverage: null,
   sidebarTab: 'plan',
   planLoading: false,
   priority: 'normal',
@@ -213,7 +233,9 @@ export const store = reactive<StoreState>({
 /** 风险等级 -> 展示色 */
 export const RISK_COLORS: Record<string, string> = {
   '低风险': '#22c55e',
-  '中风险': '#eab308',
+  // 原来是 #eab308（土黄），在卫星图/地形图上跟底图同色系，线段几乎描不出来。
+  // 提亮到接近柠檬黄，靠明度差 + 地图上的深色描边分离，四档色序（绿→黄→橙→红）不变。
+  '中风险': '#fde047',
   '高风险': '#f97316',
   '不可飞': '#ef4444',
 };
@@ -223,6 +245,18 @@ export const PRIORITY_LABELS: Record<string, string> = {
   normal: '平衡',
   economy: '安全',
 };
+
+/**
+ * 把推演游标归位到「这条航线的起飞时刻」。
+ *
+ * 换航线（切档、重新规划）和手改起飞时间都要走这里，否则游标会停在上一次的时刻上，
+ * 而那条线根本不是同一条。
+ */
+export function anchorSimulationClock(): void {
+  store.isSimulating = false;
+  store.simulationIndex = 0;
+  store.simulationTime = store.targetTime;
+}
 
 /**
  * 把当前档位切到指定方案：地图主航线、结论卡、折线图、AI 报告全部跟随。
@@ -238,8 +272,7 @@ export function activateRouteTier(priority: string): boolean {
   store.selectedSegmentIndex = null;
   store.hoveredSegmentIndex = null;
   store.highlightRegions = [];
-  store.isSimulating = false;
-  store.simulationIndex = 0;
+  anchorSimulationClock();
 
   const startAlt = Number(store.start.alt || 600);
   const endAlt = Number(store.end.alt || 600);
@@ -263,12 +296,31 @@ export function clearPlannedRoute(): void {
   store.plannedPath = [];
   store.routeOptions = null;
   store.hoveredTier = null;
-  store.isSimulating = false;
-  store.simulationIndex = 0;
+  anchorSimulationClock();
   store.feasibility = null;
   store.highlightRegions = [];
   store.selectedSegmentIndex = null;
   store.hoveredSegmentIndex = null;
+}
+
+/**
+ * 取一次气象数据覆盖框。进程内问一次就够：数据集是启动时预加载的静态文件，
+ * 框不会变；拿不到（数据未加载）就留 null，地图跳过该图层而不是猜一个框。
+ */
+export async function fetchCoverage(): Promise<void> {
+  try {
+    const response = await fetch(`${API_BASE}/api/meta/coverage`);
+    if (!response.ok) return;
+    const result = await response.json();
+    if (result && result.available) {
+      store.coverage = {
+        lat_min: Number(result.lat_min), lat_max: Number(result.lat_max),
+        lon_min: Number(result.lon_min), lon_max: Number(result.lon_max),
+      };
+    }
+  } catch (error) {
+    console.error('覆盖范围请求失败:', error);
+  }
 }
 
 /** 评估接口的不可飞原因 -> 弹窗文案键 */
@@ -354,3 +406,9 @@ export function applyTimeWindowRoute(route: TimeWindowRoute): void {
   store.sidebarTab = 'plan';
   void runPlan();
 }
+
+// 手改「起飞时间」= 重新定义这条线什么时候开始，游标跟着归位。
+// 反过来不成立：推演只动 simulationTime，永远不回写 targetTime。
+watch(() => store.targetTime, () => {
+  anchorSimulationClock();
+});
