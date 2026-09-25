@@ -36,6 +36,29 @@ def turbulence_from_wind(u, v, w):
     tke = pulsation_tke(u, v, w)
     return tke, edr_from_tke(tke)
 
+def _pad_edge_coords(sub, full):
+    """把抽稀后的坐标首/末补到真实数据边缘，返回 (新坐标, 头部补了, 尾部补了)。
+
+    contourf 只会着色到最后一个网格点，抽稀后这比真实数据边界内缩最多一个抽稀步长
+    （实测约 0.08°），屏幕上就是热图比数据覆盖框窄一圈。补上缺的那一端才对得齐；
+    已经在边缘上时不能重复造点（会退化出零宽单元）。
+    """
+    sub = np.asarray(sub, dtype='float64')
+    full = np.asarray(full, dtype='float64')
+    if sub.size < 2 or full.size == 0:
+        return sub, False, False
+    lo, hi = float(full.min()), float(full.max())
+    tol = max(1e-9, (hi - lo) * 1e-6)
+    asc = sub[-1] >= sub[0]
+    head_want, tail_want = (lo, hi) if asc else (hi, lo)
+    pad_head = abs(head_want - sub[0]) > tol
+    pad_tail = abs(tail_want - sub[-1]) > tol
+    if not (pad_head or pad_tail):
+        return sub, False, False
+    parts = ([head_want] if pad_head else []) + list(sub) + ([tail_want] if pad_tail else [])
+    return np.asarray(parts, dtype='float64'), pad_head, pad_tail
+
+
 class DataLoader:
     def __init__(self):
         self.ds_u = None
@@ -168,14 +191,22 @@ class DataLoader:
         return out
 
     def _axis_bounds(self):
-        """数据集 lat / lon / time 三轴的取值范围（进程内只算一次）。"""
+        """数据集 lat / lon / time 三轴的取值范围与格点步长（进程内只算一次）。"""
         if self._axis_bounds_cache is None:
             la = np.asarray(self.ds_u.lat.values, dtype=float)
             lo = np.asarray(self.ds_u.lon.values, dtype=float)
             tv = np.asarray(self.ds_u.time.values, dtype='datetime64[ns]')
+
+            def _step(a):
+                d = np.abs(np.diff(a))
+                d = d[d > 0]
+                return float(np.median(d)) if d.size else 0.0
+
             self._axis_bounds_cache = {
                 "lat": (float(la.min()), float(la.max())),
                 "lon": (float(lo.min()), float(lo.max())),
+                "lat_step": _step(la),
+                "lon_step": _step(lo),
                 "time": (tv[0], tv[-1]),
             }
         return self._axis_bounds_cache
@@ -387,18 +418,25 @@ class DataLoader:
             return True
 
     def coverage_bbox(self) -> Optional[Dict[str, float]]:
-        """气象数据在经纬度上的覆盖框，未加载或读不到时返回 None。
+        """气象数据在经纬度上的覆盖框（按格点边缘，不是格点中心），读不到时返回 None。
 
         给地图用：没有这条边界，「框外=没数据」和「框内=安全」在屏幕上长得一样，
         用户会把缺测区读成可飞区。
+
+        取格点边缘（轴极值 ± 半步长）而不是格点中心：热图的着色区本来就铺到最外圈
+        格点的边缘，用中心值画框会让框比热图窄半格，看上去"框和数据对不齐"。
         """
         try:
             if self.ds_u is None:
                 return None
             b = self._axis_bounds()
+            lat_lo, lat_hi = b["lat"]
+            lon_lo, lon_hi = b["lon"]
+            dlat = b.get("lat_step", 0.0) / 2.0
+            dlon = b.get("lon_step", 0.0) / 2.0
             return {
-                "lat_min": b["lat"][0], "lat_max": b["lat"][1],
-                "lon_min": b["lon"][0], "lon_max": b["lon"][1],
+                "lat_min": lat_lo - dlat, "lat_max": lat_hi + dlat,
+                "lon_min": lon_lo - dlon, "lon_max": lon_hi + dlon,
             }
         except Exception:
             return None
@@ -599,11 +637,21 @@ class DataLoader:
             cmap_name = 'PuBu'
             vmin, vmax = 0.0, 10.0
         
+        # 抽稀后的网格补到真实数据边缘，等值线填充才和数据覆盖框对齐（见 _pad_edge_coords）
+        lats_plot, lat_head, lat_tail = _pad_edge_coords(lats_sub, u_lats)
+        lons_plot, lon_head, lon_tail = _pad_edge_coords(lons_sub, u_lons)
+        data_plot = np.pad(np.asarray(data, dtype='float64'),
+                           ((int(lat_head), int(lat_tail)), (int(lon_head), int(lon_tail))),
+                           mode='edge')
+        Lons, Lats = np.meshgrid(lons_plot, lats_plot)
+
         levels = np.linspace(vmin, vmax, int(settings.OVERLAY_CONTOUR_LEVELS))
-        cf = ax.contourf(Lons, Lats, data, levels=levels, cmap=cmap_name, alpha=0.55, extend='both')
+        cf = ax.contourf(Lons, Lats, data_plot, levels=levels, cmap=cmap_name,
+                         alpha=0.55, extend='both')
         line_levels = int(settings.OVERLAY_LINE_LEVELS)
         if line_levels > 0:
-            ax.contour(Lons, Lats, data, levels=line_levels, colors='black', linewidths=0.3, alpha=0.8)
+            ax.contour(Lons, Lats, data_plot, levels=line_levels, colors='black',
+                       linewidths=0.3, alpha=0.8)
 
         png = self._encode_overlay_png(fig, int(settings.OVERLAY_COLORS))
         plt.close(fig)
