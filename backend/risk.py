@@ -179,6 +179,8 @@ def build_risk_profile(samples: List[Dict[str, Any]],
             "i": i,
             "lat": s.get('lat'),
             "lon": s.get('lon'),
+            # 距起点里程：地图标「沿程最危险点」时要说清它在航线的哪儿
+            "cum_km": s.get('cum_km'),
             "tke": round(tkes[i], 4),
             "edr": round(edrs[i], 4),
             "level": levels[i],

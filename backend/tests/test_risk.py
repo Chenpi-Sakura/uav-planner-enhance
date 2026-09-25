@@ -108,6 +108,25 @@ class TestRiskProfile(unittest.TestCase):
         prof = risk.build_risk_profile(s)
         self.assertAlmostEqual(prof.stats.max_exposure_km, 10.0, places=1)
 
+    def test_worst_index_points_at_peak_and_sample_carries_cum_km(self):
+        """地图要标「沿程最危险点」，靠的就是 worst_index + 样本的经纬度/里程。"""
+        s = self._samples([TKE_MID * 0.2, TKE_MID * 0.3, TKE_MID * 1.4, TKE_MID * 0.2],
+                          [EDR_MID * 0.1] * 4, step_km=10.0)
+        prof = risk.build_risk_profile(s)
+        self.assertEqual(prof.stats.worst_index, 2)
+        worst = prof.samples[2]
+        self.assertEqual(worst["i"], 2)
+        self.assertEqual(worst["level"], risk.LEVEL_MODERATE)
+        self.assertAlmostEqual(worst["cum_km"], 20.0, places=3)
+        self.assertEqual(worst["lat"], s[2]["lat"])
+
+    def test_sample_without_cum_km_is_none_not_crash(self):
+        """route_options 汇总用的样本没有 cum_km，缺它也不能报错。"""
+        s = [{"lat": 29.0, "lon": 91.0, "tke": TKE_MID * 0.2, "edr": 0.01},
+             {"lat": 29.1, "lon": 91.0, "tke": TKE_MID * 0.3, "edr": 0.01}]
+        prof = risk.build_risk_profile(s)
+        self.assertIsNone(prof.samples[0]["cum_km"])
+
     def test_segments_split(self):
         # 前半段低风险、后半段含中度样本
         mid = round(TKE_MID * 1.5, 4)

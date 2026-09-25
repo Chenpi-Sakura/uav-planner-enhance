@@ -3,7 +3,7 @@ import math
 import xarray as xr
 import io
 from collections import OrderedDict
-from typing import Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -385,6 +385,23 @@ class DataLoader:
                         and (lon_lo - tol <= lon <= lon_hi + tol))
         except Exception:
             return True
+
+    def coverage_bbox(self) -> Optional[Dict[str, float]]:
+        """气象数据在经纬度上的覆盖框，未加载或读不到时返回 None。
+
+        给地图用：没有这条边界，「框外=没数据」和「框内=安全」在屏幕上长得一样，
+        用户会把缺测区读成可飞区。
+        """
+        try:
+            if self.ds_u is None:
+                return None
+            b = self._axis_bounds()
+            return {
+                "lat_min": b["lat"][0], "lat_max": b["lat"][1],
+                "lon_min": b["lon"][0], "lon_max": b["lon"][1],
+            }
+        except Exception:
+            return None
 
     def _read_overlay_slice(self, file_path, var_name, target_time, lat_slice, lon_slice):
         """Read a 2D slice (time+lev resolved) without dask for fast overlay."""

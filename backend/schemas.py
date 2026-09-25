@@ -130,6 +130,8 @@ class RiskSampleModel(BaseModel):
     i: int
     lat: Optional[float] = None
     lon: Optional[float] = None
+    # 距起点累计里程（km）。由规划器给出的样本才带，缺测时为 None。
+    cum_km: Optional[float] = None
     tke: float
     edr: float
     level: str

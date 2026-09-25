@@ -245,6 +245,18 @@ async def list_cities():
     """返回平台内置的城市/基地清单（供前端分段展示与快速选点）。"""
     return {"cities": geo.CITIES}
 
+@app.get("/api/meta/coverage")
+async def get_coverage():
+    """气象数据的经纬度覆盖框。
+
+    前端用它把「框外 = 这里没有数据」画出来；否则缺测区和低风险区在屏幕上无法区分。
+    数据未加载时返回 available=False，前端跳过该图层（不猜一个框出来）。
+    """
+    bbox = data_loader.coverage_bbox()
+    if bbox is None:
+        return {"available": False}
+    return {"available": True, **bbox}
+
 @app.get("/api/weather/overlay")
 async def get_weather_overlay(min_lat: float, max_lat: float, min_lon: float, max_lon: float, layer: str = 'tke', date: str = '2022-07-01', start_time: str = '08:00'):
     """
