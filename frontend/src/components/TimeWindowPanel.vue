@@ -49,7 +49,7 @@
         <div class="verdict-body">
           <div class="verdict-title">推荐起飞 {{ takeoffLabel }}</div>
           <div class="verdict-sub">
-            飞行时段 {{ r.recommended.window[0] }} – {{ r.recommended.window[1] }}，
+            飞行时段 {{ rec?.window?.[0] }} – {{ rec?.window?.[1] }}，
             预计 {{ landingLabel }}降落
           </div>
         </div>
@@ -58,26 +58,52 @@
       <div class="kpi-grid">
         <div class="kpi-card">
           <span class="kpi-label">全程风险等级</span>
-          <span class="kpi-value" :style="{ color: riskColor(r.recommended.level) }">
-            {{ r.recommended.level }}
+          <span class="kpi-value" :style="{ color: riskColor(rec?.level ?? '') }">
+            {{ rec?.level }}
           </span>
         </div>
         <div class="kpi-card">
-          <span class="kpi-label">时段最大 TKE</span>
+          <span class="kpi-label">沿程最大 TKE</span>
           <span class="kpi-value">
-            {{ fmtTke(r.recommended.max_tke) }}<em>{{ TURB.tkeUnit }}</em>
+            {{ fmtTke(rec?.max_tke) }}<em>{{ TURB.tkeUnit }}</em>
           </span>
         </div>
         <div class="kpi-card">
-          <span class="kpi-label">时段最大 EDR</span>
+          <span class="kpi-label">沿程最大 EDR</span>
           <span class="kpi-value">
-            {{ fmtEdr(r.recommended.max_edr) }}<em>{{ TURB.edrUnit }}</em>
+            {{ fmtEdr(rec?.max_edr) }}<em>{{ TURB.edrUnit }}</em>
           </span>
         </div>
         <div class="kpi-card">
           <span class="kpi-label">安全时段数</span>
           <span class="kpi-value">{{ safeSlotCount }}<em>个</em></span>
         </div>
+      </div>
+
+      <!-- Top-K 候选：每条都按该时刻自身重规划过真实航线，点一下回功能一出三档 -->
+      <div v-if="routes.length" class="sub-block">
+        <h4 class="sub-title"><Navigation :size="14" /> 候选起飞时刻</h4>
+        <div class="slot-list">
+          <div v-for="(rt, idx) in routes" :key="rt.takeoff" class="slot-item">
+            <span class="seg-dot"
+                  :style="{ backgroundColor: riskColor(rt.feasible ? rt.overall_level : '不可飞') }"></span>
+            <span class="slot-time">
+              {{ hhmm(rt.takeoff) }}
+              <em v-if="idx === 0" class="route-flag">推荐</em>
+            </span>
+            <span class="slot-level"
+                  :style="{ color: riskColor(rt.feasible ? rt.overall_level : '不可飞') }">
+              {{ rt.feasible ? rt.overall_level : '不可飞' }}
+            </span>
+            <span class="seg-meta">{{ routeMeta(rt) }}</span>
+            <button class="route-btn" :disabled="store.planLoading"
+                    @click="applyTimeWindowRoute(rt)">按此刻规划</button>
+          </div>
+        </div>
+        <p v-if="rankNote" class="hint-text small">{{ rankNote }}</p>
+        <p v-else class="hint-text small">
+          风险档为按各时刻真实航线判定；未越中风险下沿时四档可能同形。
+        </p>
       </div>
 
       <!-- 湍流强度变化曲线 -->
@@ -87,8 +113,8 @@
         <div ref="chartRef" class="curve-chart"></div>
       </div>
 
-      <!-- 备用时段 -->
-      <div v-if="r.backup_windows.length" class="sub-block">
+      <!-- 备用时段：有候选航线列表时不再重复列一遍窗口 -->
+      <div v-if="r.backup_windows.length && !routes.length" class="sub-block">
         <h4 class="sub-title"><Clock :size="14" /> 备用时段</h4>
         <div class="slot-list">
           <div v-for="(w, idx) in r.backup_windows" :key="idx" class="slot-item">
@@ -201,11 +227,12 @@
 import { computed, ref, watch, nextTick, onBeforeUnmount, onMounted } from 'vue';
 import {
   CalendarClock, Loader, CheckCircle2, XCircle, Clock,
-  TrendingUp, AlertTriangle, BarChart3, CalendarDays,
+  TrendingUp, AlertTriangle, BarChart3, CalendarDays, Navigation,
 } from 'lucide-vue-next';
 import * as echarts from 'echarts';
-import { store, RISK_COLORS } from '../store';
+import { store, RISK_COLORS, applyTimeWindowRoute } from '../store';
 import { TIME_WINDOW_REASONS } from '../types/assessment';
+import type { TimeWindowRoute } from '../types/assessment';
 import { API_BASE, TURB, fmtTke, fmtEdr } from '../config';
 import ReportCard from './ReportCard.vue';
 
@@ -221,13 +248,17 @@ let chartInstance: echarts.ECharts | null = null;
 
 const riskColor = (level: string) => RISK_COLORS[level] ?? '#94a3b8';
 
+/** 结论卡与曲线跟着**细排冠军**（真实航线口径）；老响应里没这个字段时回退粗排。 */
+const rec = computed(() => r.value?.recommended_final ?? r.value?.recommended ?? null);
+const routes = computed<TimeWindowRoute[]>(() => r.value?.routes ?? []);
+
 /** HH:MM 其中取时间部分（推荐卡用） */
 const takeoffTime = computed(() => {
-  const t = r.value?.recommended?.takeoff ?? '';
+  const t = rec.value?.takeoff ?? '';
   return t.includes('T') ? t.split('T')[1] : t;
 });
 const landingTime = computed(() => {
-  const t = r.value?.recommended?.landing ?? '';
+  const t = rec.value?.landing ?? '';
   return t.includes('T') ? t.split('T')[1] : t;
 });
 
@@ -236,14 +267,36 @@ const landingTime = computed(() => {
 const mmdd = (iso: string) => (iso.includes('T') ? iso.slice(5, 10) : '');
 const hhmm = (iso: string) => (iso.includes('T') ? iso.split('T')[1] : iso);
 const takeoffLabel = computed(() => {
-  const t = r.value?.recommended?.takeoff ?? '';
+  const t = rec.value?.takeoff ?? '';
   return t ? `${mmdd(t)} ${hhmm(t)}` : '';
 });
 const landingLabel = computed(() => {
-  const t = r.value?.recommended?.landing ?? '';
+  const t = rec.value?.landing ?? '';
   if (!t) return '';
-  const nextDay = mmdd(t) !== mmdd(r.value?.recommended?.takeoff ?? '');
+  const nextDay = mmdd(t) !== mmdd(rec.value?.takeoff ?? '');
   return `${mmdd(t)} ${hhmm(t)}${nextDay ? '（次日）' : ''}`;
+});
+
+/** 候选行的补充文案：里程 / 绕行比 / 不可飞原因 */
+const fmtKm = (v: number | null | undefined) =>
+  v === null || v === undefined ? '—' : `${v.toFixed(1)} km`;
+const fmtDetour = (v: number | null | undefined) =>
+  v === null || v === undefined ? '' : ` · 绕行 ×${v.toFixed(2)}`;
+const PLAN_REASON_TEXT: Record<string, string> = {
+  blocked: '该时刻无安全路径',
+  no_data: '该时刻无气象数据',
+  iteration_limit: '搜索超限，未收敛',
+};
+const routeMeta = (rt: TimeWindowRoute) =>
+  rt.feasible ? `${fmtKm(rt.total_distance)}${fmtDetour(rt.detour_ratio)}`
+    : (PLAN_REASON_TEXT[rt.reason ?? ''] ?? '未规划出航线');
+/** 两遍排序口径不同，结论可能相反；这条差异必须让用户看见而不是被抹平 */
+const rankNote = computed(() => {
+  const coarse = r.value?.recommended;
+  const best = routes.value[0];
+  if (!coarse || !best) return '';
+  if (coarse.takeoff === best.takeoff) return '';
+  return `走廊级最优点是 ${hhmm(coarse.takeoff)}，按各时刻真实航线重排后是 ${hhmm(best.takeoff)}。`;
 });
 
 const safeSlotCount = computed(
@@ -571,6 +624,30 @@ const handleScan = async () => {
 .slot-level { font-weight: 700; }
 .seg-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .seg-meta { font-size: 10px; color: var(--text-secondary); }
+
+/* 候选行：时刻后面挂「推荐」小标，行尾一个把该时刻送进功能一的按钮 */
+.route-flag {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.18);
+  color: #38bdf8;
+  font-size: 9px;
+  font-style: normal;
+}
+.route-btn {
+  flex-shrink: 0;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.route-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.14); }
+.route-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .slot-table { display: flex; flex-direction: column; gap: 4px; }
 .slot-row {

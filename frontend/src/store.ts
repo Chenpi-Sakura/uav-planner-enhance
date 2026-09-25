@@ -1,5 +1,6 @@
 import { reactive } from 'vue';
-import type { TimeWindowResult } from './types/assessment';
+import { API_BASE } from './config';
+import type { TimeWindowResult, TimeWindowRoute } from './types/assessment';
 
 export interface Point {
   lat: number | string;
@@ -148,6 +149,7 @@ export interface StoreState {
   bases: BaseStation[];
   // ---- 决策平台新增 ----
   sidebarTab: 'plan' | 'timeWindow';   // 侧边栏标签页（可行性已并入路径规划）
+  planLoading: boolean;                // 一次「开始规划」请求是否在飞（侧栏与功能二共用）
   priority: 'urgent' | 'normal' | 'economy';  // 当前选中的方案档位
   routeOptions: RouteOptions | null;  // 一次规划产出的三档评估（null = 还没规划过）
   hoveredTier: string | null;         // 卡片悬停时临时在地图上展示的档位
@@ -193,6 +195,7 @@ export const store = reactive<StoreState>({
     { name: '昌都', lat: '31.150000', lng: '97.180000', alt: '600' }
   ],
   sidebarTab: 'plan',
+  planLoading: false,
   priority: 'normal',
   routeOptions: null,
   hoveredTier: null,
@@ -253,4 +256,101 @@ export function activateRouteTier(priority: string): boolean {
     if (!store.overlays.includes('tke')) store.overlays.push('tke');
   }
   return true;
+}
+
+/** 清掉航线与全部派生结果（换起终点、重新规划前都要先走这一步） */
+export function clearPlannedRoute(): void {
+  store.plannedPath = [];
+  store.routeOptions = null;
+  store.hoveredTier = null;
+  store.isSimulating = false;
+  store.simulationIndex = 0;
+  store.feasibility = null;
+  store.highlightRegions = [];
+  store.selectedSegmentIndex = null;
+  store.hoveredSegmentIndex = null;
+}
+
+/** 评估接口的不可飞原因 -> 弹窗文案键 */
+const FEAS_REASON_TO_NOTICE: Record<string, PlanNoticeReason> = {
+  no_safe_path: 'blocked',
+  detour_exceeds_threshold: 'blocked',
+  data_coverage_insufficient: 'no_data',
+  search_iteration_limit: 'iteration_limit',
+};
+
+/**
+ * 一次「开始规划」= 三档几何 + 三档完整评估（/api/assess/feasibility-multi）。
+ *
+ * 放在 store 而不是 Sidebar 里，是因为功能二的候选列表也要能触发同一个请求：
+ * 两处各写一遍迟早会出现「按钮 A 出三档、按钮 B 出一档」的行为差异。
+ */
+export async function runPlan(): Promise<void> {
+  if (!store.start.lat || !store.start.lng || !store.end.lat || !store.end.lng) {
+    alert('请先设置起点和终点！');
+    return;
+  }
+
+  store.planLoading = true;
+  store.planNotice = null;
+  clearPlannedRoute();
+  try {
+    const response = await fetch(`${API_BASE}/api/assess/feasibility-multi`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        start: { lat: Number(store.start.lat), lon: Number(store.start.lng) },
+        end: { lat: Number(store.end.lat), lon: Number(store.end.lng) },
+        waypoints: store.waypoints
+          .filter(wp => wp.lat !== '' && wp.lng !== '')
+          .map(wp => ({ lat: Number(wp.lat), lon: Number(wp.lng) })),
+        priority: store.priority,
+        date: store.targetDate,
+        start_time: store.targetTime,
+        speed: Number(store.uavSpeed),
+      }),
+    });
+
+    if (!response.ok) throw new Error('规划失败');
+
+    const result = await response.json();
+    const results: FeasibilityResult[] = result.results ?? [];
+    if (results.length === 0) throw new Error('规划失败');
+    store.routeOptions = { results, active: result.active, meta: result.meta };
+
+    // 三档都不可飞也要把详情摊开（阻塞区、替代起降点就在里面），
+    // 所以照样 activate 一档，只是额外补一个失败弹窗。
+    const wanted = store.priority;
+    const target = results.find(x => x.priority === wanted && x.feasible)
+      ?? results.find(x => x.feasible)
+      ?? results.find(x => x.priority === result.active)
+      ?? results[0];
+    activateRouteTier(target.priority);
+    if (result.meta.n_feasible === 0) {
+      store.planNotice = { reason: FEAS_REASON_TO_NOTICE[target.reason ?? ''] ?? 'blocked' };
+    }
+
+    // 三档卡片和评估详情都在侧栏里，折叠侧栏等于把选择入口藏起来，所以这里不折叠
+    store.chartCollapsed = false;
+  } catch (error) {
+    console.error('规划请求失败:', error);
+    store.planNotice = { reason: 'request_failed' };
+  } finally {
+    store.planLoading = false;
+  }
+}
+
+/**
+ * 采用功能二某个候选：把它的起飞时刻写回规划条件，切到「路径规划」并立刻重规划。
+ *
+ * 不在功能二里另画一条线 —— 同一个时刻、同一组起终点走同一个 planner，
+ * 两条必然一致；另起一套渲染就等于再造一个会出现差异的入口（B10 的原始抱怨）。
+ */
+export function applyTimeWindowRoute(route: TimeWindowRoute): void {
+  const [date, time] = String(route.takeoff).split('T');
+  if (!date || !time) return;
+  store.targetDate = date;
+  store.targetTime = time.slice(0, 5);
+  store.sidebarTab = 'plan';
+  void runPlan();
 }

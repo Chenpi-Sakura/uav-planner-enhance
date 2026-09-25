@@ -69,11 +69,37 @@ export interface TimeWindowWarning {
   value: number | null;
 }
 
+/** Top-K 候选之一的真实航线（按该候选自己的起飞时刻规划，非走廊） */
+export interface TimeWindowRoute {
+  takeoff: string;
+  window: string[];
+  /** 粗排（固定走廊查表）看到的风险档 */
+  scan_level: RiskLevel | '';
+  scan_max_tke: number | null;
+  /** 该时刻真实航线的整体风险档；不可飞时为空 */
+  overall_level: string;
+  feasible: boolean;
+  reason: string | null;
+  path: { lat: number; lon: number }[];
+  total_distance: number | null;
+  detour_ratio: number | null;
+  flight_time_h: number | null;
+  max_tke: number | null;
+  max_edr: number | null;
+  moderate_ratio: number | null;
+  high_ratio: number | null;
+  /** 功能二只按「平衡」档规划，切档回功能一 */
+  priority: string;
+}
+
 /** 功能二：时间窗口规划响应 */
 export interface TimeWindowResult {
   date: string;
   has_window: boolean;
   recommended: RecommendedWindow | null;
+  /** 细排冠军（真实航线口径）；老响应里没有时回退到 recommended */
+  recommended_final?: RecommendedWindow | null;
+  routes?: TimeWindowRoute[];
   curve: TurbulenceCurve;
   backup_windows: TimeWindowWindow[];
   warnings: TimeWindowWarning[];

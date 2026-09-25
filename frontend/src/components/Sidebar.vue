@@ -127,8 +127,8 @@
           </div>
 
           <div class="action-row">
-            <button class="capsule-btn full-width" @click="handlePlan" :disabled="isPlanning" :class="{'disabled-btn': isPlanning}">
-              <span v-if="isPlanning" class="loading-icon"><Loader :size="16" class="spin"/> 正在规划并评估三条航线...</span>
+            <button class="capsule-btn full-width" @click="runPlan" :disabled="store.planLoading" :class="{'disabled-btn': store.planLoading}">
+              <span v-if="store.planLoading" class="loading-icon"><Loader :size="16" class="spin"/> 正在规划并评估三条航线...</span>
               <span v-else style="display:flex; align-items:center; gap:8px;"><Send :size="16" /> 开始规划</span>
             </button>
           </div>
@@ -159,16 +159,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
 import { ChevronLeft, ChevronRight, Clock, Navigation, Layers, Send, Plus, X, Crosshair, Loader, MapPin, CalendarClock } from 'lucide-vue-next';
-import { store, activateRouteTier } from '../store';
-import type { BaseStation, FeasibilityResult, PlanNoticeReason } from '../store';
-import { API_BASE } from '../config';
+import { store, runPlan } from '../store';
+import type { BaseStation } from '../store';
 import FeasibilityPanel from './FeasibilityPanel.vue';
 import RouteTierCards from './RouteTierCards.vue';
 import TimeWindowPanel from './TimeWindowPanel.vue';
-
-const isPlanning = ref(false);
 
 const overlayOptions = [
   { id: 'tke', label: 'TKE (湍动能)' },
@@ -222,81 +218,6 @@ const handleBaseClick = (base: BaseStation) => {
   }
 };
 
-/** 清掉上一次航线与派生结果：失败时不能留旧线，否则地图上的线和面板结论会对不上 */
-const clearRoute = () => {
-  store.plannedPath = [];
-  store.routeOptions = null;
-  store.hoveredTier = null;
-  store.isSimulating = false;
-  store.simulationIndex = 0;
-  store.feasibility = null;
-  store.highlightRegions = [];
-  store.selectedSegmentIndex = null;
-  store.hoveredSegmentIndex = null;
-};
-
-/** 评估接口的不可飞原因 -> 弹窗文案键 */
-const FEAS_REASON_TO_NOTICE: Record<string, PlanNoticeReason> = {
-  no_safe_path: 'blocked',
-  detour_exceeds_threshold: 'blocked',
-  data_coverage_insufficient: 'no_data',
-  search_iteration_limit: 'iteration_limit',
-};
-
-const handlePlan = async () => {
-  if (!store.start.lat || !store.start.lng || !store.end.lat || !store.end.lng) {
-    alert("请先设置起点和终点！");
-    return;
-  }
-
-  isPlanning.value = true;
-  store.planNotice = null;
-  clearRoute();
-  try {
-    const response = await fetch(`${API_BASE}/api/assess/feasibility-multi`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        start: { lat: Number(store.start.lat), lon: Number(store.start.lng) },
-        end: { lat: Number(store.end.lat), lon: Number(store.end.lng) },
-        waypoints: store.waypoints
-          .filter(wp => wp.lat !== '' && wp.lng !== '')
-          .map(wp => ({ lat: Number(wp.lat), lon: Number(wp.lng) })),
-        priority: store.priority,
-        date: store.targetDate,
-        start_time: store.targetTime,
-        speed: Number(store.uavSpeed)
-      })
-    });
-
-    if (!response.ok) throw new Error("规划失败");
-
-    const result = await response.json();
-    const results: FeasibilityResult[] = result.results ?? [];
-    if (results.length === 0) throw new Error("规划失败");
-    store.routeOptions = { results, active: result.active, meta: result.meta };
-
-    // 三档都不可飞也要把详情摊开（阻塞区、替代起降点就在里面），
-    // 所以照样 activate 一档，只是额外补一个失败弹窗。
-    const wanted = store.priority;
-    const target = results.find(x => x.priority === wanted && x.feasible)
-      ?? results.find(x => x.feasible)
-      ?? results.find(x => x.priority === result.active)
-      ?? results[0];
-    activateRouteTier(target.priority);
-    if (result.meta.n_feasible === 0) {
-      store.planNotice = { reason: FEAS_REASON_TO_NOTICE[target.reason ?? ''] ?? 'blocked' };
-    }
-
-    // 三档卡片和评估详情都在侧栏里，折叠侧栏等于把选择入口藏起来，所以这里不再折叠
-    store.chartCollapsed = false;
-  } catch (error) {
-    console.error("规划请求失败:", error);
-    store.planNotice = { reason: 'request_failed' };
-  } finally {
-    isPlanning.value = false;
-  }
-};
 </script>
 
 <style scoped>
