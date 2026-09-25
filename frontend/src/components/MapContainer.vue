@@ -318,8 +318,8 @@ const renderCoverageBox = () => {
     icon: L.divIcon({
       className: 'coverage-marker',
       html: '<div class="coverage-tag">气象数据覆盖范围</div>',
-      iconSize: [160, 18],
-      iconAnchor: [6, 22],
+      iconSize: [200, 28],
+      iconAnchor: [8, 34],
     }),
   }).addTo(coverageLayer);
 };
@@ -349,20 +349,20 @@ const renderAltBases = () => {
       color: '#e2e8f0', weight: 2, opacity: 0.7, dashArray: '2, 6', interactive: false,
     }).addTo(altLayer);
     L.circleMarker(p, {
-      color: '#e2e8f0', weight: 2, fillColor: RISK_COLORS[b.level] ?? '#94a3b8',
-      fillOpacity: 1, radius: 7,
+      color: '#e2e8f0', weight: 2.5, fillColor: RISK_COLORS[b.level] ?? '#94a3b8',
+      fillOpacity: 1, radius: 9,
     }).addTo(altLayer).bindTooltip(
       `${b.role_label} · ${b.level}<br>${b.description}<br>`
       + `距原点 ${degKm(a, p).toFixed(0)} km · 按此起飞里程 ${b.distance_km} km`,
-      { direction: 'top', offset: [0, -10] }
+      { direction: 'top', offset: [0, -12] }
     );
     L.marker(p, {
       interactive: false,
       icon: L.divIcon({
         className: 'alt-marker',
         html: `<div class="alt-tag">${b.role_label}</div>`,
-        iconSize: [92, 16],
-        iconAnchor: [46, -10],
+        iconSize: [130, 26],
+        iconAnchor: [65, -12],
       }),
     }).addTo(altLayer);
   });
@@ -382,7 +382,7 @@ const renderPeakWorst = () => {
   const p: [number, number] = [Number(s.lat), Number(s.lon)];
   const color = RISK_COLORS[s.level] ?? '#94a3b8';
   L.circleMarker(p, {
-    color: '#0b1220', weight: 2, fillColor: color, fillOpacity: 1, radius: 7,
+    color: '#0b1220', weight: 2.5, fillColor: color, fillOpacity: 1, radius: 9,
   }).addTo(peakLayer);
 
   const cum = typeof s.cum_km === 'number' ? s.cum_km : null;
@@ -399,10 +399,10 @@ const renderPeakWorst = () => {
     icon: L.divIcon({
       className: 'peak-marker',
       html: `<div class="peak-tag" style="border-color:${color};color:${color}">沿程最危险</div>`,
-      iconSize: [100, 16],
-      iconAnchor: [50, -12],
+      iconSize: [150, 26],
+      iconAnchor: [75, -14],
     }),
-  }).addTo(peakLayer).bindTooltip(lines.join('<br>'), { direction: 'top', offset: [0, -18] });
+  }).addTo(peakLayer).bindTooltip(lines.join('<br>'), { direction: 'top', offset: [0, -22] });
 };
 
 // 未选中档位：各档自己的颜色 + 各自的虚线疏密，压到 30% 只让位不消失
@@ -809,9 +809,10 @@ onUnmounted(() => {
 :deep(.coverage-tag),
 :deep(.alt-tag),
 :deep(.peak-tag) {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 700;
-  padding: 2px 8px;
+  line-height: 1.35;
+  padding: 4px 12px;
   border-radius: 9999px;
   white-space: nowrap;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
