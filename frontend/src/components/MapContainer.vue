@@ -545,6 +545,11 @@ const quantizeBounds = (bounds: L.LatLngBounds) => {
 let inflightOverlays: L.ImageOverlay[] = [];
 let overlaySeq = 0;
 
+// 热图渲染算法版本：行纬度自 2026-09 起改按 Web Mercator 重采样（旧图等纬度行在
+// 中视口最多漂 ~1°）。覆盖层 URL 被浏览器/OpenResty/CF 按 max-age=86400 缓存一天，
+// 服务端出图几何一变必须改这个常量击穿旧缓存，否则线上继续吃一天错图。
+const OVERLAY_RENDER_VERSION = 'merc1';
+
 const renderRealOverlays = () => {
   if (!map) return;
 
@@ -583,7 +588,7 @@ const renderRealOverlays = () => {
   store.overlays.forEach(layer => {
     const hourStr = currentHour.toString().padStart(2, '0') + ':00';
     // Removed t=Date.now() to allow browser caching and explicitly use hourStr
-    const url = `${API_BASE}/api/weather/overlay?min_lat=${minLat.toFixed(dec)}&max_lat=${maxLat.toFixed(dec)}&min_lon=${minLon.toFixed(dec)}&max_lon=${maxLon.toFixed(dec)}&layer=${layer}&date=${store.targetDate}&start_time=${hourStr}`;
+    const url = `${API_BASE}/api/weather/overlay?min_lat=${minLat.toFixed(dec)}&max_lat=${maxLat.toFixed(dec)}&min_lon=${minLon.toFixed(dec)}&max_lon=${maxLon.toFixed(dec)}&layer=${layer}&date=${store.targetDate}&start_time=${hourStr}&render=${OVERLAY_RENDER_VERSION}`;
 
     const overlay = L.imageOverlay(url, imageBounds, {
       opacity: 0.8,

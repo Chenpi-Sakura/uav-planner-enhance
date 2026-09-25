@@ -12,7 +12,6 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import data_loader                                  # noqa: E402
 from data_loader import DataLoader  # noqa: E402
 
 
@@ -75,46 +74,16 @@ class TestCoverageBbox(unittest.TestCase):
         self.assertEqual(dl.coverage_bbox(), first)
 
 
-class TestPadEdgeCoords(unittest.TestCase):
-    """热图抽稀后要把网格补回真实数据边缘，否则着色区比数据框窄一格。"""
+class TestPadEdgeCoordsRemoved(unittest.TestCase):
+    """_pad_edge_coords 已随 Mercator 重采样改造删除。
 
-    FULL = np.arange(0.0, 100.0)          # 真实数据 0..99
+    它的职责（把着色区补到真实数据边缘）现在由「插值常量延拓 + 覆盖边缘裁剪矩形」
+    承担，几何口径改由 _mercator_row_latitudes 保证，见 test_overlay_mercator.py。
+    """
 
-    def test_high_end_gets_padded(self):
-        sub = np.arange(0.0, 100.0, 10.0)          # 0,10,...,90 → 只缺高端
-        out, head, tail = data_loader._pad_edge_coords(sub, self.FULL)
-        self.assertEqual((head, tail), (False, True))
-        self.assertEqual(out[0], 0.0)
-        self.assertEqual(out[-1], 99.0)
-        self.assertEqual(out.size, sub.size + 1)
-
-    def test_low_end_gets_padded(self):
-        sub = np.array([10.0, 50.0, 99.0])         # 高端已在边缘
-        out, head, tail = data_loader._pad_edge_coords(sub, self.FULL)
-        self.assertEqual((head, tail), (True, False))
-        self.assertEqual(out[0], 0.0)
-        self.assertEqual(out[-1], 99.0)
-
-    def test_descending_axis_pads_in_its_own_order(self):
-        """南大北小的纬度轴：高端在数组头部，低端在尾部。"""
-        full = np.arange(99.0, -1.0, -1.0)
-        sub = np.array([99.0, 50.0, 10.0])
-        out, head, tail = data_loader._pad_edge_coords(sub, full)
-        self.assertEqual((head, tail), (False, True))
-        self.assertEqual(out[0], 99.0)
-        self.assertEqual(out[-1], 0.0)
-
-    def test_no_padding_when_already_at_edges(self):
-        """不补时不能凭空造出重复坐标（contourf 会退化出零宽单元）。"""
-        sub = np.array([0.0, 50.0, 99.0])
-        out, head, tail = data_loader._pad_edge_coords(sub, self.FULL)
-        self.assertEqual((head, tail), (False, False))
-        self.assertIs(out, sub)
-
-    def test_short_axis_is_left_alone(self):
-        out, head, tail = data_loader._pad_edge_coords(np.array([5.0]), self.FULL)
-        self.assertEqual((head, tail), (False, False))
-        self.assertEqual(out.size, 1)
+    def test_helper_is_gone(self):
+        import data_loader
+        self.assertFalse(hasattr(data_loader, '_pad_edge_coords'))
 
 
 if __name__ == '__main__':

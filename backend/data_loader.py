@@ -7,8 +7,8 @@ from typing import Dict, Optional, Sequence, Tuple
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 import numpy as np
-import scipy.ndimage as ndimage
 
 from config import settings
 from meteorology import pulsation_tke, edr_from_tke
@@ -36,27 +36,67 @@ def turbulence_from_wind(u, v, w):
     tke = pulsation_tke(u, v, w)
     return tke, edr_from_tke(tke)
 
-def _pad_edge_coords(sub, full):
-    """把抽稀后的坐标首/末补到真实数据边缘，返回 (新坐标, 头部补了, 尾部补了)。
+def _merc_y(lat_deg: float) -> float:
+    """纬度 -> Web Mercator 投影 y（弧度）。Leaflet 贴图用的就是这套投影。"""
+    return math.log(math.tan(math.pi / 4.0 + math.radians(lat_deg) / 2.0))
 
-    contourf 只会着色到最后一个网格点，抽稀后这比真实数据边界内缩最多一个抽稀步长
-    （实测约 0.08°），屏幕上就是热图比数据覆盖框窄一圈。补上缺的那一端才对得齐；
-    已经在边缘上时不能重复造点（会退化出零宽单元）。
+
+def _merc_to_lat(y_rad: float) -> float:
+    """Web Mercator 投影 y -> 纬度（_merc_y 的逆）。"""
+    return math.degrees(2.0 * math.atan(math.exp(y_rad)) - math.pi / 2.0)
+
+
+def _mercator_row_latitudes(min_lat: float, max_lat: float, rows: int) -> np.ndarray:
+    """覆盖层 PNG 的行纬度：在 Mercator y 上等距，第 0 行是北端 (max_lat)。
+
+    L.imageOverlay 是把 PNG 线性贴到投影平面的 bounds 上的，所以第 j 行的纬度必须是
+    φ_j = ym⁻¹(lerp(ym(max_lat), ym(min_lat), j/(rows-1)))，行代表什么纬度才和它贴在
+    屏幕哪儿一致。此前按等纬度间隔排行，热图相对地图整体漂移：跨 25° 纬度时最大约
+    0.9°（~100 km），上下边缘误差为 0、视口中纬度最大，只偏纬度不偏经度
+    （Mercator 的 x 与经度线性，经度向从来没错）。
+
+    rows < 2 或纬度退化（南>=北、超出投影定义域）时抛 ValueError，由调用方兜成全透明图。
     """
-    sub = np.asarray(sub, dtype='float64')
-    full = np.asarray(full, dtype='float64')
-    if sub.size < 2 or full.size == 0:
-        return sub, False, False
-    lo, hi = float(full.min()), float(full.max())
-    tol = max(1e-9, (hi - lo) * 1e-6)
-    asc = sub[-1] >= sub[0]
-    head_want, tail_want = (lo, hi) if asc else (hi, lo)
-    pad_head = abs(head_want - sub[0]) > tol
-    pad_tail = abs(tail_want - sub[-1]) > tol
-    if not (pad_head or pad_tail):
-        return sub, False, False
-    parts = ([head_want] if pad_head else []) + list(sub) + ([tail_want] if pad_tail else [])
-    return np.asarray(parts, dtype='float64'), pad_head, pad_tail
+    rows = int(rows)
+    y_top, y_bottom = _merc_y(max_lat), _merc_y(min_lat)
+    if rows < 2 or not (math.isfinite(y_top) and math.isfinite(y_bottom)) \
+            or not (y_top > y_bottom):
+        raise ValueError(f'overlay box degenerate: lat {min_lat}..{max_lat}, rows={rows}')
+    t = np.arange(rows, dtype='float64') / (rows - 1)
+    y = y_top + (y_bottom - y_top) * t
+    return np.degrees(2.0 * np.arctan(np.exp(y)) - math.pi / 2.0)
+
+
+def _cell_edge_extents(axis_asc: np.ndarray) -> Tuple[float, float]:
+    """轴极值外推到格点边缘（首/末点各 ± 半格步长），入参需单调。
+
+    与 coverage_bbox 同一套「格点边缘」口径（那里用全轴步长的中位数）：热图着色区与
+    数据覆盖框都停在最外圈格点的边缘。注意用中位数而非首/末局部间隔——真实数据轴
+    轻微非均匀（纬度间隔 0.0435~0.0513°），用边界间隔会和覆盖框错开小半格。
+    """
+    a = np.asarray(axis_asc, dtype='float64')
+    d = np.abs(np.diff(a))
+    d = d[d > 0]
+    half = (float(np.median(d)) if d.size else 0.0) / 2.0
+    return float(a[0]) - half, float(a[-1]) + half
+
+
+def _resample_overlay_grid(values: np.ndarray, lat_asc: np.ndarray,
+                           lon_asc: np.ndarray, phi_rows: np.ndarray,
+                           lam_cols: np.ndarray) -> np.ndarray:
+    """把 (lat, lon) 场双线性重采样到任意目标格点（行可在纬度上不等距）。
+
+    lat_asc/lon_asc 必须严格递增；phi_rows 降序（第 0 行 = 北端）、lam_cols 升序。
+    超出源范围的值按边缘常量延拓（np.interp 默认），只用来铺满最外圈格点半步长的
+    边缘带；再往外由调用方按覆盖边缘裁剪，不会多刷假色。
+    """
+    inter = np.empty((phi_rows.size, values.shape[1]), dtype='float64')
+    for c in range(values.shape[1]):
+        inter[:, c] = np.interp(phi_rows, lat_asc, values[:, c])
+    out = np.empty((phi_rows.size, lam_cols.size), dtype='float64')
+    for r in range(phi_rows.size):
+        out[r] = np.interp(lam_cols, lon_asc, inter[r])
+    return out
 
 
 class DataLoader:
@@ -523,17 +563,17 @@ class DataLoader:
         Generate a transparent PNG heatmap for the given bounding box and layer type.
         """
         dpi = int(settings.OVERLAY_DPI)
-        figsize, _ = self._overlay_canvas(min_lat, max_lat, min_lon, max_lon,
-                                          dpi, int(settings.OVERLAY_MAX_PX))
+        figsize, (px_w, px_h) = self._overlay_canvas(min_lat, max_lat, min_lon, max_lon,
+                                                     dpi, int(settings.OVERLAY_MAX_PX))
         fig = plt.figure(figsize=figsize, dpi=dpi)
         # 等效于 savefig(transparent=True)：底板不透明度清零，贴图区域才不会被填成白底
         fig.patch.set_alpha(0.0)
         ax = plt.Axes(fig, [0., 0., 1., 1.])
         ax.set_axis_off()
         fig.add_axes(ax)
-        
-        ax.set_xlim(min_lon, max_lon)
-        ax.set_ylim(min_lat, max_lat)
+        # 画布尺寸按 bbox 在 Mercator 下的真实宽高比分配；绘制坐标系稍后设为索引坐标
+        # （0..cols-1, 0..rows-1），不再用经纬度当轴——PNG 像素是按投影平面线性铺的，
+        # 只有行在索引上等距、且每行纬度按 Mercator 反插值，贴图才不漂。
 
         u_path = os.path.join(settings.DATA_DIR, settings.U_FILE)
         v_path = os.path.join(settings.DATA_DIR, settings.V_FILE)
@@ -572,42 +612,106 @@ class DataLoader:
 
             lat_len = len(u_lats)
             lon_len = len(u_lons)
+            if lat_len < 2 or lon_len < 2:
+                # 包围框整体落在数据覆盖范围外时 sel() 给的是空数组而不是 None，
+                # 放任它走到 contourf 会抛在 try 外面变成 500，这里先判成无数据。
+                raise ValueError(f'overlay grid degenerate: {lat_len} x {lon_len}')
             grid_points = int(settings.OVERLAY_GRID_POINTS)
             lat_step = max(1, lat_len // grid_points)
             lon_step = max(1, lon_len // grid_points)
+            # 抽稀显式保留两端点：源网格必定铺满整个数据窗口（旧版靠
+            # _pad_edge_coords 事后补边，这里改为重采样+裁剪，见下）。
+            ilat = np.unique(np.concatenate([np.arange(0, lat_len, lat_step), [lat_len - 1]]))
+            ilon = np.unique(np.concatenate([np.arange(0, lon_len, lon_step), [lon_len - 1]]))
 
-            lats_sub = u_lats[::lat_step]
-            lons_sub = u_lons[::lon_step]
-            Lons, Lats = np.meshgrid(lons_sub, lats_sub)
+            # 轴可能是降序的（数据轴向不定）；重采样前统一成「升序轴 + 升序下标」
+            src_lats = np.asarray(u_lats, dtype='float64')
+            src_lons = np.asarray(u_lons, dtype='float64')
+            lat_rev = bool(src_lats[0] > src_lats[-1])
+            lon_rev = bool(src_lons[0] > src_lons[-1])
+            if lat_rev:
+                src_lats = src_lats[::-1]
+                ilat = (lat_len - 1) - ilat[::-1]
+            if lon_rev:
+                src_lons = src_lons[::-1]
+                ilon = (lon_len - 1) - ilon[::-1]
+
+            def _asc_take(a, axis, idx, rev):
+                """把源数组翻成升序、再按抽稀下标取——轴和数据必须同步过。"""
+                if rev:
+                    a = np.flip(a, axis=axis)
+                return np.take(a, idx, axis=axis)
 
             if turb_layer:
                 # 方差逐格点独立，先抽稀再算，结果与全分辨率算完再抽稀一致
-                thin = (slice(None), slice(None, None, lat_step), slice(None, None, lon_step))
-                tke_all, edr_all = turbulence_from_wind(u_win[thin], v_win[thin], w_win[thin])
+                u_thin = _asc_take(_asc_take(u_win, 1, ilat, lat_rev), 2, ilon, lon_rev)
+                v_thin = _asc_take(_asc_take(v_win, 1, ilat, lat_rev), 2, ilon, lon_rev)
+                w_thin = _asc_take(_asc_take(w_win, 1, ilat, lat_rev), 2, ilon, lon_rev)
+                tke_all, edr_all = turbulence_from_wind(u_thin, v_thin, w_thin)
                 ci = nearest_time_index(u_times, target_time)
-                data = (tke_all if layer_type == 'tke' else edr_all)[ci]
+                data_src = (tke_all if layer_type == 'tke' else edr_all)[ci]
             elif layer_type == 'temp':
                 tc_vals, _, _ = self._read_overlay_slice(tc_path, 'tc', target_time, lat_slice_ol, lon_slice_ol)
-                data = tc_vals[::lat_step, ::lon_step]
+                data_src = _asc_take(_asc_take(tc_vals, 0, ilat, lat_rev), 1, ilon, lon_rev)
             elif layer_type == 'humidity':
                 rh_vals, _, _ = self._read_overlay_slice(rh_path, 'rh', target_time, lat_slice_ol, lon_slice_ol)
-                data = rh_vals[::lat_step, ::lon_step]
+                data_src = _asc_take(_asc_take(rh_vals, 0, ilat, lat_rev), 1, ilon, lon_rev)
             elif layer_type == 'qvapor':
                 q_vals, _, _ = self._read_overlay_slice(q_path, 'qvapor', target_time, lat_slice_ol, lon_slice_ol)
-                data = q_vals[::lat_step, ::lon_step] * 1000.0
+                data_src = _asc_take(_asc_take(q_vals, 0, ilat, lat_rev), 1, ilon, lon_rev) * 1000.0
             elif layer_type == 'flow':
                 w_vals, _, _ = self._read_overlay_slice(w_path, 'w', target_time, lat_slice_ol, lon_slice_ol)
-                w_vals = w_vals[::lat_step, ::lon_step]
-                data = np.sqrt(u_vals**2 + v_vals**2 + w_vals**2)
+                # 三个分量先抽到同一套格点再开模（旧版只抽 w，步长>1 时形状对不上会静默崩图）
+                u_src = _asc_take(_asc_take(u_vals, 0, ilat, lat_rev), 1, ilon, lon_rev)
+                v_src = _asc_take(_asc_take(v_vals, 0, ilat, lat_rev), 1, ilon, lon_rev)
+                w_src = _asc_take(_asc_take(w_vals, 0, ilat, lat_rev), 1, ilon, lon_rev)
+                data_src = np.sqrt(u_src**2 + v_src**2 + w_src**2)
             else:
-                data = u_vals[::lat_step, ::lon_step]
+                data_src = _asc_take(_asc_take(u_vals, 0, ilat, lat_rev), 1, ilon, lon_rev)
 
-            if Lons.size < 4 or data.size < 4 or Lons.shape != data.shape:
-                # 包围框整体落在数据覆盖范围外时 sel() 给的是空数组而不是 None，
-                # 放任它走到 contourf 会抛在 try 外面变成 500，这里先判成无数据。
-                raise ValueError(f'overlay grid degenerate: {Lons.shape} / {data.shape}')
+            data_src = np.asarray(data_src, dtype='float64')
+            if data_src.shape != (ilat.size, ilon.size):
+                raise ValueError(f'overlay grid degenerate: {data_src.shape} != '
+                                 f'({ilat.size}, {ilon.size})')
 
-            data = ndimage.gaussian_filter(data, sigma=0.0)
+            # ---- 目标格点：PNG 行在 Mercator y 上等距（Leaflet 就是这么贴图的）----
+            y_top, y_bottom = _merc_y(max_lat), _merc_y(min_lat)
+            span = y_top - y_bottom
+            if not (span > 0.0) or max_lon <= min_lon:
+                raise ValueError(f'overlay box degenerate: {min_lat}..{max_lat} / '
+                                 f'{min_lon}..{max_lon}')
+            # 视野框大于数据覆盖时按覆盖占比加密行列，数据分辨率不随框变大被稀释；
+            # 上限：像素数（比像素还细没意义）与 4x 源格点（纯插值不出新信息）
+            cov_lo = min(max(_merc_y(float(src_lats[0])), y_bottom), y_top)
+            cov_hi = min(max(_merc_y(float(src_lats[-1])), y_bottom), y_top)
+            f_lat = max((cov_hi - cov_lo) / span, 1e-6)
+            f_lon = max(min(max_lon, float(src_lons[-1])) - max(min_lon, float(src_lons[0])),
+                        1e-9) / (max_lon - min_lon)
+            rows = int(max(2, min(round((ilat.size - 1) / f_lat) + 1, px_h, 4 * ilat.size)))
+            cols = int(max(2, min(round((ilon.size - 1) / f_lon) + 1, px_w, 4 * ilon.size)))
+            phi_rows = _mercator_row_latitudes(min_lat, max_lat, rows)  # 降序，第 0 行 = max_lat
+            lam_cols = np.linspace(min_lon, max_lon, cols)              # 升序，第 0 列 = min_lon
+            # 重采样基准轴 = 抽稀后的轴（与 data_src 同形）；抽稀保两端，覆盖窗口不变
+            data_plot = _resample_overlay_grid(data_src, src_lats[ilat], src_lons[ilon],
+                                               phi_rows, lam_cols)
+
+            # ---- 索引坐标下绘制：行 j（0=北端）放到 y=rows-1-j，PNG 顶行才是 max_lat ----
+            Xg, Yg = np.meshgrid(np.arange(cols, dtype='float64'),
+                                 (rows - 1.0) - np.arange(rows, dtype='float64'))
+            ax.set_xlim(0.0, cols - 1.0)
+            ax.set_ylim(0.0, rows - 1.0)
+
+            # 覆盖边缘（格点中心 ± 半步长）换算到索引坐标：着色到此为止，再往外透明。
+            # 边缘落在请求框之外时矩形自然超出坐标轴，等同不裁剪。
+            edge_lat_lo, edge_lat_hi = _cell_edge_extents(src_lats)
+            edge_lon_lo, edge_lon_hi = _cell_edge_extents(src_lons)
+            fx = (cols - 1) / (max_lon - min_lon)
+            fy = (rows - 1) / span
+            y_e_lo = _merc_y(max(edge_lat_lo, -89.0))
+            y_e_hi = _merc_y(min(edge_lat_hi, 89.0))
+            clip_rect = Rectangle(((edge_lon_lo - min_lon) * fx, (y_e_lo - y_bottom) * fy),
+                                  (edge_lon_hi - edge_lon_lo) * fx, (y_e_hi - y_e_lo) * fy,
+                                  transform=ax.transData)
         except Exception as e:
             print(f"Error subsetting real data: {e}")
             import traceback
@@ -637,21 +741,17 @@ class DataLoader:
             cmap_name = 'PuBu'
             vmin, vmax = 0.0, 10.0
         
-        # 抽稀后的网格补到真实数据边缘，等值线填充才和数据覆盖框对齐（见 _pad_edge_coords）
-        lats_plot, lat_head, lat_tail = _pad_edge_coords(lats_sub, u_lats)
-        lons_plot, lon_head, lon_tail = _pad_edge_coords(lons_sub, u_lons)
-        data_plot = np.pad(np.asarray(data, dtype='float64'),
-                           ((int(lat_head), int(lat_tail)), (int(lon_head), int(lon_tail))),
-                           mode='edge')
-        Lons, Lats = np.meshgrid(lons_plot, lats_plot)
-
+        # 填充/等值线画在索引坐标格点上，再按覆盖边缘裁剪：着色区与覆盖框同口径（格点边缘），
+        # 行距几何由 _mercator_row_latitudes 保证（旧 _pad_edge_coords 补边法在 Mercator 行距下已废弃）
         levels = np.linspace(vmin, vmax, int(settings.OVERLAY_CONTOUR_LEVELS))
-        cf = ax.contourf(Lons, Lats, data_plot, levels=levels, cmap=cmap_name,
+        cf = ax.contourf(Xg, Yg, data_plot, levels=levels, cmap=cmap_name,
                          alpha=0.55, extend='both')
+        cf.set_clip_path(clip_rect)
         line_levels = int(settings.OVERLAY_LINE_LEVELS)
         if line_levels > 0:
-            ax.contour(Lons, Lats, data_plot, levels=line_levels, colors='black',
-                       linewidths=0.3, alpha=0.8)
+            cl = ax.contour(Xg, Yg, data_plot, levels=line_levels, colors='black',
+                            linewidths=0.3, alpha=0.8)
+            cl.set_clip_path(clip_rect)
 
         png = self._encode_overlay_png(fig, int(settings.OVERLAY_COLORS))
         plt.close(fig)
