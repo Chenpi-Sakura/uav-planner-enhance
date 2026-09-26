@@ -290,6 +290,195 @@ def _deg_to_km(a, b):
     return math.hypot(dx, dy) * 111.0
 
 
+def _hop_cost(tke: float, edr: float, phys_km: float, risk_scale: float,
+              unit_km: float = 0.0) -> float:
+    """一跳的代价 = 真实里程 + 中度以上湍流的超阈线性罚。
+
+    A* 主循环与「拉直」复检共用这一份定义：拉直的验收是「直连比它替掉的折线便宜」，
+    两边必须用同一把尺子，否则这个比较没有意义。
+
+    罚量在 A* 里是**每格一步收一次**，所以它的实际汇率是「每 unit_km 公里罚多少」。
+    复检的采样步长不等于格距，不折算就会随采样密度漂：采得细多罚、采得粗少罚
+    （粗采样等于偷偷放宽湍流约束）。传 unit_km 即按里程比例折算；主循环不传
+    （phys_km 就是那一步本身），口径与历史一致。
+    """
+    cost = phys_km
+    f = (phys_km / unit_km) if unit_km else 1.0
+    # 拐点即风险分档的「中风险」下沿，罚量与硬阈值处的等效绕行公里数对齐
+    if tke >= settings.TKE_RISK_MODERATE:
+        cost += (tke - settings.TKE_RISK_MODERATE) * settings.DETOUR_PENALTY_TKE_COEF * risk_scale * f
+    if edr >= settings.EDR_RISK_MODERATE:
+        cost += (edr - settings.EDR_RISK_MODERATE) * settings.DETOUR_PENALTY_EDR_COEF * risk_scale * f
+    return cost
+
+
+def _straight_hop(a, b, base_ns, dist_at_a, speed_kmh, tke_grid, edr_grid, lookup,
+                  tke_thresh, edr_thresh, risk_scale, sample_km, unit_km):
+    """沿 a→b 的**直线**按 sample_km 采样，返回 (代价, 里程 km, 是否被封)。
+
+    采样取半个格距：与网格同一尺度，才不会从两个安全格中间穿过去。
+    unit_km 是 A* 里"一步"的长度（一格），罚量按它折算，见 _hop_cost。
+    到达时刻按**拉直后**的累计里程推 —— 线短了 63 km，沿程踩到的就是另一帧天气，
+    这一步省不得（用旧时刻复检等于没复检）。
+    """
+    if tke_grid is None or lookup is None or not speed_kmh:
+        return 0.0, 0.0, True
+    km = _deg_to_km(a, b)
+    if km <= 0.0:
+        return 0.0, 0.0, False
+    n = max(1, int(math.ceil(km / sample_km)))
+    step = km / n
+    cost = 0.0
+    dist = dist_at_a
+    for i in range(1, n + 1):
+        node = (a[0] + (b[0] - a[0]) * i / n, a[1] + (b[1] - a[1]) * i / n)
+        dist += step
+        safe, tke, edr = _is_safe_at(node, base_ns, dist, speed_kmh, tke_grid,
+                                     edr_grid, lookup, tke_thresh, edr_thresh)
+        if not safe:
+            return cost, km, True      # 硬阈值、缺测(NaN)、或注入场覆盖不到
+        cost += _hop_cost(tke, edr, step, risk_scale, unit_km)
+    return cost, km, False
+
+
+def _append_straight(out, cum, a, b, cum_a, km, unit_km):
+    """把一条直线跳摊回成与网格同一密度的点，追加到 out / cum。
+
+    下游（风险统计、区域分段、数据覆盖、前端画线）都是**按折线的顶点**采样的，
+    顶点一稀疏，「沿程最大 TKE」就退化成「两端点的 TKE」。所以拉直只改形状，
+    不改采样密度：这里按一格（约 5 km）铺开，与 A* 网格线的点数同一量级。
+    """
+    n = max(1, int(round(km / unit_km)))
+    step = km / n
+    for i in range(1, n + 1):
+        frac = i / n
+        out.append((round(a[0] + (b[0] - a[0]) * frac, _NODE_DECIMALS),
+                    round(a[1] + (b[1] - a[1]) * frac, _NODE_DECIMALS)))
+        # 末点钉在真实里程上，别让 n 次加法漂出 1e-9
+        cum.append(cum_a + (km if i == n else step * i))
+
+
+def _pull_path(nodes, g_at, d_at, base_ns, speed_kmh, tke_grid, edr_grid, lookup,
+               tke_thresh, edr_thresh, risk_scale, resolution):
+    """把 8 向网格的折线拉直（string pulling）：A* 定拓扑，这一遍还原几何。
+
+    网格只允许 0°/45°/90°，浅角度航线的"最短网格线"比两点直线长约 7%：
+    昌都→日喀则实测网格线 887.2 km / 185 个点，拉直后 824.5 km（按格距铺密），
+    且拉直后沿程 TKE 峰值反而从 8.39 降到 6.96 —— 那 63 km 全是网格税，不是天气逼的绕行。
+
+    验收有两条，缺一不可：直连**合法**（不撞硬阈值/缺测）**且更便宜**（与被它替掉的
+    那段折线比代价）。只判合法会被大风天骗 —— 实测 2022-04-01 04:00 那条线，
+    两点直线过得了硬阈值（TKE 峰值 21.5 < 26），代价却从 1128 涨到 4261。
+
+    时刻漂移是这里唯一的难点：线一短，它【后面】所有点的到达时刻都整体提前，而那些
+    保留下来的网格段当初是按"晚若干小时的一帧天气"被 A* 验过的。所以每交出一批顶点，
+    就按它们自己的新时刻重判一遍（顶点一旦交出，cum 就只增不改，查过的不必查第二遍）。
+    重判不过时按【弦】粒度处理，不是整条作废：保留段自己不违法，是前面某条弦把它提前了，
+    于是撤销最近一次拉动、把那条弦禁掉、换个走法接着试 —— 一根坏弦不该抹掉整趟收益。
+    回退用尽或压根没有拉动时返回 None，调用方原样交出 A* 的网格线（那条线在它自己的
+    时刻上是逐点验过的，退回去永远是安全的）。
+
+    返回 (新节点表, 各节点累计里程, 新总代价, 新总里程)；节点表按格距铺密，
+    不是只留拐点 —— 见 _append_straight。
+    """
+    if tke_grid is None or lookup is None or len(nodes) < 3:
+        return None
+    sample_km = 111.0 * resolution / 2.0
+    unit_km = 111.0 * resolution          # A* 里"一步"的标称长度，罚量的折算基准
+
+    # 先把连续同向的小步合成一条：几何不变，只留拐点。不合成就是 O(n²) 逐点试探。
+    verts = [0]
+    for i in range(1, len(nodes) - 1):
+        x1 = nodes[i][0] - nodes[i - 1][0]
+        y1 = nodes[i][1] - nodes[i - 1][1]
+        x2 = nodes[i + 1][0] - nodes[i][0]
+        y2 = nodes[i + 1][1] - nodes[i][1]
+        if abs(x1 * y2 - x2 * y1) > 1e-9:        # 网格步长是格距的整数倍，共线是精确的
+            verts.append(i)
+    verts.append(len(nodes) - 1)
+    if len(verts) <= 2:
+        return None
+
+    out = [nodes[verts[0]]]
+    cum = [d_at[verts[0]]]
+    run_g = g_at[verts[0]]
+    pos = 0
+    banned = set()          # 试过但按新时刻站不住的弦：(顶点位, 顶点位)
+    history = []            # 每次接受一条弦之前的现场，供回退
+    rollbacks = 0
+
+    def _batch_is_safe(from_i):
+        """from_i 起的顶点按【它自己的到达时刻】重判，全合法才返回 True。
+
+        out/cum 只在尾部增长，已交出的顶点永不再动，所以这批点查完就可以盖章。
+        """
+        for i in range(from_i, len(out)):
+            safe, _, _ = _is_safe_at(out[i], base_ns, cum[i], speed_kmh, tke_grid,
+                                     edr_grid, lookup, tke_thresh, edr_thresh)
+            if not safe:
+                return False
+        return True
+
+    while pos < len(verts) - 1:
+        moved = False
+        for q in range(len(verts) - 1, pos, -1):
+            if (pos, q) in banned:
+                continue
+            j = verts[q]
+            # 一跳代价的下界就是它的纯里程（罚量非负），先拿这把尺子空比一次：
+            # 比不过的弦不必进气象采样。两个拐点之间本来就是直线时 Δg 恒 ≥ km，
+            # 这一句就把最常见的那批"没有网格税可拿"的试探全免了。
+            if _deg_to_km(nodes[verts[pos]], nodes[j]) >= g_at[j] - g_at[verts[pos]] - 1e-9:
+                continue
+            cost, km, blocked = _straight_hop(
+                nodes[verts[pos]], nodes[j], base_ns, cum[-1], speed_kmh, tke_grid,
+                edr_grid, lookup, tke_thresh, edr_thresh, risk_scale, sample_km, unit_km)
+            if blocked or cost >= g_at[j] - g_at[verts[pos]] - 1e-9:
+                continue
+            n0 = len(out)
+            _append_straight(out, cum, nodes[verts[pos]], nodes[j], cum[-1], km, unit_km)
+            if not _batch_is_safe(n0):             # 弦自己的顶点在自己的时刻上站不住
+                del out[n0:]
+                del cum[n0:]
+                banned.add((pos, q))
+                continue
+            history.append((n0, run_g, pos, q))
+            run_g += cost
+            pos = q
+            moved = True
+            break
+        if not moved:                            # 拉动不了：原样保留这段网格折线
+            j = verts[pos + 1]
+            # 累计里程必须按【已缩短的前缀】重定位，不能直接取网格线的 d_at：
+            # 前面每拉掉一段，这段上每个点的到达时刻就整体提前一次，
+            # 照抄 d_at 等于拿十分钟后的天气判现在该不该走。
+            # 基准要在循环外取 —— cum 一路在长，拿 cum[-1] 会把增量重复累加。
+            base_cum = cum[-1]
+            base_d = d_at[verts[pos]]
+            n0 = len(out)
+            for k in range(verts[pos] + 1, j + 1):
+                out.append(nodes[k])
+                cum.append(base_cum + (d_at[k] - base_d))
+            if not _batch_is_safe(n0):
+                # 这段折线自己没变坏 —— 是前面某条弦把它整体挪早了。撤销最近一次拉动，
+                # 禁掉那条弦，换个走法再试（回退次数封顶，防止在最坏的天图上反复拉锯）。
+                if not history or rollbacks >= len(verts):
+                    return None
+                n_keep, g_keep, p_keep, q_keep = history.pop()
+                del out[n_keep:]
+                del cum[n_keep:]
+                run_g = g_keep
+                pos = p_keep
+                rollbacks += 1
+                banned.add((p_keep, q_keep))
+                continue
+            run_g += g_at[j] - g_at[verts[pos]]
+            pos += 1
+    if not history:
+        return None
+    return out, cum, run_g, cum[-1]
+
+
 def tier_risk_scale(priority) -> float:
     """任务优先级 -> 软惩罚倍率；未知或缺省按「平衡」= 1.0。
 
@@ -483,16 +672,33 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
                 chain.append(node)
             chain.reverse()  # [start_node, ..., current]
             nodes = chain + [end_node]
-            
+
+            # 拉直：网格只走 0°/45°/90°，浅角度航线的"最短网格线"比两点直线长约 7%，
+            # 这一遍在 A* 找出的拓扑里还原几何（判据与实测见 _pull_path）
+            pulled = None
+            if settings.PATH_PULL_ENABLED:
+                g_at = [float(g_score.get(nd, final_g)) for nd in nodes]
+                d_at = [float(real_dist.get(nd, final_dist)) for nd in nodes]
+                pulled = _pull_path(nodes, g_at, d_at, base_ns, speed_kmh, tke_grid,
+                                    edr_grid, lookup, tke_thresh, edr_thresh,
+                                    risk_scale, resolution)
+            if pulled is not None:
+                nodes, cum, final_g, final_dist = pulled
+            else:
+                cum = [final_dist if nd == end_node
+                       else float(real_dist.get(nd, initial_dist)) for nd in nodes]
+
             path = [Point(lat=nd[0], lon=nd[1]) for nd in nodes]
             times = []
             tkes_out = []
             edrs_out = []
-            for nd in nodes:
-                dist_nd = final_dist if nd == end_node else real_dist.get(nd, initial_dist)
+            for i, nd in enumerate(nodes):
+                dist_nd = cum[i]
                 times.append(base_time + np.timedelta64(int(dist_nd / speed_kmh * 3600), 's'))
-                if nd == end_node:
-                    _, e_tke, e_edr = _is_safe_at(nd, base_ns, final_dist, speed_kmh,
+                if pulled is not None or nd == end_node:
+                    # 拉直后每个点的到达时刻都提前了，气象必须按新时刻重读；
+                    # 没拉动时沿用搜索期记录的值（同一时刻同一格，读出来本来就是一样的）
+                    _, e_tke, e_edr = _is_safe_at(nd, base_ns, dist_nd, speed_kmh,
                                                   tke_grid, edr_grid, lookup,
                                                   tke_thresh, edr_thresh)
                     tkes_out.append(float(e_tke))
@@ -555,17 +761,8 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
             node_tke[neighbor] = float(tke)
             node_edr[neighbor] = float(edr)
 
-            # Soft constraints/penalties: 中度以上湍流按超出量加收绕行成本
-            penalty = 0.0
-
-            # 拐点即风险分档的「中风险」下沿，罚量与硬阈值处的等效绕行公里数对齐
-            if tke >= settings.TKE_RISK_MODERATE:
-                penalty += (tke - settings.TKE_RISK_MODERATE) * settings.DETOUR_PENALTY_TKE_COEF * risk_scale
-
-            if edr >= settings.EDR_RISK_MODERATE:
-                penalty += (edr - settings.EDR_RISK_MODERATE) * settings.DETOUR_PENALTY_EDR_COEF * risk_scale
-                
-            tentative_g_score = g_score[current] + phys_dist + penalty
+            # 软约束：中度以上湍流按超出量加收绕行成本（与拉直复检共用 _hop_cost）
+            tentative_g_score = g_score[current] + _hop_cost(tke, edr, phys_dist, risk_scale)
 
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                 came_from[neighbor] = current

@@ -227,12 +227,19 @@ class TestPlanCostUnit(unittest.TestCase):
                                msg="累计 A* 代价与真实里程脱钩：距离项又回到度空间算了")
 
     def test_clean_air_expansions_stay_near_path_length(self):
-        """一致启发式 + 净空：展开数不该远超路径长度（不一致时实测 12 次/格点）。"""
-        seg = self._run((30.0, 90.0), (28.0, 94.0), 0.5)
+        """一致启发式 + 净空：展开数不该远超路径长度（不一致时实测 12 次/格点）。
+
+        分母用**格数**而不是 `len(seg.path)`：路径拉直（`PATH_PULL_ENABLED`）之后
+        返回的是几条直线段，点数与搜索规模再无关系（净空下 2 点 vs 23 次展开）。
+        """
+        a, b = (30.0, 90.0), (28.0, 94.0)
+        res = 0.5
+        cells = planner._deg_to_km(a, b) / (111.0 * res)
+        seg = self._run(a, b, res)
         self.assertTrue(seg.found)
-        self.assertLess(seg.iterations, 4 * len(seg.path),
-                        "展开数远超路径长度，启发式可能又不一致了：iterations=%d，路径 %d 点"
-                        % (seg.iterations, len(seg.path)))
+        self.assertLess(seg.iterations, 4 * cells,
+                        "展开数远超路径格数，启发式可能又不一致了：iterations=%d，格数 %.1f"
+                        % (seg.iterations, cells))
 
 
 if __name__ == "__main__":

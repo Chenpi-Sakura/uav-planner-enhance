@@ -183,6 +183,13 @@ export interface StoreState {
    * 切档/换线时也不会归位（演示时表现为"点了另一条线，时间没回到这条线的起点"）。
    */
   simulationTime: string;
+  /**
+   * 推演游标所在的【日期】（YYYY-MM-DD），起飞那天是初值，飞过午夜就进位。
+   *
+   * 以前只有 HH:MM：长途线（1600 km 要飞 27 小时）跨过午夜后，小时数被 %24 折回当天，
+   * 热图请求于是带着【起飞那一天】的同一小时 —— 地图上给无人机上色的是 24 小时前那一帧。
+   */
+  simulationDate: string;
   bases: BaseStation[];
   /** 气象数据覆盖框；null = 后端数据未加载或还没问到（地图据此跳过该图层） */
   coverage: CoverageBox | null;
@@ -231,6 +238,7 @@ export const store = reactive<StoreState>({
   simulationSpeed: 500,
   simulationIndex: 0,
   simulationTime: '08:00',
+  simulationDate: '2022-07-01',
   bases: [
     { name: '拉萨', lat: '29.650000', lng: '91.130000', alt: '600' },
     { name: '日喀则', lat: '29.270000', lng: '88.880000', alt: '600' },
@@ -280,6 +288,7 @@ export function anchorSimulationClock(): void {
   store.isSimulating = false;
   store.simulationIndex = 0;
   store.simulationTime = store.targetTime;
+  store.simulationDate = store.targetDate;
 }
 
 /**
@@ -456,8 +465,8 @@ export function applyTimeWindowRoute(route: TimeWindowRoute): void {
   void runPlan();
 }
 
-// 手改「起飞时间」= 重新定义这条线什么时候开始，游标跟着归位。
-// 反过来不成立：推演只动 simulationTime，永远不回写 targetTime。
-watch(() => store.targetTime, () => {
+// 手改「起飞时间/日期」= 重新定义这条线什么时候开始，游标跟着归位。
+// 反过来不成立：推演只动 simulationTime/simulationDate，永远不回写 targetTime。
+watch([() => store.targetTime, () => store.targetDate], () => {
   anchorSimulationClock();
 });

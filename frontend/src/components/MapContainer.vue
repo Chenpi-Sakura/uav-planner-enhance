@@ -8,7 +8,7 @@ import { ref, onMounted, onUnmounted, watch } from 'vue';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { store, RISK_COLORS, TIER_COLORS, PRIORITY_LABELS, activateRouteTier, fetchCoverage } from '../store';
-import { API_BASE } from '../config';
+import { API_BASE, DEFAULT_REL_ALT } from '../config';
 
 const props = defineProps<{
   activeLayer: 'street' | 'satellite' | 'terrain'
@@ -61,6 +61,12 @@ onMounted(() => {
   const coveragePane = map.getPane('coveragePane');
   if (coveragePane) coveragePane.style.zIndex = '350';
 
+  // 推演的无人机标记要在航线(overlayPane=400)与起终点/最危险点等标注(markerPane=600、
+  // tooltipPane=650)之上：circleMarker 默认与航线同层，同层按加入顺序叠，重画航线时点就被埋了
+  map.createPane('uavPane');
+  const uavPane = map.getPane('uavPane');
+  if (uavPane) uavPane.style.zIndex = '660';
+
   currentLayer = layers[props.activeLayer];
   currentLayer.addTo(map);
   coverageLayer.addTo(map);
@@ -74,6 +80,11 @@ onMounted(() => {
   renderCoverageBox();
   void fetchCoverage().then(renderCoverageBox);
 
+  // 选点只挪位置：相对高度是用户填的，一次点击不该顺手改成别的数。
+  // 只有还空着的（新建航点）才补默认值。
+  const pickedAlt = (cur: number | string): string =>
+    String(cur ?? '').trim() === '' ? String(DEFAULT_REL_ALT) : String(cur);
+
   // Handle clicks for point selection
   map.on('click', (e: L.LeafletMouseEvent) => {
     if (!store.selectingMode) return;
@@ -84,16 +95,17 @@ onMounted(() => {
     if (store.selectingMode === 'start') {
       store.start.lat = lat;
       store.start.lng = lng;
-      store.start.alt = 3650; // default Lhasa alt approx
+      store.start.alt = pickedAlt(store.start.alt);
     } else if (store.selectingMode === 'end') {
       store.end.lat = lat;
       store.end.lng = lng;
-      store.end.alt = 3650;
+      store.end.alt = pickedAlt(store.end.alt);
     } else if (store.selectingMode === 'waypoint') {
       if (store.selectingIndex >= 0 && store.selectingIndex < store.waypoints.length) {
-        store.waypoints[store.selectingIndex].lat = lat;
-        store.waypoints[store.selectingIndex].lng = lng;
-        store.waypoints[store.selectingIndex].alt = 3650;
+        const wp = store.waypoints[store.selectingIndex];
+        wp.lat = lat;
+        wp.lng = lng;
+        wp.alt = pickedAlt(wp.alt);
       }
     }
     
@@ -564,10 +576,12 @@ const renderRealOverlays = () => {
 
   const { minLat, maxLat, minLon, maxLon, dec } = quantizeBounds(map.getBounds());
 
-  // 热图跟着推演游标走（未推演时游标就等于起飞时间）
+  // 热图跟着推演游标走（未推演时游标就等于起飞时间）。
+  // 日期也要跟着走：长途线飞过午夜之后，只带起飞那天 = 给无人机看 24 小时前那一帧。
   const currentHour = parseInt(store.simulationTime.split(':')[0] || '8');
+  const overlayDate = store.simulationDate || store.targetDate;
   // State guard to prevent flickering: only re-fetch if layers, date, HOUR, or quantized bounds change
-  const currentStateStr = `${store.overlays.join(',')}_${store.targetDate}_${currentHour}_${minLat}_${maxLat}_${minLon}_${maxLon}`;
+  const currentStateStr = `${store.overlays.join(',')}_${overlayDate}_${currentHour}_${minLat}_${maxLat}_${minLon}_${maxLon}`;
 
   if (currentStateStr === lastRenderState) {
     return; // Skip redundant updates! (e.g. simulation minute ticking)
@@ -588,7 +602,7 @@ const renderRealOverlays = () => {
   store.overlays.forEach(layer => {
     const hourStr = currentHour.toString().padStart(2, '0') + ':00';
     // Removed t=Date.now() to allow browser caching and explicitly use hourStr
-    const url = `${API_BASE}/api/weather/overlay?min_lat=${minLat.toFixed(dec)}&max_lat=${maxLat.toFixed(dec)}&min_lon=${minLon.toFixed(dec)}&max_lon=${maxLon.toFixed(dec)}&layer=${layer}&date=${store.targetDate}&start_time=${hourStr}&render=${OVERLAY_RENDER_VERSION}`;
+    const url = `${API_BASE}/api/weather/overlay?min_lat=${minLat.toFixed(dec)}&max_lat=${maxLat.toFixed(dec)}&min_lon=${minLon.toFixed(dec)}&max_lon=${maxLon.toFixed(dec)}&layer=${layer}&date=${overlayDate}&start_time=${hourStr}&render=${OVERLAY_RENDER_VERSION}`;
 
     const overlay = L.imageOverlay(url, imageBounds, {
       opacity: 0.8,
@@ -656,7 +670,7 @@ watch([() => store.routeOptions, () => store.priority, () => store.hoveredTier],
   renderPeakWorst();
 });
 
-watch([() => store.overlays, () => store.targetDate, () => store.simulationTime], () => {
+watch([() => store.overlays, () => store.targetDate, () => store.simulationTime, () => store.simulationDate], () => {
   renderRealOverlays();
 }, { deep: true });
 
@@ -670,6 +684,7 @@ watch(() => store.simulationIndex, (newIdx) => {
   if (newIdx === 0 || !uavMarker) {
     if (uavMarker) map.removeLayer(uavMarker);
     uavMarker = L.circleMarker([Number(path[0].lat), Number(path[0].lng)], {
+      pane: 'uavPane',
       color: '#00ff00',
       fillColor: '#00ff00',
       fillOpacity: 1,
@@ -682,16 +697,7 @@ watch(() => store.simulationIndex, (newIdx) => {
   if (newIdx < path.length) {
     const p2 = path[newIdx];
     uavMarker.setLatLng([Number(p2.lat), Number(p2.lng)]);
-    
-    // Check if we need to update weather (hour crossed)
-    // For simplicity, we calculate total distance up to this point
-    let totalDist = 0;
-    for (let i = 0; i < newIdx; i++) {
-      totalDist += Math.hypot(Number(path[i+1].lng) - Number(path[i].lng), Number(path[i+1].lat) - Number(path[i].lat)) * 111.0;
-    }
-    
-    // 时间推进交由 DataChartPanel 处理，这里只负责移动无人机标记
-    void totalDist;
+    // 时刻推进与热图取帧都在 DataChartPanel 里按【物理里程】算，这里只负责移动标记
   }
 });
 

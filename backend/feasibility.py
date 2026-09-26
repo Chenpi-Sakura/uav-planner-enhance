@@ -197,7 +197,8 @@ def assess_feasibility(req,
     # 两个开关各自独立、且都只在结论不是「可飞」时才算——这两项各要再跑若干次规划/取数。
     if not feasible:
         if include_alt_windows and data_ok:
-            suggestions["alt_windows"] = _suggest_alt_windows(start, end, req)
+            suggestions["alt_windows"] = _suggest_alt_windows(
+                start, end, req, deadline=deadline)
         if include_alt_bases:
             suggestions["alt_bases"] = _suggest_alt_bases(
                 req, endpoints=endpoints, deadline=deadline)
@@ -499,11 +500,14 @@ def _bad_endpoint_label(endpoints: Optional[Dict[str, Any]]) -> Optional[str]:
     return "".join(bad) if len(bad) == 2 else bad[0]
 
 
-def _suggest_alt_windows(start, end, req, max_results: int = 3) -> List[Dict[str, Any]]:
+def _suggest_alt_windows(start, end, req, max_results: int = 3,
+                         deadline: Optional[float] = None) -> List[Dict[str, Any]]:
     """扫描当天的安全时段，作为「更换飞行时间」建议的数据支撑。
 
     复用功能二的扫描链路（同一时区口径与阈值），只回填少量字段给前端展示，
     不重复实现一套时段判定逻辑，避免两处口径漂移。
+    deadline 必须一起传下去：功能二内部还要为 Top-K 个候选各规划一次全程航线，
+    自取一份余额等于把这次点击的时间上限悄悄翻倍。
     """
     try:
         from schemas import TimeWindowRequest
@@ -516,7 +520,7 @@ def _suggest_alt_windows(start, end, req, max_results: int = 3) -> List[Dict[str
             tke_threshold=getattr(req, "tke_threshold", None),
             edr_threshold=getattr(req, "edr_threshold", None),
         )
-        tw = assess_time_window(tw_req, run_planner=False)
+        tw = assess_time_window(tw_req, run_planner=False, deadline=deadline)
     except Exception:
         return []
 

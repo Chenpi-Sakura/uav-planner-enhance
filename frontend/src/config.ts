@@ -26,6 +26,10 @@ export const TURB = {
   edrChartFactor: 250,
 } as const
 
+/** 默认相对高度（米，AGL）：新建航点、选点时高度还空着才用它。
+ *  低空无人机作业口径，与 store 里起终点/基地的默认值同一份。 */
+export const DEFAULT_REL_ALT = 600
+
 /** 图例刻度：0 → 中值 → 色带上沿，与后端 contourf 的 vmin/vmax 一致 */
 export const turbTicks = (max: number) => ({
   min: '0.0',

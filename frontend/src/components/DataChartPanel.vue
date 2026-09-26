@@ -30,8 +30,8 @@
                 <Play v-else :size="16" />
               </button>
               <button class="sim-btn stop" @click="stopSimulation"><Square :size="16" /></button>
-              <span class="sim-clock" title="推演游标当前时刻，起飞时间以上方输入框为准">
-                {{ store.simulationTime }}
+              <span class="sim-clock" title="推演游标当前时刻（含跨午夜后的日期），起飞时间以上方输入框为准">
+                {{ simClockText }}
               </span>
             </div>
             <div class="sim-speed">
@@ -55,13 +55,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, shallowRef, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, shallowRef, watch } from 'vue';
 import { ChevronDown, ChevronUp, Activity, Play, Pause, Square } from 'lucide-vue-next';
 import * as echarts from 'echarts';
 import { store, anchorSimulationClock } from '../store';
+import { clockAt, dayPrefix, daysBetween } from '../utils/simClock';
 import { API_BASE, TURB } from '../config';
 const chartRef = ref<HTMLElement | null>(null);
 const chartInstance = shallowRef<echarts.ECharts | null>(null);
+// 折线图各采样点的累计里程（物理公里）。推演游标时刻就按它推，与横轴、与 A* 同一把尺子。
+const profileDistKm = ref<number[]>([]);
 
 // TKE 在新口径下是 0–30 量级，与温度/湿度同轴直接可读；EDR 只有 0.x，按倍数放大。
 const TKE_SERIES = `TKE (${TURB.tkeUnit})`;
@@ -231,6 +234,7 @@ const initChart = () => {
  * 并去掉推演游标 markLine，否则「暂无路线」时底下仍留着上一次的地形剖面。
  */
 const clearChart = () => {
+  profileDistKm.value = [];
   if (!chartInstance.value) return;
   chartInstance.value.setOption({
     xAxis: { data: [] },
@@ -284,15 +288,16 @@ const num = (v: unknown, digits: number, scale = 1): number | null =>
 
 const updateChartWithData = (data: any[]) => {
   if (!chartInstance.value) return;
+  profileDistKm.value = data.map(d => Number(d.distance_from_start) || 0);
+  // 剖面回来时游标可能已经停在某个点上（例如切档后自动推演），让它立刻按新里程重算时刻
+  updateTimeForIndex(store.simulationIndex);
   
-  const originalHour = parseInt(store.targetTime.split(':')[0] || '8');
   const xAxisData = data.map(d => {
-    const elapsedHours = d.distance_from_start / store.uavSpeed;
-    const currentHour = Math.floor(originalHour + elapsedHours);
-    const m = Math.floor((elapsedHours % 1) * 60);
-    const hStr = (currentHour % 24).toString().padStart(2, '0');
-    const mStr = m.toString().padStart(2, '0');
-    return `${d.distance_from_start.toFixed(1)}km\n${hStr}:${mStr}`;
+    // 与游标同一个函数：1600 km 的线要飞 27 小时，横轴只写 %24 的话
+    // 第二天的 09:00 会和第一天的 09:00 长成同一个标签，而热图取的是第二天的帧。
+    const clock = clockAt(store.targetDate, store.targetTime,
+                          d.distance_from_start, store.uavSpeed);
+    return `${d.distance_from_start.toFixed(1)}km\n${dayPrefix(clock.dayOffset)}${clock.time}`;
   });
   
   // 与湿度(0–100)共用的「气象指数」轴：TKE 新口径已是 0–30 量级，直接画；
@@ -348,21 +353,28 @@ const startSimulation = () => {
   runSimulationStep();
 };
 
-/** 游标所在点的到达时刻 = 起飞时刻 + 已飞里程 / 速度。只写游标，不碰起飞时间。 */
+/** 游标所在点的到达时刻 = 起飞时刻 + 已飞里程 / 速度。只写游标，不碰起飞时间。
+ *
+ * 里程取【后端折线图回传的 distance_from_start】（物理公里，与 A* 判定同一口径），
+ * 不再自己按 hypot(dlat,dlon)×111 累加 —— 那是度空间距离，经度差没乘 cos(纬度)，
+ * 在 27°N 上把东西向里程高估约 13%，推演时钟因此越飞越晚，而热图正是按这个时钟取帧的：
+ * 无人机踩到的是一帧，地图上给它上色的是另一帧。
+ */
 const updateTimeForIndex = (index: number) => {
-  let totalDist = 0;
-  for (let i = 0; i < index; i++) {
-    const dx = Number(store.plannedPath[i+1].lng) - Number(store.plannedPath[i].lng);
-    const dy = Number(store.plannedPath[i+1].lat) - Number(store.plannedPath[i].lat);
-    totalDist += Math.hypot(dx, dy) * 111.0;
-  }
-  const elapsedHours = totalDist / store.uavSpeed;
-  const [h0, m0] = store.targetTime.split(':');
-  const totalMinutes = (parseInt(h0 || '8') * 60 + (parseInt(m0 || '0') || 0)) + Math.round(elapsedHours * 60);
-  const hStr = (Math.floor(totalMinutes / 60) % 24).toString().padStart(2, '0');
-  const mStr = (totalMinutes % 60).toString().padStart(2, '0');
-  store.simulationTime = `${hStr}:${mStr}`;
+  const dist = profileDistKm.value[index];
+  if (dist === undefined) return;   // 剖面还没回来：留着上一次的游标，不拿错的里程凑时刻
+  const clock = clockAt(store.targetDate, store.targetTime, dist, store.uavSpeed);
+  store.simulationTime = clock.time;
+  store.simulationDate = clock.date;
 };
+
+/** 长途线会飞过午夜（1600 km 要 27 小时），只显示 HH:MM 会看不出"已经是第二天"，
+ *  而热图取哪一帧正是由这个日期决定的。 */
+const simClockText = computed(() => {
+  const day = store.simulationDate;
+  const offset = day && day !== store.targetDate ? daysBetween(store.targetDate, day) : 0;
+  return `${dayPrefix(offset)}${store.simulationTime}`;
+});
 
 const runSimulationStep = () => {
   if (!store.isSimulating) return;

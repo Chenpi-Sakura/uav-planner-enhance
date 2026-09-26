@@ -113,6 +113,14 @@ class Settings(BaseModel):
     ASTAR_TIME_LIMIT_S: float = 18.0
     ASTAR_REQUEST_TIME_LIMIT_S: float = 30.0
 
+    # ---- 路径拉直（string pulling，2026-09-26）----
+    # 8 向网格只能走 0°/45°/90°，浅角度航线的"最短网格线"比两点直线长约 7%：
+    # 昌都→日喀则 824 km 那条，网格线 887.2 km / 185 个点，拉直后 824.5 km，
+    # 沿程最大 TKE 还从 8.39 降到 6.96。A* 负责找可通行的拓扑，这一遍在拓扑里还原几何。
+    # 顶点仍按格距铺密（planner._append_straight）：下游的风险样本与区域分段是按折线顶点取的。
+    # 关掉它 = 回到纯网格口径（金标里那些折线），留着它 = 里程更接近真实可飞距离。
+    PATH_PULL_ENABLED: bool = True
+
     # ---- 风险分级阈值（与 planner 的软/硬约束对齐）----
     TKE_RISK_MODERATE: float = 8.0     # TKE >= 此值 -> 至少中度风险
     TKE_RISK_HIGH: float = 16.0        # TKE >= 此值 -> 高风险

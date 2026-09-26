@@ -227,6 +227,35 @@ class TestFeasibilityOrchestration(unittest.TestCase):
         finally:
             planner_module.plan_path_ex = real
 
+    def test_alt_window_scan_reuses_the_same_request_deadline(self):
+        """功能一里的「换时段」建议内部还要跑 Top-K 规划：它必须从同一份余额里扣。
+
+        自己再取一份 ASTAR_REQUEST_TIME_LIMIT_S 等于把这次点击的时间上限翻倍 ——
+        实测那条 3128 km 多段用例因此跑到 37.7 s（上限 30 s），补上透传后 31.3 s。
+        """
+        import time_window
+        real_tw = time_window.assess_time_window
+        seen = []
+
+        def fake_tw(req, run_planner=True, deadline=None):
+            seen.append(deadline)
+            return {"recommended": None, "backup_windows": []}
+
+        t0 = time.monotonic()
+        time_window.assess_time_window = fake_tw
+        feasibility.plan_path_ex = lambda req, **kw: _fake_plan(0.0, found=False,
+                                                                reason='blocked')
+        try:
+            feasibility.assess_feasibility(self._req(), include_alt_bases=False,
+                                           include_alt_windows=True)
+        finally:
+            time_window.assess_time_window = real_tw
+        self.assertEqual(len(seen), 1, "备选时段扫描压根没被走到，用例就只是绿的")
+        self.assertIsNotNone(seen[0], "它自己另取了一份时间上限")
+        # 断言是【同一份余额】而不是"有个数就行"：中途新建一份预算也是合法的浮点数
+        self.assertLessEqual(seen[0], t0 + settings.ASTAR_REQUEST_TIME_LIMIT_S + 0.5)
+        self.assertGreaterEqual(seen[0], t0)
+
     def test_user_facing_time_contract(self):
         # meta 回传的是用户输入口径（北京时间），不是换算后的数据标签
         result = self._assess(_fake_plan(340.0))
