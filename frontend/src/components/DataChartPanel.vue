@@ -73,7 +73,7 @@ const EDR_SERIES = `EDR (x${TURB.edrChartFactor})`;
 // Updated legend based on requirement
 const legends = ref([
   { name: '地面海拔高度', color: '#3498db' },
-  { name: '无人机飞行海拔', color: '#9b59b6' },
+  { name: '无人机飞行海拔', color: '#e2e8f0' },
   { name: TKE_SERIES, color: '#1abc9c' },
   { name: EDR_SERIES, color: '#2ecc71' },
   { name: '温度 (°C)', color: '#f39c12' },
@@ -148,8 +148,9 @@ const initChart = () => {
         smooth: true,
         symbol: 'none',
         yAxisIndex: 0,
-        itemStyle: { color: '#9b59b6' },
-        lineStyle: { type: 'dashed' },
+        // 紫色系已给湿度，这条取亮中性色，否则图例上两条并排看不出谁是谁。
+        itemStyle: { color: '#e2e8f0' },
+        lineStyle: { type: 'solid' },
         data: []
       },
       {
