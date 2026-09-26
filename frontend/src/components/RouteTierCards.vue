@@ -28,7 +28,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { store, FEAS_REASON_TEXT, PRIORITY_LABELS, TIER_COLORS, verdictTone } from '../store';
+import { store, FEAS_REASON_TEXT, PRIORITY_LABELS, TIER_COLORS, effortText, verdictTone } from '../store';
 import { activateRouteTier } from '../store';
 import type { FeasibilityResult } from '../store';
 
@@ -45,7 +45,9 @@ const tipFor = (r: FeasibilityResult) => {
   if (r.verdict === 'over_budget') {
     return `${label}：存在安全航线，绕行 ${d.detour_ratio}× 超出本档上限 ${d.time_cost_h.limit_ratio}×`;
   }
-  return `${label}：${FEAS_REASON_TEXT[r.reason ?? ''] ?? r.conclusion}`;
+  const base = `${label}：${FEAS_REASON_TEXT[r.reason ?? ''] ?? r.conclusion}`;
+  const effort = r.verdict === 'undetermined' ? effortText(r.search_effort) : '';
+  return effort ? `${base}（${effort}）` : base;
 };
 
 const cards = computed(() =>

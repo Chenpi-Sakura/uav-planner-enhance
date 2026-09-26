@@ -185,7 +185,7 @@ import {
   CheckCircle2, XCircle, Route, Timer,
   AlertTriangle, Lightbulb, MapPin, CalendarClock, HelpCircle,
 } from 'lucide-vue-next';
-import { store, RISK_COLORS, PRIORITY_LABELS, FEAS_REASON_TEXT, verdictTone } from '../store';
+import { store, RISK_COLORS, PRIORITY_LABELS, FEAS_REASON_TEXT, effortText, verdictTone } from '../store';
 import type { FeasibilityResult } from '../store';
 import { TURB, fmtTke, fmtEdr } from '../config';
 import ReportCard from './ReportCard.vue';
@@ -201,7 +201,9 @@ const verdictSub = computed(() => {
   if (r.value.feasible) {
     return `存在安全可行航线，可在 ${r.value.distance.flight_time_h} 小时内完成飞行`;
   }
-  return FEAS_REASON_TEXT[r.value.reason ?? ''] ?? '当前条件下不建议执行飞行任务';
+  const base = FEAS_REASON_TEXT[r.value.reason ?? ''] ?? '当前条件下不建议执行飞行任务';
+  const effort = r.value.verdict === 'undetermined' ? effortText(r.value.search_effort) : '';
+  return effort ? `${base}（${effort}）` : base;
 });
 
 const riskColor = (level: string) => RISK_COLORS[level] ?? '#94a3b8';

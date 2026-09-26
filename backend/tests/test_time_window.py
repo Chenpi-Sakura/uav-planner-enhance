@@ -633,6 +633,14 @@ class TestTopKRoutes(TWStubbed):
         self.assertIsNotNone(resp.recommended_final)
         self.assertEqual(resp.recommended_final.level, LEVEL_LOW)
 
+    def test_response_model_carries_search_effort(self):
+        """候选行说「未算出」就得同时给出规模，这对数字必须活着穿过 response_model。"""
+        res = self._assess(found=[True, False, True])
+        res['routes'][1]['search_effort'] = {"expansions": 49440, "budget": 49440}
+        dumped = TimeWindowResponse(**res).model_dump()
+        self.assertEqual(dumped['routes'][1]['search_effort'],
+                         {"expansions": 49440, "budget": 49440})
+
     def test_scan_field_is_injected_into_every_candidate(self):
         """C：Top-K 复用第一遍读好的扫描场，五元组的顺序不能错位。"""
         res = self._assess()

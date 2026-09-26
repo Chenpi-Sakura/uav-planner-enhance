@@ -79,6 +79,8 @@ def build_feasibility_context(result: Dict[str, Any]) -> Dict[str, Any]:
         "verdict": result.get("verdict"),
         "reason": result.get("reason"),
         "priority": result.get("priority"),
+        # 「没算完」与「真没路」的区分依据，只透传不换算
+        "search_effort": result.get("search_effort"),
         "distance": {
             "straight_km": distance.get("straight_km"),
             "route_km": distance.get("route_km"),
@@ -287,6 +289,10 @@ def _render_feasibility(ctx: Dict[str, Any]) -> str:
     if feasible:
         lines.append("当前条件下可执行任务，建议按计划起飞并保持对湍流高发区段的关注。")
     else:
+        eff = ctx.get("search_effort") or {}
+        if str(ctx.get("verdict")) == "undetermined" and eff.get("budget"):
+            lines.append(
+                f"本次搜索研究过 {eff['expansions']} 个路口，用满了 {eff['budget']} 次展开预算。")
         lines.append(VERDICT_ADVICE.get(
             str(ctx.get("verdict")),
             "建议调整起降点、更换飞行时间，或推迟任务等待更优气象条件。",

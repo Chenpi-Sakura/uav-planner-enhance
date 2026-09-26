@@ -69,10 +69,11 @@ const COPY: Record<PlanNoticeReason, NoticeCopy> = {
   },
   iteration_limit: {
     title: '搜索未收敛，不代表没有航线',
-    body: '寻路在 20000 次扩展上限内没能找到满足当前阈值的路径。阈值收得过紧或航程过长时会出现。',
+    body: '寻路在本次任务的展开预算内没能找到满足当前阈值的路径。预算按航程伸缩（短线的下限就是过去的固定值），所以航程很长、或沿途中等以上湍流很多时可能撞上。',
     actions: [
       '在设置里适当放宽 TKE / EDR 阈值',
       '减少途经点，或把长航线拆成几段分别验证',
+      '换一个湍流更弱的起飞时刻',
     ],
   },
   request_failed: {
@@ -82,9 +83,16 @@ const COPY: Record<PlanNoticeReason, NoticeCopy> = {
   },
 };
 
-const notice = computed<NoticeCopy | null>(() =>
-  store.planNotice ? COPY[store.planNotice.reason] ?? COPY.request_failed : null
-);
+const notice = computed<NoticeCopy | null>(() => {
+  const n = store.planNotice;
+  if (!n) return null;
+  const copy = COPY[n.reason] ?? COPY.request_failed;
+  // 「没算完」得说清花了多少力气，否则它和「没路」读起来是同一句话
+  if (n.reason === 'iteration_limit' && n.effort) {
+    return { ...copy, body: `${copy.body}（${n.effort}）` };
+  }
+  return copy;
+});
 
 const close = () => {
   store.planNotice = null;

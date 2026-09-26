@@ -89,6 +89,19 @@ class Settings(BaseModel):
 
     GRID_RESOLUTION_DEG: float = 0.045 # Approximate resolution for A* grid (~5km)
 
+    # ---- A* 展开预算（原写死 20000，现随该段直线距离伸缩）----
+    # 斜率按 2026-09-26 标定集实测重定（代价与启发式都换成真实公里、节点量化改 6 位之后）：
+    #   日喀则→昌都 824 km 三档 8087/9296/10552（12.8 次/km 封顶）、
+    #   昌都→拉萨 604 km 三档 11586/21869/40204，最贵那档 **66.6 次/km** 是绑定值。
+    # 取 100 = 绑定值加五成余量。只有没收敛的用例会付满预算，收敛的按实际用量付，
+    # 所以放宽斜率的代价只体现在「未算出」那一次的等待时长上。
+    # 历史值 60 是旧尺度+旧计数口径下标的，两处都变了就必须重标（见 docs/backlog.md B1 追加之三）。
+    # 下限沿用旧的 20000：这条改动只允许让长线多算，不许让短线少算。
+    # 上限 12 万次 = 单段最长约 1200 km 按 100/km 给满；再长的航线撞到的是上限而不是斜率。
+    ASTAR_EXPANSIONS_PER_KM: float = 100.0
+    ASTAR_MIN_EXPANSIONS: int = 20000
+    ASTAR_MAX_EXPANSIONS: int = 120000
+
     # ---- 风险分级阈值（与 planner 的软/硬约束对齐）----
     TKE_RISK_MODERATE: float = 8.0     # TKE >= 此值 -> 至少中度风险
     TKE_RISK_HIGH: float = 16.0        # TKE >= 此值 -> 高风险

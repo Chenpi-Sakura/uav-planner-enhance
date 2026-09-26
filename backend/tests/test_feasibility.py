@@ -27,7 +27,7 @@ import numpy as np
 import feasibility
 import geo
 from config import settings
-from planner import PlanResult
+from planner import PlanResult, SegmentResult
 from schemas import FeasibilityRequest, Point
 
 
@@ -50,11 +50,12 @@ class _StubLoader:
         return None, None, None, None, None
 
 
-def _fake_plan(total_distance: float, found: bool = True, reason: str = 'blocked'):
+def _fake_plan(total_distance: float, found: bool = True, reason: str = 'blocked',
+               segments=None):
     """构造一条拉萨→林芝的合成航线（20 点），沿程风险恒为低。
 
     found=False 时 reason 决定规划失败的性质：blocked 真没有路，
-    iteration_limit 只是没搜完。
+    iteration_limit 只是没搜完。segments 用来注入各段的展开计数。
     """
     n = 20
     lats = np.linspace(29.65, 29.66, n)
@@ -71,7 +72,7 @@ def _fake_plan(total_distance: float, found: bool = True, reason: str = 'blocked
         tkes=[0.1] * n if found else [],
         edrs=[0.001] * n if found else [],
         waypoints_reached=[1] if found else [],
-        segment_results=[],
+        segment_results=list(segments or []),
     )
 
 
@@ -147,15 +148,39 @@ class TestFeasibilityOrchestration(unittest.TestCase):
 
     def test_iteration_limit_is_not_reported_as_unflyable(self):
         """A* 没搜完 ≠ 没有安全航线：越保守的档惩罚越大、越容易撞上上限。"""
-        result = self._assess(_fake_plan(0.0, found=False, reason='iteration_limit'))
+        seg = SegmentResult(path=[], found=False, reason='iteration_limit',
+                            iterations=20065, expansion_budget=20065)
+        result = self._assess(_fake_plan(0.0, found=False, reason='iteration_limit',
+                                         segments=[seg]))
         self.assertFalse(result.feasible)
         self.assertEqual(result.conclusion, '未算出')
         self.assertEqual(result.verdict, 'undetermined')
         self.assertEqual(result.reason, 'search_iteration_limit')
         self.assertEqual(result.meta['plan_reason'], 'iteration_limit')
         # 建议文案要给出可操作的下一步，而不是只说「放宽时间窗口」
-        self.assertIn('没有收敛', result.suggestions['text'])
+        self.assertIn('仍未收敛', result.suggestions['text'])
         self.assertIn('途经点', result.suggestions['text'])
+        # 「没算完」要带规模，否则和「真没路」读起来是同一句话
+        self.assertEqual(result.search_effort, {"expansions": 20065, "budget": 20065})
+        self.assertIn('20065', result.suggestions['text'])
+
+    def test_search_effort_absent_when_search_never_ran(self):
+        """起点自身被封 / 无数据时压根没进搜索，别报一个「0 / 0」出去。"""
+        for reason in ('blocked', 'no_data'):
+            with self.subTest(reason=reason):
+                result = self._assess(_fake_plan(0.0, found=False, reason=reason))
+                self.assertIsNone(result.search_effort)
+
+    def test_search_effort_survives_the_response_model(self):
+        """字典 → FeasibilityResponse 这一跳不能把它丢掉（同 09-25 的 planned_level 教训）。"""
+        from schemas import FeasibilityResponse
+        seg = SegmentResult(path=[], found=False, reason='iteration_limit',
+                            iterations=13662, expansion_budget=13662)
+        result = self._assess(_fake_plan(0.0, found=False, reason='iteration_limit',
+                                         segments=[seg]))
+        resp = FeasibilityResponse(**feasibility.to_response_dict(result))
+        self.assertEqual((resp.search_effort.expansions, resp.search_effort.budget),
+                         (13662, 13662))
 
     def test_user_facing_time_contract(self):
         # meta 回传的是用户输入口径（北京时间），不是换算后的数据标签

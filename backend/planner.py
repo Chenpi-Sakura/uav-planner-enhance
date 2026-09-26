@@ -1,7 +1,7 @@
 import math
 import heapq
 import numpy as np
-from typing import List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass, field
 
 from data_loader import data_loader
@@ -14,6 +14,13 @@ from schemas import Point, PlanRequest
 SEGMENT_PAD_DEG = 2.0
 # 注入场被探出边界时的段结论原因，只在上层用于判别"该回退自读"，不面向用户。
 REASON_FIELD_ESCAPE = 'field_escape'
+# 节点坐标量化到几位小数。
+#
+# 原来取 2 位，而格距是 0.045° —— 29.65 加一步是 29.695，四舍五入到 29.69/29.70
+# 交替，格距抖成 0.04/0.05。抖动让「斜着的那一跳」变成一条比格点分解更短的直线，
+# 启发式的余量被吃掉 0.15 km，与它要抓的退化形态只差 1.7 倍。6 位足够吸收
+# 累加浮点误差（~1e-15），格点恢复严格等距，一致性才谈得上按阈值验收。
+_NODE_DECIMALS = 6
 
 
 @dataclass
@@ -27,8 +34,9 @@ class SegmentResult:
     times: List[object] = field(default_factory=list)  # 与 path 一一对应的绝对时刻
     tkes: List[float] = field(default_factory=list)    # 与 path 一一对应的 TKE（规划时判定值）
     edrs: List[float] = field(default_factory=list)    # 与 path 一一对应的 EDR（规划时判定值）
-    iterations: int = 0
-    explored: int = 0
+    iterations: int = 0       # 真正研究过的路口数（陈旧堆项不计，见主循环的 settled_g）
+    explored: int = 0         # 被 g_score 收录过的不同节点数
+    expansion_budget: int = 0  # 本次给的展开预算，iterations 的分母（0 = 没跑到搜索）
     escaped: bool = False             # 注入场覆盖不住这次搜索（仅 field= 时可能为 True）
 
 
@@ -47,21 +55,59 @@ class PlanResult:
     segment_results: List[SegmentResult] = field(default_factory=list)
 
 
-def heuristic(a: Tuple[float, float], b: Tuple[float, float], start: Tuple[float, float] = None) -> float:
-    # Octile distance for 8-way grid heuristic (in degree space to maintain perfect A* grid properties)
-    dx = abs(b[0] - a[0])
-    dy = abs(b[1] - a[1])
-    h = (max(dx, dy) + (math.sqrt(2) - 1) * min(dx, dy))
-    
-    # Tie-breaker to prefer paths closer to the straight line from start to end
-    if start is not None:
-        dx1 = a[0] - b[0]
-        dy1 = a[1] - b[1]
-        dx2 = start[0] - b[0]
-        dy2 = start[1] - b[1]
-        cross = abs(dx1*dy2 - dx2*dy1)
-        h += cross * 0.01
-    return h
+def _cos_lat(a: Tuple[float, float], b: Tuple[float, float]) -> float:
+    """两点里纬度绝对值较大者的 cos（28~34°N 之间 0.883→0.829，差约 6%）。"""
+    return max(1e-6, math.cos(math.radians(max(abs(a[0]), abs(b[0])))))
+
+
+def _search_cosk(start_lat: float, end_lat: float) -> float:
+    """整段搜索共用的经度折算因子：取「起终点外扩 SEGMENT_PAD_DEG 后的最北/最南纬度」。
+
+    取段内能到达的最北/最南纬度，那里 cos 最小 -> 东西向代价的下界最保守，于是 h 对整段
+    平移不变，是一个范数（网格最短距离），一致性可以直接验收：实测 4000 组随机
+    (a, b, 一跳) 的最差余量恰好为 0 —— 贴着的直跳上取等，从不为负。
+
+    逐点对算 `_cos_lat(a, b)` 同样没测出违反，别把两者当成对错之分；选固定值的理由是
+    平移不变带来的可证性。超出该纬度的节点已落在气象框外（读数被钳到边），不成其为航线。
+    """
+    lat_bound = max(abs(start_lat), abs(end_lat)) + SEGMENT_PAD_DEG
+    return max(1e-6, math.cos(math.radians(lat_bound)))
+
+
+def heuristic(a: Tuple[float, float], b: Tuple[float, float], cosk: float = None) -> float:
+    """无障碍 8 向网格上的最短距离，单位是「纬度方向的等效度」（乘 111 即公里）。
+
+    格子不是正方形：一格是 resolution × resolution·cos(纬度)，30°N 上 5.00 km × 4.32 km。
+    经典 octile 的 `max + (√2−1)·min` 假设对角一跳 = √2×直的一跳，在这里对角实际是
+    hypot(5.00, 4.32) = 6.61 km 而 octile 估 7.07 km —— 启发式比它替代的那一步还贵，
+    一致性一破 A* 就退化成反复 relax 的 label-correcting（实测同一格点被重展开 12 次）。
+    这里按「先斜走后拉直」算网格距离，与邻居代价同一把尺子，可采纳且一致。
+
+    `cosk` 应由调用方按整段固定给（见 `_search_cosk`）；缺省回落到逐点对算，
+    只供单测和独立调用，搜索里不传。
+    """
+    res = settings.GRID_RESOLUTION_DEG
+    if cosk is None:
+        cosk = _cos_lat(a, b)
+    nx = abs(b[1] - a[1]) / res          # 东西向格数（Δlon 本身，折算在代价里做）
+    ny = abs(b[0] - a[0]) / res          # 南北向格数
+    # 等效度单位下：南北一格 res，东西一格 res·cosk，对角一格 res·hypot(1, cosk)
+    diag = min(nx, ny)
+    return res * (diag * math.hypot(1.0, cosk) + abs(nx - ny) * (1.0 if ny > nx else cosk))
+
+
+def _tiebreak(a: Tuple[float, float], b: Tuple[float, float],
+              start: Tuple[float, float], cosk: float) -> float:
+    """离直线越远越大，用于在等代价的路径里偏向"更直的那条"。
+
+    它**不能并进 heuristic 参与 g 的支配判定**：这一项随位置每跳可变，而网格距离启发式
+    是贴着真实代价的下界，任何加进去的扰动都会把一致性顶破。所以它只作堆的次级键。
+    """
+    dx1 = a[0] - b[0]
+    dy1 = (a[1] - b[1]) * cosk
+    dx2 = start[0] - b[0]
+    dy2 = (start[1] - b[1]) * cosk
+    return abs(dx1 * dy2 - dx2 * dy1) * 0.01
 
 def get_neighbors(node: Tuple[float, float], resolution: float) -> List[Tuple[float, float]]:
     lat, lon = node
@@ -80,7 +126,7 @@ def get_neighbors(node: Tuple[float, float], resolution: float) -> List[Tuple[fl
 def _half_step(axis) -> float:
     """轴上相邻格点间距的一半，作为「仍算覆盖内」的容差。
 
-    A* 的节点量化到 round(x, 2)，浮点误差会让恰好落在边界格点上的查询差最后一位；
+    A* 的节点量化到 `_NODE_DECIMALS` 位，浮点误差会让恰好落在边界格点上的查询差最后一位；
     放半个格距过去，越界判定就只剩「真的探到切片外」这一种含义。
     """
     a = np.asarray(axis, dtype='float64')
@@ -100,7 +146,7 @@ class _GridIndex:
       ② 时间轴只有在严格升序且等距时才走算术定位，一旦不等距就退回
          argmin 原路径；lat/lon 不做任何形状假设，只缓存 argmin 的结果。
 
-    lat/lon 的缓存命中率接近 100%，因为 A* 的节点一律量化到 round(x, 2)，
+    lat/lon 的缓存命中率接近 100%，因为 A* 的节点一律量化到 `_NODE_DECIMALS` 位，
     查询值天然落在 0.01° 的有限格点上。
 
     strict=True 用于【注入场】（外部给来的有限切片）：越界查询返回 -1 而不是
@@ -252,6 +298,31 @@ def tier_risk_scale(priority) -> float:
     return float(settings.DETOUR_PENALTY_TIER_SCALE.get(key, 1.0))
 
 
+def expansion_budget(straight_km: float) -> int:
+    """A* 单段的展开次数预算：跟着该段直线距离伸缩。
+
+    写死的上限对长短两条线是两种强度——824 km 的线连搜索框（起终点外接矩形
+    各放 SEGMENT_PAD_DEG）都有三万多个格点，20000 次连一遍都扫不完，
+    于是「没算完」被当成结论报出去。下限沿用旧值：只许让长线多算。
+    """
+    budget = int(round(settings.ASTAR_EXPANSIONS_PER_KM * max(0.0, float(straight_km))))
+    return max(int(settings.ASTAR_MIN_EXPANSIONS),
+               min(int(settings.ASTAR_MAX_EXPANSIONS), budget))
+
+
+def search_effort_of(plan) -> Optional[Dict[str, int]]:
+    """一次规划「真正研究过的路口数 / 展开预算」，用来把「没算完」与「没路」分开。
+
+    整条线按段求和（预算本来就是按段给的）。起点自身被封或没有数据时压根没进搜索，
+    预算为 0，此时返回 None —— 报一个「0 / 0」比不报更容易被读错。
+    """
+    budget = sum(int(s.expansion_budget) for s in plan.segment_results)
+    if not budget:
+        return None
+    return {"expansions": sum(int(s.iterations) for s in plan.segment_results),
+            "budget": budget}
+
+
 def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_str,
                       initial_g_score, initial_dist, speed_kmh, risk_scale: float = 1.0,
                       field=None) -> SegmentResult:
@@ -265,18 +336,24 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
     该切片是有限区域，搜索一旦探到切片外，结论按 escaped 交给上层回退。
     """
     open_set = []
-    heapq.heappush(open_set, (0, start_node))
+    # 堆项是 (f, 离直线的偏离, 节点)：f 保证弹出序按非减 f（一致性 → 首弹即最优），
+    # 次级键只用来在等代价里挑更直的那条，不参与 g 的支配判定
+    heapq.heappush(open_set, (0, 0.0, start_node))
     came_from = {}
     
     g_score = {start_node: initial_g_score}
     real_dist = {start_node: initial_dist}
     node_tke = {}
     node_edr = {}
-    f_score = {start_node: heuristic(start_node, end_node) * 111.0}
-    
-    resolution = settings.GRID_RESOLUTION_DEG
+    # 节点 -> 它上一次被展开时的 g_score，用来识别堆里的陈旧副本（见主循环注释）
+    settled_g = {}
 
-    max_iter = 20000
+    resolution = settings.GRID_RESOLUTION_DEG
+    # 整段固定的经度折算因子，喂给 heuristic（逐点对算会让 h 不是一致，见 _search_cosk）
+    h_cosk = _search_cosk(start_node[0], end_node[0])
+    f_score = {start_node: heuristic(start_node, end_node, h_cosk) * 111.0}
+
+    max_iter = expansion_budget(_deg_to_km(start_node, end_node))
     iterations = 0
     
     base_time = np.datetime64(start_time_str)
@@ -332,11 +409,23 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
             ))
 
     while open_set and iterations < max_iter:
+        current = heapq.heappop(open_set)[2]      # 堆项是 (f, 偏离, 节点)
+
+        # 「我来过」标记：一个节点会因 g_score 被改进而在堆里留下多条记录，
+        # 旧记录弹出后重新展开的输入与新记录完全一致 —— 邻居的代价、硬约束、
+        # 软惩罚都只由 g_score[current] 与 real_dist[current] 推导，而这两者
+        # 总在同一条赋值里一起更新，所以 g_score 没变即整次展开是纯空转。
+        # 空转不计入预算：iterations 从此是「真正研究过的路口数」。
+        # 824 km 的线实测有 43~47% 的弹出属于这一类，跳过等于把预算多买回近一倍。
+        if current in settled_g and settled_g[current] == g_score[current]:
+            continue
+
         iterations += 1
-        current = heapq.heappop(open_set)[1]
-        
+
         # If we are close enough to the end node
-        if heuristic(current, end_node) < resolution * 1.5:
+        # 「抵达」按真实距离判，不按 h 判：h 里带经度折算，拿它当半径会让同一格
+        # 在东西/南北两个方向上的接受半径不一样。末段安全校验随后把这一步逐格查过。
+        if _deg_to_km(current, end_node) < resolution * 1.5 * 111.0:
             # 末段安全校验：终点本身与最后一段若不可飞，则不能算作抵达
             if not _terminal_hop_is_safe(current, end_node, base_ns,
                                          real_dist[current], speed_kmh,
@@ -344,15 +433,14 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
                                          tke_thresh, edr_thresh, resolution):
                 continue
 
-            # Use grid distance for A* cost, physical distance for time
-            hop_grid_dist = heuristic(current, end_node) * 111.0
-            
+            # 末段是「当前格点 → 终点」的直线（终点不保证落在格点上），
+            # 代价与里程用同一个物理距离，与邻居扩展那一步口径一致
             lat_mid = math.radians((current[0] + end_node[0]) / 2.0)
             dx_phys = (end_node[1] - current[1]) * math.cos(lat_mid)
             dy_phys = end_node[0] - current[0]
             hop_phys_dist = math.hypot(dx_phys, dy_phys) * 111.0
-            
-            final_g = g_score[current] + hop_grid_dist
+
+            final_g = g_score[current] + hop_phys_dist
             final_dist = real_dist[current] + hop_phys_dist
             
             # Reconstruct path, 并同步记录每个节点的绝对时刻
@@ -393,15 +481,18 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
                 edrs=edrs_out,
                 iterations=iterations,
                 explored=len(g_score),
+                expansion_budget=max_iter,
             ))
             
+        # 只有真正铺开邻居才算「研究过」。末段校验失败而 continue 的那些节点
+        # 没有展开过，留待它被更优路径再次弹出时重判。
+        settled_g[current] = g_score[current]
         for neighbor in get_neighbors(current, resolution):
-            neighbor = (round(neighbor[0], 2), round(neighbor[1], 2))
+            neighbor = (round(neighbor[0], _NODE_DECIMALS), round(neighbor[1], _NODE_DECIMALS))
             
-            # Grid distance for A* routing (maintains square grid properties for Octile heuristic)
-            grid_dist = math.hypot(neighbor[0] - current[0], neighbor[1] - current[1]) * 111.0
-            
-            # Physical distance for accurate time prediction and weather fetching
+            # 一跳的代价就是它的真实里程（km）。以前这里用「度空间距离」而推时刻/里程
+            # 用带 cos 的物理距离，两套单位并存会让软惩罚的「等效绕行公里」在
+            # 东西向被多收约 15%，同一片湍流摆在横竖两个方向上不是一个价。
             lat_mid = math.radians((current[0] + neighbor[0]) / 2.0)
             dx_phys = (neighbor[1] - current[1]) * math.cos(lat_mid)
             dy_phys = neighbor[0] - current[0]
@@ -443,14 +534,17 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
             if edr >= settings.EDR_RISK_MODERATE:
                 penalty += (edr - settings.EDR_RISK_MODERATE) * settings.DETOUR_PENALTY_EDR_COEF * risk_scale
                 
-            tentative_g_score = g_score[current] + grid_dist + penalty
-            
+            tentative_g_score = g_score[current] + phys_dist + penalty
+
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g_score
                 real_dist[neighbor] = real_dist[current] + phys_dist
-                f_score[neighbor] = tentative_g_score + heuristic(neighbor, end_node, start=start_node) * 111.0
-                heapq.heappush(open_set, (f_score[neighbor], neighbor))
+                # f 只用「真实里程 + 罚 + 到终点的网格下界」，三者同尺子 → h 一致 →
+                # 首次弹出即为最优 g，不会有把同一格点反复改进的重展开
+                f_score[neighbor] = tentative_g_score + heuristic(neighbor, end_node, h_cosk) * 111.0
+                tie = _tiebreak(neighbor, end_node, start_node, h_cosk)
+                heapq.heappush(open_set, (f_score[neighbor], tie, neighbor))
                 
     # 搜索失败：区分「被障碍物完全封死」与「达到迭代上限」
     reason = 'iteration_limit' if iterations >= max_iter else 'blocked'
@@ -465,6 +559,7 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
         edrs=[],
         iterations=iterations,
         explored=len(g_score),
+        expansion_budget=max_iter,
     ))
 
 

@@ -39,6 +39,25 @@ class _StubLoader:
         return tke, edr, lats, lons, times
 
 
+class _WallLoader:
+    """一道横在经 92°、只在南缘留缺口的湍流墙（全时段都封着，不随时间开合）。
+
+    网格 0.2° 间隔，与用例里的 GRID_RESOLUTION_DEG 对齐，避免跳格错位引入 NaN。
+    """
+
+    SHAPE = (48, 21, 21)
+
+    def get_meteorology_grid(self, min_lat, max_lat, min_lon, max_lon, date=None):
+        tke = np.zeros(self.SHAPE, dtype=float)
+        idx_lon = int(np.abs(np.linspace(min_lon, max_lon, self.SHAPE[2]) - 92.0).argmin())
+        tke[:, :, idx_lon] = 5.0
+        tke[:, :2, idx_lon] = 0.0        # 南缘两行留缺口
+        lats = np.linspace(min_lat, max_lat, self.SHAPE[1])
+        lons = np.linspace(min_lon, max_lon, self.SHAPE[2])
+        times = np.arange(self.SHAPE[0]) * np.timedelta64(1, 'h') + np.datetime64('2022-07-01T00:00')
+        return tke, np.zeros_like(tke), lats, lons, times
+
+
 class TestPlannerFoundFlag(unittest.TestCase):
     def setUp(self):
         self._orig_loader = getattr(planner, "data_loader", None)
@@ -102,6 +121,129 @@ class TestPlannerFoundFlag(unittest.TestCase):
         )
         self.assertFalse(seg.found)
         self.assertEqual(len(seg.path), 0, "失败路径不得用直线兜底填充")
+
+
+class TestExpansionBudget(unittest.TestCase):
+    """展开预算随该段直线距离伸缩（旧实现写死 20000，长线连搜索框都扫不完）。"""
+
+    def setUp(self):
+        s = planner.settings
+        self._saved = (s.ASTAR_EXPANSIONS_PER_KM, s.ASTAR_MIN_EXPANSIONS, s.ASTAR_MAX_EXPANSIONS)
+        self._saved_res = s.GRID_RESOLUTION_DEG
+        self._saved_loader = planner.data_loader
+
+    def tearDown(self):
+        s = planner.settings
+        s.ASTAR_EXPANSIONS_PER_KM, s.ASTAR_MIN_EXPANSIONS, s.ASTAR_MAX_EXPANSIONS = self._saved
+        s.GRID_RESOLUTION_DEG = self._saved_res
+        planner.data_loader = self._saved_loader
+
+    def test_scales_with_distance_and_respects_bounds(self):
+        s = planner.settings
+        s.ASTAR_EXPANSIONS_PER_KM, s.ASTAR_MIN_EXPANSIONS, s.ASTAR_MAX_EXPANSIONS = 50.0, 20000, 120000
+        self.assertEqual(planner.expansion_budget(100.0), 20000, "短线不得比旧写死值更少")
+        self.assertEqual(planner.expansion_budget(824.0), 41200)
+        self.assertEqual(planner.expansion_budget(5000.0), 120000, "必须有上限兜住公网响应")
+        self.assertEqual(planner.expansion_budget(-10.0), 20000)
+        self.assertGreater(planner.expansion_budget(900.0), planner.expansion_budget(300.0))
+
+    def test_segment_search_reads_the_budget(self):
+        """把预算压到 5 次：同一条净空航线也该报「没搜完」，而不是「没有路」。"""
+        s = planner.settings
+        s.ASTAR_EXPANSIONS_PER_KM, s.ASTAR_MIN_EXPANSIONS, s.ASTAR_MAX_EXPANSIONS = 0.01, 5, 5
+        planner.data_loader = _StubLoader(0.0, 0.0)
+        s.GRID_RESOLUTION_DEG = 0.5
+        args = dict(tke_thresh=1.0, edr_thresh=0.3, start_time_str="2022-07-01T08:00",
+                    initial_g_score=0.0, initial_dist=0.0, speed_kmh=60.0)
+        starved = planner.plan_path_segment((29.65, 91.13), (29.85, 94.36), **args)
+        self.assertFalse(starved.found)
+        self.assertEqual(starved.reason, 'iteration_limit')
+        self.assertLessEqual(starved.iterations, 5)
+
+        s.ASTAR_EXPANSIONS_PER_KM, s.ASTAR_MIN_EXPANSIONS, s.ASTAR_MAX_EXPANSIONS = 50.0, 20000, 120000
+        roomy = planner.plan_path_segment((29.65, 91.13), (29.85, 94.36), **args)
+        self.assertTrue(roomy.found, "同一条线只是给了预算就该出解 —— 说明失败原因是预算不是湍流")
+
+
+class TestNoRepeatedExpansion(unittest.TestCase):
+    """「我来过」标记：堆里的陈旧副本不得再展开，也不得吃掉展开预算。
+
+    换标记前后 F 值排序、路径与代价都不许变（金标 g_before/g_after 已覆盖），
+    这里锁的是另一件事 —— 同一个节点被展开两次，既白烧预算又白白拖慢。
+    用例故意把缺口放到航线以南，让搜索先横扫整面墙再南下，这样才会出现
+    一个节点被多条路径反复改进、堆里同时躺着好几份副本的情形。
+    """
+
+    def setUp(self):
+        self._saved_loader = planner.data_loader
+        self._saved_res = planner.settings.GRID_RESOLUTION_DEG
+        planner.data_loader = _WallLoader()
+        planner.settings.GRID_RESOLUTION_DEG = 0.2
+
+    def tearDown(self):
+        planner.data_loader = self._saved_loader
+        planner.settings.GRID_RESOLUTION_DEG = self._saved_res
+
+    def test_each_node_expanded_at_most_once(self):
+        expanded = []
+        pops = []
+        real_neighbors = planner.get_neighbors
+        real_pop = planner.heapq.heappop
+
+        def spy_neighbors(node, resolution):
+            expanded.append(node)
+            return real_neighbors(node, resolution)
+
+        def spy_pop(heap):
+            item = real_pop(heap)
+            pops.append(item[1])
+            return item
+
+        planner.get_neighbors = spy_neighbors
+        planner.heapq.heappop = spy_pop
+        try:
+            seg = planner.plan_path_segment(
+                (30.0, 90.0), (30.0, 94.0),
+                tke_thresh=1.0, edr_thresh=0.3,
+                start_time_str="2022-07-01T08:00",
+                initial_g_score=0.0, initial_dist=0.0, speed_kmh=60.0,
+            )
+        finally:
+            planner.get_neighbors = real_neighbors
+            planner.heapq.heappop = real_pop
+
+        self.assertTrue(seg.found, "绕过墙找缺口应当有解")
+        self.assertGreater(len(expanded), 100, "用例得真的逼搜索横扫一遍墙面")
+        # ① 没有节点被展开两次
+        self.assertEqual(len(expanded), len(set(expanded)))
+        # ② 确实出现过陈旧副本（同一个节点被弹出多次），否则下面两条测不到东西
+        self.assertGreater(len(pops), len(set(pops)))
+        self.assertGreater(len(pops), seg.iterations, "陈旧副本不得计入展开预算")
+        # ③ iterations 的口径是「研究过的路口」：命中终点那一次弹出没有邻居循环，
+        #    所以它等于展开数 + 未展开就返回/判末段失败的弹出数
+        self.assertGreaterEqual(seg.iterations, len(expanded))
+
+
+class TestSearchEffortOf(unittest.TestCase):
+    """「研究过的路口 / 预算」这对数：整条线按段求和，没跑到搜索时不给。"""
+
+    @staticmethod
+    def _plan(segs):
+        return PlanResult(path=[], total_distance=0.0, total_grid_cost=0.0,
+                          found=False, reason='iteration_limit', segment_results=segs)
+
+    def _seg(self, iters, budget):
+        return SegmentResult(path=[], found=False, reason='iteration_limit',
+                             iterations=iters, expansion_budget=budget)
+
+    def test_sums_over_segments(self):
+        got = planner.search_effort_of(self._plan([self._seg(100, 20000), self._seg(50, 20000)]))
+        self.assertEqual(got, {"expansions": 150, "budget": 40000})
+
+    def test_no_budget_means_no_number(self):
+        """起点被封 / 无数据时压根没进搜索，报「0 / 0」会被读成「一秒就没搜完」。"""
+        self.assertIsNone(planner.search_effort_of(self._plan([self._seg(0, 0)])))
+        self.assertIsNone(planner.search_effort_of(self._plan([])))
 
 
 class TestPlanResultDefaults(unittest.TestCase):

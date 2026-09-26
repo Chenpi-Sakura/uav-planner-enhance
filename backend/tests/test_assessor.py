@@ -78,6 +78,7 @@ UNDETERMINED_PAYLOAD = dict(
     BLOCKED_PAYLOAD,
     conclusion="未算出", verdict="undetermined", reason="search_iteration_limit",
     blocking={"regions": []}, risk=None,
+    search_effort={"expansions": 20065, "budget": 20065},
 )
 
 TW_PAYLOAD = {
@@ -186,6 +187,8 @@ class TestRuleReport(unittest.TestCase):
         text = assessor.render_rule_report(assessor.build_feasibility_context(UNDETERMINED_PAYLOAD))
         self.assertIn("「未算出」", text)
         self.assertIn("未收敛", text)
+        # 报告也要给出规模：没算完 ≠ 没有航线，读者得能自己判断
+        self.assertIn("20065", text)
 
     def test_time_window_report_mentions_timezone_and_forecast(self):
         text = assessor.render_rule_report(assessor.build_time_window_context(TW_PAYLOAD))

@@ -228,7 +228,7 @@ import {
   TrendingUp, AlertTriangle, BarChart3, CalendarDays, Navigation,
 } from 'lucide-vue-next';
 import * as echarts from 'echarts';
-import { store, RISK_COLORS, applyTimeWindowRoute } from '../store';
+import { store, RISK_COLORS, applyTimeWindowRoute, effortText } from '../store';
 import { TIME_WINDOW_REASONS } from '../types/assessment';
 import type { TimeWindowRoute } from '../types/assessment';
 import { API_BASE, TURB, fmtTke, fmtEdr } from '../config';
@@ -285,9 +285,13 @@ const PLAN_REASON_TEXT: Record<string, string> = {
   no_data: '该时刻无气象数据',
   iteration_limit: '搜索超限，未收敛',
 };
-const routeMeta = (rt: TimeWindowRoute) =>
-  rt.feasible ? `${fmtKm(rt.total_distance)}${fmtDetour(rt.detour_ratio)}`
-    : (PLAN_REASON_TEXT[rt.reason ?? ''] ?? '未规划出航线');
+const routeMeta = (rt: TimeWindowRoute) => {
+  if (rt.feasible) return `${fmtKm(rt.total_distance)}${fmtDetour(rt.detour_ratio)}`;
+  const base = PLAN_REASON_TEXT[rt.reason ?? ''] ?? '未规划出航线';
+  // 「没算完」要有规模才和「该时刻真没路」分得开
+  const effort = rt.reason === 'iteration_limit' ? effortText(rt.search_effort) : '';
+  return effort ? `${base}（${effort}）` : base;
+};
 /**
  * 候选行的风险档。没得出航线时印后端的结论词而不是写死「不可飞」——
  * iteration_limit 的候选是「没算完」，riskColor 的兜底灰正好把它和真封死的红分开。

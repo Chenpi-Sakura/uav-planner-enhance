@@ -142,7 +142,7 @@ class TestPlanRouteOptions(unittest.TestCase):
 class TestSummarizePlanVerdict(unittest.TestCase):
     """summarize_plan 是功能一三档与功能二 Top-K 共用的汇总，结论四态从这里出。"""
 
-    def _plan(self, found: bool, reason=None):
+    def _plan(self, found: bool, reason=None, segments=()):
         from planner import PlanResult
         path = [START, END] if found else []
         return PlanResult(
@@ -150,15 +150,27 @@ class TestSummarizePlanVerdict(unittest.TestCase):
             found=found, reason=None if found else reason,
             times=[np.datetime64('2022-07-01T00:00')] * len(path),
             tkes=[1.0] * len(path), edrs=[0.01] * len(path),
-            waypoints_reached=[1] if found else [], segment_results=[],
+            waypoints_reached=[1] if found else [], segment_results=list(segments),
         )
 
-    def _sum(self, found, reason=None):
-        return route_options.summarize_plan(self._plan(found, reason), 200.0, 60.0)
+    def _sum(self, found, reason=None, segments=()):
+        return route_options.summarize_plan(self._plan(found, reason, segments), 200.0, 60.0)
 
     def test_found_is_feasible(self):
         item = self._sum(True)
         self.assertEqual((item['verdict'], item['conclusion']), ('feasible', '可飞'))
+
+    def test_iteration_limit_row_carries_search_effort(self):
+        """功能二的候选行要说「没算完」就得同时给出规模，否则与真没路同义。"""
+        from planner import SegmentResult
+        seg = SegmentResult(path=[], found=False, reason='iteration_limit',
+                            iterations=49440, expansion_budget=49440)
+        item = self._sum(False, 'iteration_limit', segments=[seg])
+        self.assertEqual(item['conclusion'], '未算出')
+        self.assertEqual(item['search_effort'], {"expansions": 49440, "budget": 49440})
+
+    def test_search_effort_none_when_search_never_ran(self):
+        self.assertIsNone(self._sum(False, 'blocked')['search_effort'])
 
     def test_blocked_is_infeasible(self):
         item = self._sum(False, 'blocked')

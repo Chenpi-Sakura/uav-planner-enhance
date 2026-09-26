@@ -94,6 +94,8 @@ export interface TimeWindowRoute {
   high_ratio: number | null;
   /** 功能二只按「平衡」档规划，切档回功能一 */
   priority: string;
+  /** A* 真正研究过的路口数 / 展开预算；没跑到搜索时为 null */
+  search_effort?: { expansions: number; budget: number } | null;
 }
 
 /** 功能二：时间窗口规划响应 */

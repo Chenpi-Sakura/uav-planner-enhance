@@ -35,6 +35,17 @@ def verdict_of(feasible: bool, reason: Optional[str], mapping: Dict[str, str]) -
     return mapping.get(reason or "", VERDICT_INFEASIBLE)
 
 
+class SearchEffort(BaseModel):
+    """A* 为这条线真正研究过多少路口、预算给了多少。
+
+    「未算出」与「不可飞」的分别就在这对数字上：前者是预算用完了还没搜完
+    （expansions 顶到 budget），后者是走廊真被封死（远没用完就没前沿了）。
+    没跑到搜索（起点自身被封、日期无数据）时整个字段为 null。
+    """
+    expansions: int
+    budget: int
+
+
 class Point(BaseModel):
     lat: float
     lon: float
@@ -111,6 +122,8 @@ class RouteOption(BaseModel):
     # 沿程是否出现中风险以上湍流：False 时软惩罚没有参与代价，三档必然同一条线
     risk_engaged: bool = False
     n_nodes: int = 0
+    # 「没算完」与「真没路」的区分依据，见 SearchEffort
+    search_effort: Optional[SearchEffort] = None
 
 
 class PlanMultiResponse(BaseModel):
@@ -322,6 +335,8 @@ class TimeWindowRoute(BaseModel):
     moderate_ratio: Optional[float] = None
     high_ratio: Optional[float] = None
     priority: str = "normal"       # 功能二只按「平衡」档规划，切档回功能一
+    # iteration_limit 的候选是「没算完」，这对数字让它与「该时刻真没路」分得开
+    search_effort: Optional[SearchEffort] = None
 
 
 class TimeWindowResponse(BaseModel):
@@ -352,6 +367,7 @@ class FeasibilityResponse(BaseModel):
     risk: Optional[RiskProfileModel] = None
     blocking: Optional[BlockingInfo] = None
     suggestions: SuggestionsModel
+    search_effort: Optional[SearchEffort] = None
     path: List[Point] = []
     meta: Dict[str, Any] = {}
 

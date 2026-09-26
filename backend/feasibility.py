@@ -17,7 +17,7 @@ import math
 import numpy as np
 
 from config import settings
-from planner import plan_path_ex, PlanResult, _haversine_km
+from planner import plan_path_ex, PlanResult, search_effort_of, _haversine_km
 from data_loader import data_loader
 from schemas import (
     VERDICT_FEASIBLE, VERDICT_INFEASIBLE, VERDICT_LABELS,
@@ -63,6 +63,8 @@ class FeasibilityResult:
     suggestions: Dict[str, Any]
     path: List[Dict[str, float]]
     meta: Dict[str, Any] = field(default_factory=dict)
+    # {"expansions": 真正研究过的路口数, "budget": 本次展开预算}；没跑到搜索时为 None
+    search_effort: Optional[Dict[str, int]] = None
 
 
 def assess_feasibility(req,
@@ -174,6 +176,10 @@ def assess_feasibility(req,
     verdict = verdict_of(feasible, reason, REASON_VERDICT)
     conclusion = VERDICT_LABELS[verdict]
 
+    # 搜索花了多少力气：把「没算完」与「真没路」分开的那对数字。
+    # 多段航线按段求和，预算也是按段给的（见 planner.expansion_budget）。
+    search_effort = search_effort_of(plan)
+
     # 5) 建议措施
     # 先算替代起降点，再生成文案：文案需要知道是否真的给出了替代点，
     # 否则会出现「文案承诺已给出替代点、但列表为空」的自相矛盾。
@@ -188,6 +194,7 @@ def assess_feasibility(req,
         feasible, reason, distance_block, blocking_block, risk_profile, priority,
         endpoint_bad=endpoint_bad,
         has_alt_bases=suggestions["has_alt_bases"],
+        search_effort=search_effort,
     )
 
     return FeasibilityResult(
@@ -202,6 +209,7 @@ def assess_feasibility(req,
         risk=risk_profile.to_dict() if risk_profile else None,
         blocking=blocking_block,
         suggestions=suggestions,
+        search_effort=search_effort,
         path=path_dicts,
         meta={
             "date": req.date,
@@ -231,6 +239,7 @@ def to_response_dict(res: FeasibilityResult) -> Dict[str, Any]:
         "risk": res.risk,
         "blocking": res.blocking,
         "suggestions": res.suggestions,
+        "search_effort": res.search_effort,
         "path": res.path,
         "meta": res.meta,
     }
@@ -630,7 +639,8 @@ def _build_suggestion_text(feasible: bool, reason: Optional[str],
                            risk: Optional[RiskProfile],
                            priority: str,
                            endpoint_bad: Optional[str] = None,
-                           has_alt_bases: bool = False) -> str:
+                           has_alt_bases: bool = False,
+                           search_effort: Optional[Dict[str, int]] = None) -> str:
     """生成建议措施文本（规则模板）。
 
     has_alt_bases 必须传入实际是否算出了替代起降点，避免文案承诺
@@ -651,8 +661,12 @@ def _build_suggestion_text(feasible: bool, reason: Optional[str],
         return "起降点超出当前气象数据覆盖范围，无法评估，请调整任务区域或更新数据源。"
 
     if reason == REASON_ITERATION:
+        # 带上「研究过多少路口 / 预算多少」，用户才知道这是再等等还是真没路
+        spent = (f"本次搜索研究过 {search_effort['expansions']} 个路口、"
+                 f"用满 {search_effort['budget']} 次展开预算" if search_effort
+                 else "本次搜索用满了展开预算")
         return (
-            "本次搜索在迭代上限内没有收敛，安全航线是否存在尚未确定 —— 这是「没算完」，"
+            f"{spent}仍未收敛，安全航线是否存在尚未确定 —— 这是「没算完」，"
             "不是「没有航线」。建议考虑：① 缩短航程或减少途经点后重试；"
             "② 适当放宽 TKE/EDR 阈值；③ 换一个起飞时刻或稍后重试（数据更新后可能收敛）。"
         )

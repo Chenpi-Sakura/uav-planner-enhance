@@ -124,6 +124,8 @@ export interface FeasibilityResult {
     has_alt_bases: boolean;
     text: string;
   };
+  /** A* 真正研究过的路口数 / 本次展开预算；没跑到搜索时为 null */
+  search_effort: null | { expansions: number; budget: number };
   path: { lat: number; lon: number }[];
   meta: {
     endpoints?: {
@@ -208,6 +210,8 @@ export type PlanNoticeReason =
 
 export interface PlanNotice {
   reason: PlanNoticeReason;
+  /** 「未算出」时带上的搜索力气（"已研究 N 个路口 / 预算 M"），空串 = 后端没给 */
+  effort?: string;
 }
 
 export const store = reactive<StoreState>({
@@ -362,6 +366,15 @@ export const FEAS_REASON_TEXT: Record<string, string> = {
 };
 
 /**
+ * 「未算出」要说的是没算完而不是没路，光讲道理不如给这对数字：
+ * 顶到预算 = 再等等或放宽阈值，远没用完 = 走廊真的封死了。没有数字时返回空串。
+ * 三档卡片、评估详情、规划弹窗、功能二候选行共用这一条措辞。
+ */
+export function effortText(e?: { expansions: number; budget: number } | null): string {
+  return e && e.budget ? `已研究 ${e.expansions} 个路口 / 预算 ${e.budget}` : '';
+}
+
+/**
  * 一次「开始规划」= 三档几何 + 三档完整评估（/api/assess/feasibility-multi）。
  *
  * 放在 store 而不是 Sidebar 里，是因为功能二的候选列表也要能触发同一个请求：
@@ -409,7 +422,10 @@ export async function runPlan(): Promise<void> {
       ?? results[0];
     activateRouteTier(target.priority);
     if (result.meta.n_feasible === 0) {
-      store.planNotice = { reason: FEAS_REASON_TO_NOTICE[target.reason ?? ''] ?? 'blocked' };
+      store.planNotice = {
+        reason: FEAS_REASON_TO_NOTICE[target.reason ?? ''] ?? 'blocked',
+        effort: effortText(target.search_effort),
+      };
     }
 
     // 三档卡片和评估详情都在侧栏里，折叠侧栏等于把选择入口藏起来，所以这里不折叠
