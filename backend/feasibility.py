@@ -19,6 +19,7 @@ import numpy as np
 
 from config import settings
 from planner import plan_path_ex, search_deadline, PlanResult, search_effort_of, _haversine_km
+from route_options import plan_tiers_with_guard
 from data_loader import data_loader
 from schemas import (
     VERDICT_FEASIBLE, VERDICT_INFEASIBLE, VERDICT_LABELS,
@@ -73,7 +74,8 @@ def assess_feasibility(req,
                        samples_per_km: float = 0.1,
                        include_alt_bases: bool = True,
                        include_alt_windows: bool = True,
-                       deadline: Optional[float] = None) -> FeasibilityResult:
+                       deadline: Optional[float] = None,
+                       precomputed_plan: Optional[PlanResult] = None) -> FeasibilityResult:
     """执行功能一评估。
 
     req 需为 schemas.FeasibilityRequest。
@@ -81,6 +83,8 @@ def assess_feasibility(req,
     未算出时还要扫替代起降点，那是二十多次全程重规划 —— 实测一条 2400 km 的线
     「未算出」的 55 s 里有 45 s 花在这上面，而不是主搜索。所以余额要整次共用一份，
     不给则本函数自取 ASTAR_REQUEST_TIME_LIMIT_S。
+    precomputed_plan：三档一起评估时由 route_options 统一规划并仲裁，本函数不再自己规划，
+    否则"哪条线代表这一档"会在两个地方各说一遍。
     """
     if deadline is None:
         deadline = search_deadline(settings.ASTAR_REQUEST_TIME_LIMIT_S)
@@ -98,8 +102,8 @@ def assess_feasibility(req,
         straight_time_h = 0.0
 
     # 2) 规划（含途经点）
-    plan_req = _to_plan_request(req, priority)
-    plan: PlanResult = plan_path_ex(plan_req, deadline=deadline)
+    plan: PlanResult = precomputed_plan if precomputed_plan is not None else \
+        plan_path_ex(_to_plan_request(req, priority), deadline=deadline)
 
     path_dicts: List[Dict[str, float]] = [
         {"lat": p.lat, "lon": p.lon} for p in plan.path
@@ -261,6 +265,8 @@ def to_response_dict(res: FeasibilityResult) -> Dict[str, Any]:
 def assess_feasibility_multi(req) -> Dict[str, Any]:
     """一次点击同时产出「紧急 / 平衡 / 安全」三档的完整评估。
 
+    三档的线先一起规划再仲裁（每档最终采用本档倍率下最便宜的那条，见
+    route_options.plan_tiers_with_guard），之后的距离/绕行/风险/结论都按采用线算。
     只有当前高亮档（默认平衡）算替代起降点与替代时段：那两项服务的是详情面板，
     三档各算一遍会把取数放大三倍而卡片上用不到。阻塞区只在不可飞时才分析，
     且与档位无关，重复开销可控。
@@ -274,6 +280,8 @@ def assess_feasibility_multi(req) -> Dict[str, Any]:
     sigs: List[tuple] = []
     # 一次点击 = 一次请求：三档共用同一份墙钟余额，而不是各拿 30 s 串起来变 90 s
     deadline = search_deadline(settings.ASTAR_REQUEST_TIME_LIMIT_S)
+    # 三档先一起规划并仲裁（越保守的档不得交出更贵的线），再各自做详情评估
+    plans, swaps = plan_tiers_with_guard(lambda tier: _to_plan_request(req, tier), deadline)
     for tier in tiers:
         is_active = tier == active
         res = assess_feasibility(
@@ -281,6 +289,7 @@ def assess_feasibility_multi(req) -> Dict[str, Any]:
             include_alt_bases=is_active,
             include_alt_windows=is_active,
             deadline=deadline,
+            precomputed_plan=plans[tier],
         )
         payload = to_response_dict(res)
         results.append(payload)
@@ -295,6 +304,8 @@ def assess_feasibility_multi(req) -> Dict[str, Any]:
         # 三档几何完全相同：多半是该时段沿程湍流未超过中风险下沿，软惩罚未参与代价
         "all_identical": bool(sigs) and len(set(sigs)) == 1,
         "distinct_paths": len(set(sigs)),
+        # 某档采用了兄弟档的线，见 route_options.enforce_tier_monotonicity
+        "tier_swaps": swaps,
     }
     return {"results": results, "active": active, "meta": meta}
 

@@ -312,6 +312,26 @@ def _hop_cost(tke: float, edr: float, phys_km: float, risk_scale: float,
     return cost
 
 
+def plan_cost_km(plan, risk_scale: float = 1.0) -> float:
+    """一条已交付航线在给定倍率下的代价（等效公里）。
+
+    记账与 A* 主循环逐跳一致：一跳 = 真实里程 + 该跳终点的超阈湍流罚，罚量原样收
+    （不做里程折算，因为交付线的顶点已按格距铺密）。两条来源不同的线因此可以直接
+    比大小 —— 三档之间的仲裁（route_options.enforce_tier_monotonicity）就是拿它算
+    「在本档的尺子下谁更便宜」。
+    """
+    path = plan.path
+    tkes = list(getattr(plan, 'tkes', []) or [])
+    edrs = list(getattr(plan, 'edrs', []) or [])
+    total = 0.0
+    for i in range(1, len(path)):
+        km = _haversine_km(path[i - 1].lat, path[i - 1].lon, path[i].lat, path[i].lon)
+        tke = tkes[i] if i < len(tkes) else float('nan')
+        edr = edrs[i] if i < len(edrs) else float('nan')
+        total += _hop_cost(tke, edr, km, risk_scale)
+    return total
+
+
 def _straight_hop(a, b, base_ns, dist_at_a, speed_kmh, tke_grid, edr_grid, lookup,
                   tke_thresh, edr_thresh, risk_scale, sample_km, unit_km):
     """沿 a→b 的**直线**按 sample_km 采样，返回 (代价, 里程 km, 是否被封)。

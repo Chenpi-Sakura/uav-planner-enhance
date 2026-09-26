@@ -1,12 +1,14 @@
 """三方案航线（紧急 / 平衡 / 安全）的行为契约。
 
-用合成网格注入，不读真实 NetCDF。要守住的三条口径：
+用合成网格注入，不读真实 NetCDF。要守住的口径：
   1. 三档只改湍流软惩罚倍率，硬阈值对三档一致（安全底线不由档位决定）；
   2. 风险场真的有差别时三档要出不同的线，且"越愿意绕 -> 越短的风险暴露"；
   3. 沿程湍流都没超过中风险下沿时，三档必然重合，此时要如实报 all_identical，
      不能让前端把同一条线包装成"三个方案"；
   4. 结论四态由 summarize_plan 给出（功能一三档与功能二 Top-K 共用）：
-     没搜完（iteration_limit）报「未算出」，不压成「不可飞」。
+     没搜完（iteration_limit）报「未算出」，不压成「不可飞」；
+  5. 三档规划完要仲裁单调性（enforce_tier_monotonicity）：越保守的档不得交出
+     在本档倍率下更贵的线，否则界面就会印出"越保守反而越危险"。
 """
 import sys
 import unittest
@@ -189,6 +191,106 @@ class TestSummarizePlanVerdict(unittest.TestCase):
         self.assertFalse(item['feasible'])
         self.assertEqual((item['verdict'], item['conclusion']), ('undetermined', '未算出'))
         self.assertEqual(item['reason'], 'iteration_limit')
+
+
+def _polyline_plan(lon_end: float, penalty: float):
+    """沿同一条纬线拉一条 20 点折线；penalty 是它在 w=1 下的罚量（等效公里）。
+
+    罚量按"每跳收一次"计：19 跳 × 1.7 × (k−8)。反解成恒定 TKE，测试里就能直接用
+    「这条线值多少绕行公里」摆代价关系，不用心算 TKE 刻度。
+    """
+    n = 20
+    coef = (n - 1) * planner.settings.DETOUR_PENALTY_TKE_COEF
+    tke = planner.settings.TKE_RISK_MODERATE + penalty / coef
+    path = [Point(lat=29.65, lon=90.0 + (lon_end - 90.0) * i / (n - 1)) for i in range(n)]
+    km = sum(planner._haversine_km(path[i - 1].lat, path[i - 1].lon,
+                                   path[i].lat, path[i].lon) for i in range(1, n))
+    return planner.PlanResult(
+        path=path, total_distance=km, total_grid_cost=km + penalty, found=True, reason=None,
+        times=[np.datetime64('2022-07-01T00:00')] * n,
+        tkes=[tke] * n, edrs=[0.0] * n, waypoints_reached=[1],
+    )
+
+
+class TestPlanCostKm(unittest.TestCase):
+    """plan_cost_km 必须与 A* 主循环同一把尺子，否则三档仲裁比的是两个量。"""
+
+    def test_penalty_charged_once_per_hop_at_the_destination_value(self):
+        plan = _polyline_plan(93.0, penalty=387.6)
+        self.assertAlmostEqual(planner.plan_cost_km(plan, 1.0),
+                               plan.total_distance + 387.6, places=6)
+        self.assertAlmostEqual(planner.plan_cost_km(plan, 4.0),
+                               plan.total_distance + 4 * 387.6, places=6)
+
+    def test_which_line_is_cheaper_depends_on_the_multiplier(self):
+        """短而热 vs 长而净：倍率小选短的，倍率大选净的 —— 复检靠的就是这个翻转。
+
+        290.1 km/罚 100 与 338.2 km/零罚：w=0.25 时 315.1 < 338.2，w=4 时 690.1 > 338.2。
+        """
+        short_hot = _polyline_plan(93.0, penalty=100.0)
+        long_clean = _polyline_plan(93.5, penalty=0.0)
+        self.assertLess(planner.plan_cost_km(short_hot, 0.25),
+                        planner.plan_cost_km(long_clean, 0.25))
+        self.assertGreater(planner.plan_cost_km(short_hot, 4.0),
+                           planner.plan_cost_km(long_clean, 4.0))
+
+
+class TestTierMonotonicity(unittest.TestCase):
+    """enforce_tier_monotonicity：越保守的档不得交出更贵的线（同一把尺子下）。
+
+    下面的里程/罚量是手摆过的：urgent 290.1 km/罚 50、normal 310.2/罚 10、
+    economy 338.5/罚 100 ⇒ w=0.25 时 302.6 / 312.7 / 363.5，w=1 时 340.1 / 320.2 / 438.5，
+    w=4 时 490.1 / 350.2 / 738.5。前两组各档选自己最优，最后一组安全档反常。
+    """
+
+    def _tiers(self):
+        return list(planner.settings.PLAN_TIERS)
+
+    def _plans(self, economy_penalty):
+        return {'urgent': _polyline_plan(93.0, 50.0),
+                'normal': _polyline_plan(93.2, 10.0),
+                'economy': _polyline_plan(93.5, economy_penalty)}
+
+    def test_no_swap_when_tiers_are_already_monotone(self):
+        plans = self._plans(economy_penalty=0.0)   # 长而净：安全档自己就是最优
+        before = {t: list(p.path) for t, p in plans.items()}
+        self.assertEqual(route_options.enforce_tier_monotonicity(plans, self._tiers()), [])
+        self.assertEqual({t: list(p.path) for t, p in plans.items()}, before)
+
+    def test_conservative_tier_adopts_the_cheaper_line(self):
+        plans = self._plans(economy_penalty=100.0)
+        mine = plans['economy']
+        swaps = route_options.enforce_tier_monotonicity(plans, self._tiers())
+        self.assertEqual([(s['tier'], s['adopted_from']) for s in swaps],
+                         [('economy', 'normal')], "只有安全档反常，另两档不该被牵动")
+        self.assertIs(plans['economy'], plans['normal'])
+        self.assertEqual(swaps[0]['cost_own_km'],
+                         round(planner.plan_cost_km(mine, 4.0), 1))
+        self.assertLess(swaps[0]['cost_adopted_km'], swaps[0]['cost_own_km'])
+
+    def test_failed_tier_keeps_its_verdict_instead_of_borrowing(self):
+        """没算完的档不借兄弟档的线：四态里「未算出」这句必须留得住。"""
+        failed = planner.PlanResult(path=[], total_distance=0.0, total_grid_cost=0.0,
+                                    found=False, reason='iteration_limit')
+        plans = self._plans(economy_penalty=100.0)
+        plans['economy'] = failed
+        route_options.enforce_tier_monotonicity(plans, self._tiers())
+        self.assertIs(plans['economy'], failed)
+
+    def test_plan_route_options_surfaces_swaps_in_meta(self):
+        saved = route_options.plan_path_ex
+        plans = self._plans(economy_penalty=100.0)
+        try:
+            route_options.plan_path_ex = lambda req, **kw: plans[req.priority]
+            out = route_options.plan_route_options(_request())
+        finally:
+            route_options.plan_path_ex = saved
+        by = {r['priority']: r for r in out['routes']}
+        self.assertEqual([(s['tier'], s['adopted_from']) for s in out['meta']['tier_swaps']],
+                         [('economy', 'normal')])
+        self.assertEqual(by['economy']['total_distance'], by['normal']['total_distance'])
+        self.assertLess(by['economy']['max_tke'], by['urgent']['max_tke'],
+                        "换线后沿程最坏点应跟着降下来")
 
 
 if __name__ == "__main__":

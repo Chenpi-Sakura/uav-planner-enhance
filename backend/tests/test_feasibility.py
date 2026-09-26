@@ -27,6 +27,7 @@ import numpy as np
 
 import feasibility
 import geo
+import route_options
 from config import settings
 from planner import PlanResult, SegmentResult
 from schemas import FeasibilityRequest, Point
@@ -52,15 +53,18 @@ class _StubLoader:
 
 
 def _fake_plan(total_distance: float, found: bool = True, reason: str = 'blocked',
-               segments=None):
-    """构造一条拉萨→林芝的合成航线（20 点），沿程风险恒为低。
+               segments=None, tke: float = 0.1, lon_to: float = 94.36):
+    """构造一条拉萨→林芝方向的合成航线（20 点），沿程风险恒定。
 
     found=False 时 reason 决定规划失败的性质：blocked 真没有路，
     iteration_limit 只是没搜完。segments 用来注入各段的展开计数。
+    tke / lon_to 只给档位单调性复选用：它按【几何】算代价（与生产一致，
+    PlanResult.total_distance 本就是同一串顶点的折线长），所以想让几条线在代价上
+    分出高低，得让线长与沿程风险同时错开。
     """
     n = 20
     lats = np.linspace(29.65, 29.66, n)
-    lons = np.linspace(91.13, 94.36, n)
+    lons = np.linspace(91.13, lon_to, n)
     path = [Point(lat=float(a), lon=float(b)) for a, b in zip(lats, lons)]
     times = [np.datetime64('2022-07-01T00:00') + np.timedelta64(i * 900, 's') for i in range(n)]
     return PlanResult(
@@ -70,7 +74,7 @@ def _fake_plan(total_distance: float, found: bool = True, reason: str = 'blocked
         found=found,
         reason=None if found else reason,
         times=times if found else [],
-        tkes=[0.1] * n if found else [],
+        tkes=[tke] * n if found else [],
         edrs=[0.001] * n if found else [],
         waypoints_reached=[1] if found else [],
         segment_results=list(segments or []),
@@ -328,10 +332,15 @@ class TestConfigThresholds(unittest.TestCase):
 
 
 class TestFeasibilityMulti(unittest.TestCase):
-    """一次点击同时产出三档评估（合并后的「开始规划」走这条）。"""
+    """一次点击同时产出三档评估（合并后的「开始规划」走这条）。
+
+    三档的线由 route_options 统一规划并仲裁，所以这里的替身挂在
+    route_options.plan_path_ex 上，而不是 feasibility 自己那份。
+    """
 
     def setUp(self):
         self.saved_plan = feasibility.plan_path_ex
+        self.saved_ro_plan = route_options.plan_path_ex
         self.saved_loader = feasibility.data_loader
         self.saved_bases = feasibility._suggest_alt_bases
         self.saved_windows = feasibility._suggest_alt_windows
@@ -339,6 +348,7 @@ class TestFeasibilityMulti(unittest.TestCase):
 
     def tearDown(self):
         feasibility.plan_path_ex = self.saved_plan
+        route_options.plan_path_ex = self.saved_ro_plan
         feasibility.data_loader = self.saved_loader
         feasibility._suggest_alt_bases = self.saved_bases
         feasibility._suggest_alt_windows = self.saved_windows
@@ -351,15 +361,17 @@ class TestFeasibilityMulti(unittest.TestCase):
         )
 
     def _split_plans(self):
-        """三档各给一条不同几何的航线（_fake_plan 的几何固定，靠纬度错开）。"""
-        plans = {}
-        for tier, km, shift in (('urgent', 340.0, 0.0), ('normal', 360.0, 0.05),
-                                ('economy', 400.0, 0.1)):
-            plan = _fake_plan(km)
-            if shift:
-                plan.path = [Point(lat=float(p.lat) + shift, lon=p.lon) for p in plan.path]
-            plans[tier] = plan
-        feasibility.plan_path_ex = lambda req, **kw: plans[req.priority]
+        """三档各一条线，且每档在【自己的倍率】下选自己那条才最优。
+
+        越短的线沿程越热：340 km 罚 100、380 km 罚 30、430 km 零罚，于是
+        w=0.25 时 365 < 380 < 527，w=1 时 440 > 380 < 430，w=4 时 740 > 500 > 430。
+        写成三条"只有里程差别"的线会被单调性复检并成一条，那就不是在测三档各报自己的数了。
+        """
+        specs = (('urgent', 340.0, 94.65, 11.1), ('normal', 380.0, 95.06, 8.93),
+                 ('economy', 430.0, 95.58, 0.1))
+        plans = {tier: _fake_plan(km, tke=t, lon_to=lon_to)
+                 for tier, km, lon_to, t in specs}
+        route_options.plan_path_ex = lambda req, **kw: plans[req.priority]
 
     def test_three_tiers_come_back_in_configured_order(self):
         self._split_plans()
@@ -370,14 +382,31 @@ class TestFeasibilityMulti(unittest.TestCase):
         self.assertEqual(out['meta']['n_feasible'], 3)
         self.assertFalse(out['meta']['all_identical'])
         self.assertEqual(out['meta']['distinct_paths'], 3)
+        self.assertEqual(out['meta']['tier_swaps'], [])
         # 每档带自己的里程，卡片要并排显示 距离/绕行比
         self.assertEqual([r['distance']['route_km'] for r in out['results']],
-                         [340.0, 360.0, 400.0])
+                         [340.0, 380.0, 430.0])
+
+    def test_conservative_tier_adopts_the_cheaper_sibling_line(self):
+        """安全档交出一条更贵的线时，卡片换成兄弟档那条 —— 不能印成"越保守越危险"。"""
+        specs = (('urgent', 340.0, 94.65, 11.1), ('normal', 380.0, 95.06, 0.1),
+                 ('economy', 430.0, 95.58, 20.0))
+        plans = {tier: _fake_plan(km, tke=t, lon_to=lon_to)
+                 for tier, km, lon_to, t in specs}
+        route_options.plan_path_ex = lambda req, **kw: plans[req.priority]
+        out = feasibility.assess_feasibility_multi(self._req())
+        by = {r['priority']: r for r in out['results']}
+        self.assertEqual([by[t]['distance']['route_km'] for t in ('urgent', 'normal')],
+                         [340.0, 380.0], "另两档在自己倍率下已是最优，不该被换")
+        self.assertEqual(by['economy']['distance']['route_km'], 380.0,
+                         "w=4 下平衡档那条更便宜，安全档应采用它")
+        self.assertEqual([(s['tier'], s['adopted_from']) for s in out['meta']['tier_swaps']],
+                         [('economy', 'normal')])
 
     def test_identical_geometry_is_reported_not_hidden(self):
         """三档同解时如实标 all_identical，前端据此说明而不是假装有三个方案。"""
         same = _fake_plan(340.0)
-        feasibility.plan_path_ex = lambda req, **kw: same
+        route_options.plan_path_ex = lambda req, **kw: same
         out = feasibility.assess_feasibility_multi(self._req())
         self.assertTrue(out['meta']['all_identical'])
         self.assertEqual(out['meta']['distinct_paths'], 1)
@@ -389,7 +418,7 @@ class TestFeasibilityMulti(unittest.TestCase):
 
     def test_only_active_tier_pays_for_alt_suggestions(self):
         """替代起降点/时段服务的是详情面板，三档各算一遍会把取数放大三倍。"""
-        feasibility.plan_path_ex = lambda req, **kw: _fake_plan(0.0, found=False)
+        route_options.plan_path_ex = lambda req, **kw: _fake_plan(0.0, found=False)
         asked = []
         feasibility._suggest_alt_bases = lambda req, **kw: asked.append(req.priority) or []
         feasibility._suggest_alt_windows = lambda *a, **kw: []
