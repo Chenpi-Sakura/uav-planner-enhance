@@ -225,7 +225,7 @@ def _render_feasibility(ctx: Dict[str, Any]) -> str:
             "detour_exceeds_threshold": "存在安全航线但绕行成本超出当前优先级阈值",
             "no_safe_path": "航路被高强度湍流区封死",
             "data_coverage_insufficient": "起降点超出气象数据覆盖范围",
-            "search_iteration_limit": "搜索达到迭代上限，未能确认安全航线",
+            "search_iteration_limit": "搜索未收敛（展开预算或时间上限先到），未能确认安全航线",
         }
         lines.append(
             f"本次航线评估结论为「{ctx.get('conclusion') or '不可飞'}」。主要原因："
@@ -291,8 +291,11 @@ def _render_feasibility(ctx: Dict[str, Any]) -> str:
     else:
         eff = ctx.get("search_effort") or {}
         if str(ctx.get("verdict")) == "undetermined" and eff.get("budget"):
+            e, b = int(eff["expansions"]), int(eff["budget"])
             lines.append(
-                f"本次搜索研究过 {eff['expansions']} 个路口，用满了 {eff['budget']} 次展开预算。")
+                f"本次搜索研究过 {e} 个路口，用满了 {b} 次展开预算。" if e >= b else
+                f"本次搜索研究过 {e} 个路口（{b} 次预算并未用满），"
+                f"到了 {float(eff.get('elapsed_s') or settings.ASTAR_TIME_LIMIT_S):.0f} 秒的时间上限。")
         lines.append(VERDICT_ADVICE.get(
             str(ctx.get("verdict")),
             "建议调整起降点、更换飞行时间，或推迟任务等待更优气象条件。",

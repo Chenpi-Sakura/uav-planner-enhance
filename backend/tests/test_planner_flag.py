@@ -5,6 +5,7 @@
 寻路细节，而是**失败时不得伪装成直线路径**这一行为契约。
 """
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -224,6 +225,59 @@ class TestNoRepeatedExpansion(unittest.TestCase):
         self.assertGreaterEqual(seg.iterations, len(expanded))
 
 
+class TestTimeLimit(unittest.TestCase):
+    """墙钟先到要报 time_limit，不能顶着一句「用满预算」冒充 iteration_limit。
+
+    两者对用户都是「未算出」，分开的是那句解释：iteration_limit 是这条线没算完，
+    time_limit 是这台机器这一刻慢 —— 混起来就等于把 I/O 慢说成没有航线。
+    计时从开始展开起算，气象取数不在内（否则冷读第一次点击必然被判未算出）。
+    """
+
+    def setUp(self):
+        self._saved_loader = planner.data_loader
+        self._saved_res = planner.settings.GRID_RESOLUTION_DEG
+        self._saved_limit = planner.settings.ASTAR_TIME_LIMIT_S
+        planner.data_loader = _WallLoader()
+        # 0.1° 让这条绕墙线要展开 ~730 次：检查粒度是 256，用例得明显跨过它
+        planner.settings.GRID_RESOLUTION_DEG = 0.1
+
+    def tearDown(self):
+        planner.data_loader = self._saved_loader
+        planner.settings.GRID_RESOLUTION_DEG = self._saved_res
+        planner.settings.ASTAR_TIME_LIMIT_S = self._saved_limit
+
+    def _search(self, **kw):
+        return planner.plan_path_segment(
+            (30.0, 90.0), (30.0, 94.0),
+            tke_thresh=1.0, edr_thresh=0.3,
+            start_time_str="2022-07-01T08:00",
+            initial_g_score=0.0, initial_dist=0.0, speed_kmh=60.0, **kw)
+
+    def test_clock_stop_reports_time_limit(self):
+        planner.settings.ASTAR_TIME_LIMIT_S = 0.0
+        seg = self._search()
+        self.assertFalse(seg.found)
+        self.assertEqual(seg.reason, 'time_limit')
+        # 检查粒度是 256 次展开：到点就停，绝不能把两万次预算烧完
+        self.assertLess(seg.iterations, 512, "墙钟到点后仍在展开，说明检查没生效")
+        self.assertLess(seg.iterations, seg.expansion_budget)
+        self.assertGreaterEqual(seg.elapsed_s, 0.0)
+
+    def test_shared_deadline_wins_over_local_limit(self):
+        """多段航线共用一份余额：本段自己的 18 s 没到，整次规划的时刻已经过了。"""
+        planner.settings.ASTAR_TIME_LIMIT_S = 600.0
+        seg = self._search(deadline=time.monotonic() - 1.0)
+        self.assertEqual(seg.reason, 'time_limit')
+        self.assertLess(seg.iterations, 512)
+
+    def test_converged_search_still_reports_elapsed(self):
+        planner.settings.ASTAR_TIME_LIMIT_S = 600.0
+        seg = self._search()
+        self.assertTrue(seg.found, "绕墙找缺口这条线本来就有解")
+        self.assertIsNone(seg.reason)
+        self.assertGreater(seg.elapsed_s, 0.0)
+
+
 class TestSearchEffortOf(unittest.TestCase):
     """「研究过的路口 / 预算」这对数：整条线按段求和，没跑到搜索时不给。"""
 
@@ -232,13 +286,16 @@ class TestSearchEffortOf(unittest.TestCase):
         return PlanResult(path=[], total_distance=0.0, total_grid_cost=0.0,
                           found=False, reason='iteration_limit', segment_results=segs)
 
-    def _seg(self, iters, budget):
+    def _seg(self, iters, budget, elapsed=0.0):
         return SegmentResult(path=[], found=False, reason='iteration_limit',
-                             iterations=iters, expansion_budget=budget)
+                             iterations=iters, expansion_budget=budget,
+                             elapsed_s=elapsed)
 
     def test_sums_over_segments(self):
-        got = planner.search_effort_of(self._plan([self._seg(100, 20000), self._seg(50, 20000)]))
-        self.assertEqual(got, {"expansions": 150, "budget": 40000})
+        """用时也按段求和并留一位小数：它是「预算付完」与「墙钟先到」的区分依据。"""
+        got = planner.search_effort_of(
+            self._plan([self._seg(100, 20000, 7.34), self._seg(50, 20000, 2.0)]))
+        self.assertEqual(got, {"expansions": 150, "budget": 40000, "elapsed_s": 9.3})
 
     def test_no_budget_means_no_number(self):
         """起点被封 / 无数据时压根没进搜索，报「0 / 0」会被读成「一秒就没搜完」。"""

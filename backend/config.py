@@ -102,6 +102,17 @@ class Settings(BaseModel):
     ASTAR_MIN_EXPANSIONS: int = 20000
     ASTAR_MAX_EXPANSIONS: int = 120000
 
+    # ---- A* 墙钟上限（2026-09-26 加，与上面的展开预算取先到者）----
+    # 展开预算是确定量，但它换算成等待时长不是：一条 2400 km 的线顶格一次，
+    # 主搜索只占 7 s，整次请求却要 52~56 s —— 大头是「未算出」时那二十多次
+    # 替代起降点全程重规划。所以只给单次搜索设上限是不够的，整次请求也得有一份余额。
+    # 单次搜索 18 s：计时从**开始展开**算起，气象冷读不吃这份预算（见 planner 注释）。
+    # 整次请求 30 s：主规划、替代起降点扫描、三档并评共用这一份；赠品（替代点）
+    # 余额用完就把手上已找到的照常给出，不能让赠品把那次点击拖长。
+    # 两者都到不了的请求，仍由 main.ASSESS_TIMEOUT_S=120 兜底成 504。
+    ASTAR_TIME_LIMIT_S: float = 18.0
+    ASTAR_REQUEST_TIME_LIMIT_S: float = 30.0
+
     # ---- 风险分级阈值（与 planner 的软/硬约束对齐）----
     TKE_RISK_MODERATE: float = 8.0     # TKE >= 此值 -> 至少中度风险
     TKE_RISK_HIGH: float = 16.0        # TKE >= 此值 -> 高风险

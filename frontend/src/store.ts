@@ -124,8 +124,8 @@ export interface FeasibilityResult {
     has_alt_bases: boolean;
     text: string;
   };
-  /** A* 真正研究过的路口数 / 本次展开预算；没跑到搜索时为 null */
-  search_effort: null | { expansions: number; budget: number };
+  /** A* 真正研究过的路口数 / 本次展开预算 / 展开花掉的秒数；没跑到搜索时为 null */
+  search_effort: null | { expansions: number; budget: number; elapsed_s?: number };
   path: { lat: number; lon: number }[];
   meta: {
     endpoints?: {
@@ -368,10 +368,13 @@ export const FEAS_REASON_TEXT: Record<string, string> = {
 /**
  * 「未算出」要说的是没算完而不是没路，光讲道理不如给这对数字：
  * 顶到预算 = 再等等或放宽阈值，远没用完 = 走廊真的封死了。没有数字时返回空串。
+ * 用时那一截区分两种停法：预算付完 vs 墙钟先到（见 planner 的 iteration_limit / time_limit）。
  * 三档卡片、评估详情、规划弹窗、功能二候选行共用这一条措辞。
  */
-export function effortText(e?: { expansions: number; budget: number } | null): string {
-  return e && e.budget ? `已研究 ${e.expansions} 个路口 / 预算 ${e.budget}` : '';
+export function effortText(e?: { expansions: number; budget: number; elapsed_s?: number } | null): string {
+  if (!e || !e.budget) return '';
+  const spent = e.elapsed_s ? ` / 用时 ${Math.round(e.elapsed_s)} 秒` : '';
+  return `已研究 ${e.expansions} 个路口 / 预算 ${e.budget}${spent}`;
 }
 
 /**

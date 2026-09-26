@@ -13,11 +13,12 @@
 from dataclasses import dataclass, asdict, field
 from typing import List, Dict, Any, Optional, Tuple
 import math
+import time
 
 import numpy as np
 
 from config import settings
-from planner import plan_path_ex, PlanResult, search_effort_of, _haversine_km
+from planner import plan_path_ex, search_deadline, PlanResult, search_effort_of, _haversine_km
 from data_loader import data_loader
 from schemas import (
     VERDICT_FEASIBLE, VERDICT_INFEASIBLE, VERDICT_LABELS,
@@ -63,18 +64,26 @@ class FeasibilityResult:
     suggestions: Dict[str, Any]
     path: List[Dict[str, float]]
     meta: Dict[str, Any] = field(default_factory=dict)
-    # {"expansions": 真正研究过的路口数, "budget": 本次展开预算}；没跑到搜索时为 None
-    search_effort: Optional[Dict[str, int]] = None
+    # {"expansions": 真正研究过的路口数, "budget": 本次展开预算, "elapsed_s": 展开花掉的秒数}；
+    # 没跑到搜索时为 None
+    search_effort: Optional[Dict[str, Any]] = None
 
 
 def assess_feasibility(req,
                        samples_per_km: float = 0.1,
                        include_alt_bases: bool = True,
-                       include_alt_windows: bool = True) -> FeasibilityResult:
+                       include_alt_windows: bool = True,
+                       deadline: Optional[float] = None) -> FeasibilityResult:
     """执行功能一评估。
 
     req 需为 schemas.FeasibilityRequest。
+    deadline 是整次请求共用的 `time.monotonic()` 绝对时刻（见 planner.search_deadline）：
+    未算出时还要扫替代起降点，那是二十多次全程重规划 —— 实测一条 2400 km 的线
+    「未算出」的 55 s 里有 45 s 花在这上面，而不是主搜索。所以余额要整次共用一份，
+    不给则本函数自取 ASTAR_REQUEST_TIME_LIMIT_S。
     """
+    if deadline is None:
+        deadline = search_deadline(settings.ASTAR_REQUEST_TIME_LIMIT_S)
     priority = (req.priority or settings.DEFAULT_PRIORITY).lower()
     detour_limit = settings.DETOUR_RATIO_LIMIT.get(priority, settings.DETOUR_RATIO_LIMIT["normal"])
 
@@ -90,7 +99,7 @@ def assess_feasibility(req,
 
     # 2) 规划（含途经点）
     plan_req = _to_plan_request(req, priority)
-    plan: PlanResult = plan_path_ex(plan_req)
+    plan: PlanResult = plan_path_ex(plan_req, deadline=deadline)
 
     path_dicts: List[Dict[str, float]] = [
         {"lat": p.lat, "lon": p.lon} for p in plan.path
@@ -158,7 +167,9 @@ def assess_feasibility(req,
             # 日期或区域没有气象数据，与「湍流封死」是两回事，别去分析阻塞区
             reason = REASON_DATA_MISSING
         else:
-            reason = REASON_ITERATION if plan.reason == 'iteration_limit' else REASON_NO_PATH
+            reason = (REASON_ITERATION
+                      if plan.reason in ('iteration_limit', 'time_limit')
+                      else REASON_NO_PATH)
             # 起降点本身不安全时，不必再报告途中阻塞区，避免张冠李戴
             if endpoint_bad is None:
                 blocking_block = _analyze_blocking(start, end, req)
@@ -188,7 +199,8 @@ def assess_feasibility(req,
         if include_alt_windows and data_ok:
             suggestions["alt_windows"] = _suggest_alt_windows(start, end, req)
         if include_alt_bases:
-            suggestions["alt_bases"] = _suggest_alt_bases(req, endpoints=endpoints)
+            suggestions["alt_bases"] = _suggest_alt_bases(
+                req, endpoints=endpoints, deadline=deadline)
     suggestions["has_alt_bases"] = bool(suggestions["alt_bases"])
     suggestions["text"] = _build_suggestion_text(
         feasible, reason, distance_block, blocking_block, risk_profile, priority,
@@ -259,12 +271,15 @@ def assess_feasibility_multi(req) -> Dict[str, Any]:
 
     results: List[Dict[str, Any]] = []
     sigs: List[tuple] = []
+    # 一次点击 = 一次请求：三档共用同一份墙钟余额，而不是各拿 30 s 串起来变 90 s
+    deadline = search_deadline(settings.ASTAR_REQUEST_TIME_LIMIT_S)
     for tier in tiers:
         is_active = tier == active
         res = assess_feasibility(
             req.model_copy(update={"priority": tier}),
             include_alt_bases=is_active,
             include_alt_windows=is_active,
+            deadline=deadline,
         )
         payload = to_response_dict(res)
         results.append(payload)
@@ -529,12 +544,16 @@ def _suggest_alt_windows(start, end, req, max_results: int = 3) -> List[Dict[str
 
 
 def _suggest_alt_bases(req,
-                       endpoints: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+                       endpoints: Optional[Dict[str, Any]] = None,
+                       deadline: Optional[float] = None) -> List[Dict[str, Any]]:
     """以起降点为圆心按方位/半径采样，返回可飞的替代起降点。
 
     起点不安全时挪起点、终点不安全时挪终点：只挪不安全的那一端，
     另一端保持不动，这样给出的方案才是「改一个点就能飞」。
     两端都安全（即真正卡在中途湍流区）时，优先尝试更换终点。
+
+    deadline 是整次请求共用的墙钟时刻：这是二十多次全程重规划，属于「未算出」时的赠品，
+    余额用完就把手上已找到的照常给出，不能让赠品把那次点击拖长。
     """
     from schemas import PlanRequest
     from planner import plan_path_ex as _plan
@@ -557,7 +576,10 @@ def _suggest_alt_bases(req,
     # 方位顺序按「远离原航向」优先排列，避免替代点全挤在同一侧
     bearings = [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
 
+    out_of_time = False
     for target in targets:
+        if out_of_time:
+            break
         anchor = req.start if target == "start" else req.end
         other = req.end if target == "start" else req.start
 
@@ -567,7 +589,12 @@ def _suggest_alt_bases(req,
         seen_dirs: set = set()
 
         for radius in settings.ALT_BASE_RADII_KM:
+            if out_of_time:
+                break
             for b_lat, b_lon in bearings:
+                if deadline is not None and time.monotonic() >= deadline:
+                    out_of_time = True
+                    break
                 if (b_lat, b_lon) in seen_dirs:
                     continue
                 cand_lat = float(anchor.lat) + b_lat * (radius / 111.0)
@@ -591,7 +618,7 @@ def _suggest_alt_bases(req,
                         tke_threshold=req.tke_threshold,
                         edr_threshold=req.edr_threshold,
                     )
-                    r = _plan(cand_req)
+                    r = _plan(cand_req, deadline=deadline)
                     if r.found and r.path:
                         samples = _sample_along_path(
                             r.path, req.date, req.start_time, req.speed,
@@ -661,10 +688,19 @@ def _build_suggestion_text(feasible: bool, reason: Optional[str],
         return "起降点超出当前气象数据覆盖范围，无法评估，请调整任务区域或更新数据源。"
 
     if reason == REASON_ITERATION:
-        # 带上「研究过多少路口 / 预算多少」，用户才知道这是再等等还是真没路
-        spent = (f"本次搜索研究过 {search_effort['expansions']} 个路口、"
-                 f"用满 {search_effort['budget']} 次展开预算" if search_effort
-                 else "本次搜索用满了展开预算")
+        # 带上「研究过多少路口 / 预算多少 / 花了多少秒」，用户才知道这是再等等还是真没路。
+        # 两种停法不是一回事：顶格 = 预算付完，到点 = 墙钟先到而预算还剩一大半 ——
+        # 对后者说「用满预算」是假话。
+        if search_effort:
+            e, b = int(search_effort["expansions"]), int(search_effort["budget"])
+            if e >= b:
+                spent = f"本次搜索研究过 {e} 个路口、用满 {b} 次展开预算"
+            else:
+                limit_s = float(search_effort.get("elapsed_s") or settings.ASTAR_TIME_LIMIT_S)
+                spent = (f"本次搜索研究过 {e} 个路口（{b} 次预算尚未用满）、"
+                         f"到了 {limit_s:.0f} 秒的时间上限")
+        else:
+            spent = "本次搜索用满了展开预算"
         return (
             f"{spent}仍未收敛，安全航线是否存在尚未确定 —— 这是「没算完」，"
             "不是「没有航线」。建议考虑：① 缩短航程或减少途经点后重试；"

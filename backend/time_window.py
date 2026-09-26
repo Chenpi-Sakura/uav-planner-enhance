@@ -29,7 +29,8 @@ import numpy as np
 from config import settings
 import timebase
 from data_loader import data_loader
-from planner import plan_path_ex, PlanResult, _haversine_km, SEGMENT_PAD_DEG
+from planner import (plan_path_ex, PlanResult, search_deadline,
+                     _haversine_km, SEGMENT_PAD_DEG)
 from risk import classify_point, LEVEL_LOW, LEVEL_UNFLYABLE
 from route_options import summarize_plan
 import geo
@@ -393,13 +394,16 @@ def _user_pair(data_time) -> Tuple[str, str]:
     return s[:10], s[11:16]
 
 
-def _plan_one_candidate(req, slot, straight_km, field=None) -> Dict[str, Any]:
+def _plan_one_candidate(req, slot, straight_km, field=None,
+                        deadline=None) -> Dict[str, Any]:
     """按候选自己的起飞时刻规划一条真实航线（功能二 B10 的第二遍）。
 
     只按「平衡」档规划：Top-K 已经乘过一次成本，再乘三档不值；
     切档回功能一，那里有完整的三档评估。
 
     field 是本函数第一遍已经读好的扫描场，注入后这一遍不再碰 NetCDF。
+    deadline 是整次请求共用的墙钟时刻（见 planner.search_deadline）：余额耗尽的候选
+    会在 256 次展开内就停，仍然留在结果里标「未算出」，不悄悄消失。
     """
     from schemas import PlanRequest
     date, hhmm = _user_pair(slot.data_time)
@@ -408,7 +412,7 @@ def _plan_one_candidate(req, slot, straight_km, field=None) -> Dict[str, Any]:
         date=date, start_time=hhmm, speed=req.speed,
         tke_threshold=req.tke_threshold, edr_threshold=req.edr_threshold,
         priority=settings.DEFAULT_PRIORITY,
-    ), field=field)
+    ), field=field, deadline=deadline)
     return summarize_plan(plan, straight_km, float(req.speed or 0.0))
 
 
@@ -441,7 +445,7 @@ def _top_k_candidates(slots: List[SlotResult], recommended: Window,
 
 def plan_top_k_routes(req, slots: List[SlotResult], windows: List[Window],
                       recommended: Window, backups: List[Window],
-                      straight_km: float, field=None) -> List[Dict[str, Any]]:
+                      straight_km: float, field=None, deadline=None) -> List[Dict[str, Any]]:
     """对 Top-K 候选各按【自身起飞时刻】规划一条航线，并做第二遍（细）排序。
 
     第一遍是「一条固定走廊 × 24 个槽位」的查表，快但带时刻偏置：
@@ -457,7 +461,7 @@ def plan_top_k_routes(req, slots: List[SlotResult], windows: List[Window],
     k = max(1, int(settings.TW_TOP_K_ROUTES))
     routes: List[Dict[str, Any]] = []
     for win, slot in _top_k_candidates(slots, recommended, backups, k):
-        summary = _plan_one_candidate(req, slot, straight_km, field=field)
+        summary = _plan_one_candidate(req, slot, straight_km, field=field, deadline=deadline)
         routes.append({
             **summary,
             "takeoff": str(to_user_time(slot.data_time))[:16],
@@ -504,8 +508,15 @@ def _route_dict(r: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def assess_time_window(req, run_planner: bool = True) -> Dict[str, Any]:
-    """执行功能二评估。req 需为 schemas.TimeWindowRequest。"""
+def assess_time_window(req, run_planner: bool = True, deadline=None) -> Dict[str, Any]:
+    """执行功能二评估。req 需为 schemas.TimeWindowRequest。
+
+    deadline：整次请求共用的 `time.monotonic()` 绝对时刻。功能二一次要点 Top-K 个候选，
+    每个候选都是一次全程规划，不设共用的余额就会「一个慢候选拖死整张表」。
+    不给则本函数自取 ASTAR_REQUEST_TIME_LIMIT_S。
+    """
+    if deadline is None:
+        deadline = search_deadline(settings.ASTAR_REQUEST_TIME_LIMIT_S)
     speed = float(req.speed or 60.0)
     tke_th = req.tke_threshold if req.tke_threshold is not None else settings.TKE_THRESHOLD_HIGH
     edr_th = req.edr_threshold if req.edr_threshold is not None else settings.EDR_THRESHOLD_HIGH
@@ -532,7 +543,7 @@ def assess_time_window(req, run_planner: bool = True) -> Dict[str, Any]:
                                text="起降点超出当前气象数据覆盖范围，无法进行时间窗口分析。")
 
     # 2) 几何基线：优先复用规划路径，失败退回直线离散化
-    path_pts, fallback = _geometry(start, end, req, run_planner)
+    path_pts, fallback = _geometry(start, end, req, run_planner, deadline=deadline)
     meta["geometry_fallback"] = bool(fallback)
 
     raw = _to_pts(path_pts)
@@ -616,7 +627,8 @@ def assess_time_window(req, run_planner: bool = True) -> Dict[str, Any]:
         straight_km = _haversine_km(start[0], start[1], end[0], end[1])
         t_k = time.perf_counter()
         routes = plan_top_k_routes(req, slots, windows, recommended, backups, straight_km,
-                                   field=(tke, edr, slab_lats, slab_lons, slab_times))
+                                   field=(tke, edr, slab_lats, slab_lons, slab_times),
+                                   deadline=deadline)
         meta["top_k_planned"] = len(routes)
         meta["top_k_cost_ms"] = int((time.perf_counter() - t_k) * 1000)
         meta["top_k_field"] = "injected"
@@ -743,7 +755,7 @@ def _load_turbulence(data_start, total_hours, bbox):
     return data_loader.read_turbulence_field(data_start, total_hours, bbox)
 
 
-def _geometry(start, end, req, run_planner: bool):
+def _geometry(start, end, req, run_planner: bool, deadline=None):
     """确定扫描用的路径几何：优先用规划器，失败退回直线离散化。"""
     if run_planner:
         try:
@@ -753,7 +765,7 @@ def _geometry(start, end, req, run_planner: bool):
                 date=req.date, start_time=req.start_time or "08:00", speed=req.speed,
                 tke_threshold=req.tke_threshold, edr_threshold=req.edr_threshold,
             )
-            plan: PlanResult = plan_path_ex(plan_req)
+            plan: PlanResult = plan_path_ex(plan_req, deadline=deadline)
             if plan.found and len(plan.path) >= 2:
                 return [{"lat": p.lat, "lon": p.lon} for p in plan.path], False
         except Exception:

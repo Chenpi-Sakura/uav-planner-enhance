@@ -1,5 +1,6 @@
 import math
 import heapq
+import time
 import numpy as np
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass, field
@@ -28,7 +29,7 @@ class SegmentResult:
     """A* 单段规划结果，携带是否成功与失败原因。"""
     path: List[Point]
     found: bool
-    reason: Optional[str] = None      # None | 'blocked' | 'iteration_limit' | 'no_data'
+    reason: Optional[str] = None      # None | 'blocked' | 'no_data' | 'iteration_limit' | 'time_limit'
     final_g_score: float = 0.0        # 该段结束时的累计 A* 代价
     final_dist: float = 0.0           # 该段结束时的累计物理距离（km）
     times: List[object] = field(default_factory=list)  # 与 path 一一对应的绝对时刻
@@ -37,6 +38,7 @@ class SegmentResult:
     iterations: int = 0       # 真正研究过的路口数（陈旧堆项不计，见主循环的 settled_g）
     explored: int = 0         # 被 g_score 收录过的不同节点数
     expansion_budget: int = 0  # 本次给的展开预算，iterations 的分母（0 = 没跑到搜索）
+    elapsed_s: float = 0.0    # 本次搜索真正花掉的墙钟秒数（不含气象取数），用于「未算出」文案
     escaped: bool = False             # 注入场覆盖不住这次搜索（仅 field= 时可能为 True）
 
 
@@ -310,8 +312,16 @@ def expansion_budget(straight_km: float) -> int:
                min(int(settings.ASTAR_MAX_EXPANSIONS), budget))
 
 
-def search_effort_of(plan) -> Optional[Dict[str, int]]:
-    """一次规划「真正研究过的路口数 / 展开预算」，用来把「没算完」与「没路」分开。
+def search_deadline(seconds: Optional[float] = None) -> float:
+    """一个 `time.monotonic()` 绝对时刻，供一次规划里的多段共享同一份时间余额。
+
+    单调时钟：系统改表头不会把搜索提前掐掉。传进来的 seconds 是「从现在起还能花几秒」。
+    """
+    return time.monotonic() + float(settings.ASTAR_TIME_LIMIT_S if seconds is None else seconds)
+
+
+def search_effort_of(plan) -> Optional[Dict[str, object]]:
+    """一次规划「真正研究过的路口数 / 展开预算 / 墙钟秒数」，用来把「没算完」与「没路」分开。
 
     整条线按段求和（预算本来就是按段给的）。起点自身被封或没有数据时压根没进搜索，
     预算为 0，此时返回 None —— 报一个「0 / 0」比不报更容易被读错。
@@ -320,12 +330,13 @@ def search_effort_of(plan) -> Optional[Dict[str, int]]:
     if not budget:
         return None
     return {"expansions": sum(int(s.iterations) for s in plan.segment_results),
-            "budget": budget}
+            "budget": budget,
+            "elapsed_s": round(sum(float(s.elapsed_s) for s in plan.segment_results), 1)}
 
 
 def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_str,
                       initial_g_score, initial_dist, speed_kmh, risk_scale: float = 1.0,
-                      field=None) -> SegmentResult:
+                      field=None, deadline: Optional[float] = None) -> SegmentResult:
     """
     A* path planning algorithm on a 2D grid, with dynamic time progression.
 
@@ -334,6 +345,11 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
 
     field 给定时复用外部已加载的 (tke, edr, lats, lons, times) 切片而不自读 NetCDF；
     该切片是有限区域，搜索一旦探到切片外，结论按 escaped 交给上层回退。
+
+    deadline 是 `time.monotonic()` 绝对时刻（见 search_deadline）：多段航线共用一份余额。
+    不给时本段自取 ASTAR_TIME_LIMIT_S。两种停止条件分开报：iterations 顶到 max_iter 是
+    'iteration_limit'（预算付完），墙钟先到是 'time_limit'（预算没付完也没算完）——
+    上层「未算出」的措辞要按这个分别说「用满预算」和「算了 N 秒」。
     """
     open_set = []
     # 堆项是 (f, 离直线的偏离, 节点)：f 保证弹出序按非减 f（一致性 → 首弹即最优），
@@ -408,6 +424,14 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
                 times=[], tkes=[], edrs=[], iterations=0, explored=0,
             ))
 
+    # 墙钟从「开始展开」起算，气象冷读不算在内：冷读一次能要 30 s，算进这份预算就会把
+    # 「这台机器 I/O 慢」报成「没算完」——那是假阴性，恰是四态要防的那类错。
+    t_search = time.monotonic()
+    stop_at = t_search + settings.ASTAR_TIME_LIMIT_S
+    if deadline is not None:
+        stop_at = min(stop_at, deadline)
+    time_up = False
+
     while open_set and iterations < max_iter:
         current = heapq.heappop(open_set)[2]      # 堆项是 (f, 偏离, 节点)
 
@@ -421,6 +445,12 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
             continue
 
         iterations += 1
+
+        # 每 256 次展开看一次表：逐次取时钟会在这条热循环上留下可感的一笔开销，
+        # 而 256 次的粒度相对 18 s 只是毫秒级过冲。
+        if iterations % 256 == 0 and time.monotonic() >= stop_at:
+            time_up = True
+            break
 
         # If we are close enough to the end node
         # 「抵达」按真实距离判，不按 h 判：h 里带经度折算，拿它当半径会让同一格
@@ -482,6 +512,7 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
                 iterations=iterations,
                 explored=len(g_score),
                 expansion_budget=max_iter,
+                elapsed_s=time.monotonic() - t_search,
             ))
             
         # 只有真正铺开邻居才算「研究过」。末段校验失败而 continue 的那些节点
@@ -546,8 +577,9 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
                 tie = _tiebreak(neighbor, end_node, start_node, h_cosk)
                 heapq.heappush(open_set, (f_score[neighbor], tie, neighbor))
                 
-    # 搜索失败：区分「被障碍物完全封死」与「达到迭代上限」
-    reason = 'iteration_limit' if iterations >= max_iter else 'blocked'
+    # 搜索失败：区分「被障碍物完全封死」「达到展开预算」与「墙钟先到」
+    reason = ('time_limit' if time_up
+              else 'iteration_limit' if iterations >= max_iter else 'blocked')
     return _finish(SegmentResult(
         path=[],
         found=False,
@@ -560,6 +592,7 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
         iterations=iterations,
         explored=len(g_score),
         expansion_budget=max_iter,
+        elapsed_s=time.monotonic() - t_search,
     ))
 
 
@@ -573,7 +606,8 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * r * math.asin(min(1.0, math.sqrt(a)))
 
 
-def plan_path_ex(req: PlanRequest, field=None) -> PlanResult:
+def plan_path_ex(req: PlanRequest, field=None,
+                 deadline: Optional[float] = None) -> PlanResult:
     """
     Plan a full route connecting start -> waypoints -> end.
 
@@ -582,14 +616,20 @@ def plan_path_ex(req: PlanRequest, field=None) -> PlanResult:
 
     field=(tke, edr, lats, lons, times) 时全程复用这份已加载的气象切片，
     不再回盘读取；航线探出切片范围则自动退回自读重算一次。
+
+    deadline 是整次规划共用的 `time.monotonic()` 绝对时刻：多段航线、以及 escaped 的
+    那次重算，都从同一份余额里扣 —— 否则三段 × 每段 18 s 会把一次点击拖到 54 s。
+    不给则本函数自取 ASTAR_REQUEST_TIME_LIMIT_S。
     """
-    result = _plan_seq(req, field)
+    if deadline is None:
+        deadline = search_deadline(settings.ASTAR_REQUEST_TIME_LIMIT_S)
+    result = _plan_seq(req, field, deadline)
     if field is not None and result.reason == REASON_FIELD_ESCAPE:
-        result = _plan_seq(req, None)
+        result = _plan_seq(req, None, deadline)
     return result
 
 
-def _plan_seq(req: PlanRequest, field=None) -> PlanResult:
+def _plan_seq(req: PlanRequest, field=None, deadline: Optional[float] = None) -> PlanResult:
     """plan_path_ex 的主体：逐段 A*，累计代价与里程供下一段做时间推进。"""
     targets = [req.start] + req.waypoints + [req.end]
     full_path: List[Point] = []
@@ -621,7 +661,7 @@ def _plan_seq(req: PlanRequest, field=None) -> PlanResult:
             s_node, e_node,
             t_thresh, e_thresh,
             start_time_str, current_g_score, current_dist, req.speed,
-            risk_scale=risk_scale, field=field,
+            risk_scale=risk_scale, field=field, deadline=deadline,
         )
         segment_results.append(seg)
 

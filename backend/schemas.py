@@ -4,7 +4,7 @@ from typing import List, Optional, Dict, Any, Tuple
 # ==================== 结论四态（功能一 / 功能二共用） ====================
 # feasible=False 不等于「飞不了」。verdict 是给前端的机器码（选色、选图标），
 # conclusion 是按它渲染的中文。两套 reason 码各自映射到这里的一个枚举：
-#   planner:  blocked / no_data / iteration_limit
+#   planner:  blocked / no_data / iteration_limit / time_limit
 #   feasibility: no_safe_path / data_coverage_insufficient / detour_exceeds_threshold
 #                / search_iteration_limit
 VERDICT_FEASIBLE = "feasible"
@@ -25,6 +25,8 @@ PLANNER_REASON_VERDICT: Dict[str, str] = {
     "blocked": VERDICT_INFEASIBLE,
     "no_data": VERDICT_INFEASIBLE,
     "iteration_limit": VERDICT_UNDETERMINED,
+    # 墙钟先到与预算顶格是同一件事的两种说法：都没算完，都不代表没有路
+    "time_limit": VERDICT_UNDETERMINED,
 }
 
 
@@ -36,14 +38,17 @@ def verdict_of(feasible: bool, reason: Optional[str], mapping: Dict[str, str]) -
 
 
 class SearchEffort(BaseModel):
-    """A* 为这条线真正研究过多少路口、预算给了多少。
+    """A* 为这条线真正研究过多少路口、预算给了多少、花了多少秒。
 
     「未算出」与「不可飞」的分别就在这对数字上：前者是预算用完了还没搜完
     （expansions 顶到 budget），后者是走廊真被封死（远没用完就没前沿了）。
+    墙钟先到时也属于前者，此时 expansions 远小于 budget、elapsed_s 顶到上限。
     没跑到搜索（起点自身被封、日期无数据）时整个字段为 null。
     """
     expansions: int
     budget: int
+    # 只计展开循环的墙钟，不含气象取数；旧响应里可能没有这个键，故可选
+    elapsed_s: Optional[float] = None
 
 
 class Point(BaseModel):

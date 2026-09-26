@@ -315,7 +315,7 @@ class TWStubbed(unittest.TestCase):
             i = min(calls['i'], len(spec) - 1) if isinstance(spec, (list, tuple)) else 0
             return spec[i] if isinstance(spec, (list, tuple)) else spec
 
-        def fake_plan(plan_req, field=None):
+        def fake_plan(plan_req, field=None, deadline=None):
             self.plan_requests.append((plan_req.date, plan_req.start_time,
                                        plan_req.priority))
             self.plan_fields.append(field)
@@ -636,10 +636,11 @@ class TestTopKRoutes(TWStubbed):
     def test_response_model_carries_search_effort(self):
         """候选行说「未算出」就得同时给出规模，这对数字必须活着穿过 response_model。"""
         res = self._assess(found=[True, False, True])
-        res['routes'][1]['search_effort'] = {"expansions": 49440, "budget": 49440}
+        res['routes'][1]['search_effort'] = {"expansions": 49440, "budget": 49440,
+                                             "elapsed_s": 17.5}
         dumped = TimeWindowResponse(**res).model_dump()
         self.assertEqual(dumped['routes'][1]['search_effort'],
-                         {"expansions": 49440, "budget": 49440})
+                         {"expansions": 49440, "budget": 49440, "elapsed_s": 17.5})
 
     def test_scan_field_is_injected_into_every_candidate(self):
         """C：Top-K 复用第一遍读好的扫描场，五元组的顺序不能错位。"""

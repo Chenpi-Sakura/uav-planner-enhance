@@ -284,12 +284,15 @@ const PLAN_REASON_TEXT: Record<string, string> = {
   blocked: '该时刻无安全路径',
   no_data: '该时刻无气象数据',
   iteration_limit: '搜索超限，未收敛',
+  // 墙钟先到：预算没付完也没算完，同样是「没算完」，不能说成「该时刻真没路」
+  time_limit: '时间上限内未算完',
 };
 const routeMeta = (rt: TimeWindowRoute) => {
   if (rt.feasible) return `${fmtKm(rt.total_distance)}${fmtDetour(rt.detour_ratio)}`;
   const base = PLAN_REASON_TEXT[rt.reason ?? ''] ?? '未规划出航线';
   // 「没算完」要有规模才和「该时刻真没路」分得开
-  const effort = rt.reason === 'iteration_limit' ? effortText(rt.search_effort) : '';
+  const unfinished = rt.reason === 'iteration_limit' || rt.reason === 'time_limit';
+  const effort = unfinished ? effortText(rt.search_effort) : '';
   return effort ? `${base}（${effort}）` : base;
 };
 /**

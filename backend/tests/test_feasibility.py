@@ -16,6 +16,7 @@ test_geo（见 test_feasibility.py 的 TestGeo 与 TestConfigThresholds）；
 """
 import os
 import sys
+import time
 import unittest
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -95,7 +96,7 @@ class TestFeasibilityOrchestration(unittest.TestCase):
         )
 
     def _assess(self, plan, priority='normal'):
-        feasibility.plan_path_ex = lambda req: plan
+        feasibility.plan_path_ex = lambda req, **kw: plan
         return feasibility.assess_feasibility(
             self._req(priority), include_alt_bases=False, include_alt_windows=False)
 
@@ -149,7 +150,7 @@ class TestFeasibilityOrchestration(unittest.TestCase):
     def test_iteration_limit_is_not_reported_as_unflyable(self):
         """A* 没搜完 ≠ 没有安全航线：越保守的档惩罚越大、越容易撞上上限。"""
         seg = SegmentResult(path=[], found=False, reason='iteration_limit',
-                            iterations=20065, expansion_budget=20065)
+                            iterations=20065, expansion_budget=20065, elapsed_s=1.2)
         result = self._assess(_fake_plan(0.0, found=False, reason='iteration_limit',
                                          segments=[seg]))
         self.assertFalse(result.feasible)
@@ -161,8 +162,28 @@ class TestFeasibilityOrchestration(unittest.TestCase):
         self.assertIn('仍未收敛', result.suggestions['text'])
         self.assertIn('途经点', result.suggestions['text'])
         # 「没算完」要带规模，否则和「真没路」读起来是同一句话
-        self.assertEqual(result.search_effort, {"expansions": 20065, "budget": 20065})
+        self.assertEqual(result.search_effort,
+                         {"expansions": 20065, "budget": 20065, "elapsed_s": 1.2})
         self.assertIn('20065', result.suggestions['text'])
+        self.assertIn('用满', result.suggestions['text'])
+
+    def test_time_limit_is_undetermined_but_worded_differently(self):
+        """墙钟先到也是「没算完」，可它对用户说「用满预算」就是假话 —— 文案按停法分开。"""
+        seg = SegmentResult(path=[], found=False, reason='time_limit',
+                            iterations=41000, expansion_budget=120000, elapsed_s=18.2)
+        result = self._assess(_fake_plan(0.0, found=False, reason='time_limit',
+                                         segments=[seg]))
+        self.assertEqual(result.verdict, 'undetermined')
+        self.assertEqual(result.conclusion, '未算出')
+        # 对外仍是同一个 reason 码（同一套色与图标），分开的是那句解释
+        self.assertEqual(result.reason, 'search_iteration_limit')
+        self.assertEqual(result.meta['plan_reason'], 'time_limit')
+        self.assertEqual(result.search_effort,
+                         {"expansions": 41000, "budget": 120000, "elapsed_s": 18.2})
+        text = result.suggestions['text']
+        self.assertIn('仍未收敛', text)
+        self.assertIn('尚未用满', text)
+        self.assertIn('18 秒的时间上限', text)
 
     def test_search_effort_absent_when_search_never_ran(self):
         """起点自身被封 / 无数据时压根没进搜索，别报一个「0 / 0」出去。"""
@@ -181,6 +202,30 @@ class TestFeasibilityOrchestration(unittest.TestCase):
         resp = FeasibilityResponse(**feasibility.to_response_dict(result))
         self.assertEqual((resp.search_effort.expansions, resp.search_effort.budget),
                          (13662, 13662))
+
+    def test_alt_base_sweep_honours_the_request_deadline(self):
+        """替代起降点是「未算出」的赠品：实测它比主搜索贵一个数量级，余额用完就得收手。"""
+        import planner as planner_module
+        real = planner_module.plan_path_ex
+        seen = []
+
+        def fake_plan(req, **kw):
+            seen.append(kw.get("deadline"))
+            return _fake_plan(0.0, found=False, reason='blocked')
+
+        planner_module.plan_path_ex = fake_plan
+        try:
+            stale = time.monotonic() - 1.0
+            self.assertEqual(feasibility._suggest_alt_bases(self._req(), deadline=stale), [])
+            self.assertEqual(seen, [], "整次请求的余额已经过了，还在一次一次全程重规划")
+
+            live = time.monotonic() + 30.0
+            seen.clear()
+            feasibility._suggest_alt_bases(self._req(), deadline=live)
+            self.assertGreater(len(seen), 1, "这一扫本就是二十多次规划，用例得真的扫起来")
+            self.assertEqual(set(seen), {live}, "每个候选看到的必须是同一份余额")
+        finally:
+            planner_module.plan_path_ex = real
 
     def test_user_facing_time_contract(self):
         # meta 回传的是用户输入口径（北京时间），不是换算后的数据标签
@@ -285,7 +330,7 @@ class TestFeasibilityMulti(unittest.TestCase):
             if shift:
                 plan.path = [Point(lat=float(p.lat) + shift, lon=p.lon) for p in plan.path]
             plans[tier] = plan
-        feasibility.plan_path_ex = lambda req: plans[req.priority]
+        feasibility.plan_path_ex = lambda req, **kw: plans[req.priority]
 
     def test_three_tiers_come_back_in_configured_order(self):
         self._split_plans()
@@ -303,7 +348,7 @@ class TestFeasibilityMulti(unittest.TestCase):
     def test_identical_geometry_is_reported_not_hidden(self):
         """三档同解时如实标 all_identical，前端据此说明而不是假装有三个方案。"""
         same = _fake_plan(340.0)
-        feasibility.plan_path_ex = lambda req: same
+        feasibility.plan_path_ex = lambda req, **kw: same
         out = feasibility.assess_feasibility_multi(self._req())
         self.assertTrue(out['meta']['all_identical'])
         self.assertEqual(out['meta']['distinct_paths'], 1)
@@ -315,7 +360,7 @@ class TestFeasibilityMulti(unittest.TestCase):
 
     def test_only_active_tier_pays_for_alt_suggestions(self):
         """替代起降点/时段服务的是详情面板，三档各算一遍会把取数放大三倍。"""
-        feasibility.plan_path_ex = lambda req: _fake_plan(0.0, found=False)
+        feasibility.plan_path_ex = lambda req, **kw: _fake_plan(0.0, found=False)
         asked = []
         feasibility._suggest_alt_bases = lambda req, **kw: asked.append(req.priority) or []
         feasibility._suggest_alt_windows = lambda *a, **kw: []

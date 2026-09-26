@@ -189,6 +189,16 @@ class TestRuleReport(unittest.TestCase):
         self.assertIn("未收敛", text)
         # 报告也要给出规模：没算完 ≠ 没有航线，读者得能自己判断
         self.assertIn("20065", text)
+        self.assertIn("用满了 20065 次", text)
+
+    def test_undetermined_by_clock_says_time_limit_not_full_budget(self):
+        """墙钟先到时报告不能说「用满预算」——12 万次预算明明只花了三分之一。"""
+        payload = dict(UNDETERMINED_PAYLOAD, search_effort={
+            "expansions": 41000, "budget": 120000, "elapsed_s": 18.2})
+        text = assessor.render_rule_report(assessor.build_feasibility_context(payload))
+        self.assertIn("并未用满", text)
+        self.assertIn("18 秒", text)
+        self.assertNotIn("用满了 120000 次", text)
 
     def test_time_window_report_mentions_timezone_and_forecast(self):
         text = assessor.render_rule_report(assessor.build_time_window_context(TW_PAYLOAD))

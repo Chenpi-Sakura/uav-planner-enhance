@@ -164,10 +164,17 @@ class TestSummarizePlanVerdict(unittest.TestCase):
         """功能二的候选行要说「没算完」就得同时给出规模，否则与真没路同义。"""
         from planner import SegmentResult
         seg = SegmentResult(path=[], found=False, reason='iteration_limit',
-                            iterations=49440, expansion_budget=49440)
+                            iterations=49440, expansion_budget=49440, elapsed_s=17.5)
         item = self._sum(False, 'iteration_limit', segments=[seg])
         self.assertEqual(item['conclusion'], '未算出')
-        self.assertEqual(item['search_effort'], {"expansions": 49440, "budget": 49440})
+        self.assertEqual(item['search_effort'],
+                         {"expansions": 49440, "budget": 49440, "elapsed_s": 17.5})
+
+    def test_time_limit_row_is_also_undetermined(self):
+        """墙钟先到与预算顶格同属「没算完」，但 reason 要原样透出，前端按它分开措辞。"""
+        item = self._sum(False, 'time_limit')
+        self.assertEqual((item['verdict'], item['conclusion']), ('undetermined', '未算出'))
+        self.assertEqual(item['reason'], 'time_limit')
 
     def test_search_effort_none_when_search_never_ran(self):
         self.assertIsNone(self._sum(False, 'blocked')['search_effort'])

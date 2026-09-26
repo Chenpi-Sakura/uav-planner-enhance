@@ -9,7 +9,8 @@
 from typing import Any, Dict, List
 
 from config import settings
-from planner import plan_path_ex, search_effort_of, tier_risk_scale, _haversine_km
+from planner import (plan_path_ex, search_deadline, search_effort_of,
+                     tier_risk_scale, _haversine_km)
 from risk import build_risk_profile
 from schemas import PLANNER_REASON_VERDICT, VERDICT_LABELS, verdict_of
 
@@ -76,14 +77,18 @@ def summarize_plan(plan, straight_km: float, speed: float = 0.0) -> Dict[str, An
 
 
 def plan_route_options(req) -> Dict[str, Any]:
-    """按 settings.PLAN_TIERS 逐档规划。req 需为 schemas.PlanRequest。"""
+    """按 settings.PLAN_TIERS 逐档规划。req 需为 schemas.PlanRequest。
+
+    三档共用一份墙钟余额（一次点击 = 一次请求），余额耗尽的档仍留在结果里标「未算出」。
+    """
     straight_km = _haversine_km(float(req.start.lat), float(req.start.lon),
                                 float(req.end.lat), float(req.end.lon))
     routes: List[Dict[str, Any]] = []
     sigs: List[tuple] = []
+    deadline = search_deadline(settings.ASTAR_REQUEST_TIME_LIMIT_S)
 
     for tier in settings.PLAN_TIERS:
-        plan = plan_path_ex(req.model_copy(update={"priority": tier}))
+        plan = plan_path_ex(req.model_copy(update={"priority": tier}), deadline=deadline)
         item: Dict[str, Any] = {
             "priority": tier,
             "label": TIER_LABELS.get(tier, tier),
