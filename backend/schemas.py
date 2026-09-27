@@ -37,6 +37,31 @@ def verdict_of(feasible: bool, reason: Optional[str], mapping: Dict[str, str]) -
     return mapping.get(reason or "", VERDICT_INFEASIBLE)
 
 
+# ==================== M7 选址的 reason → 四态 ====================
+# 三道门各有各的码，不共用「未算出」也不并入「不可飞」：
+# 「装不下」和「超出商载上限」是确定的物理否，「这一档没有公开航程数据」是**没依据**，
+# 后者必须是 undetermined，否则我们就等于替厂家做了承诺。
+SITE_REASON_VERDICT: Dict[str, str] = {
+    "payload_exceeds_max": VERDICT_INFEASIBLE,
+    # 载重在商载上限内、但超出公开锚点覆盖区间 —— 不外推
+    "payload_beyond_published_envelope": VERDICT_UNDETERMINED,
+    "site_elevation_exceeds": VERDICT_INFEASIBLE,
+    # 海拔证据不可靠（DEM 采样 / 口径冲突）且判定结果贴着门槛
+    "site_elevation_unverified": VERDICT_UNDETERMINED,
+    "network_unreachable": VERDICT_INFEASIBLE,
+    "no_candidate_in_corridor": VERDICT_INFEASIBLE,
+    "no_data": VERDICT_INFEASIBLE,
+    "outside_coverage": VERDICT_INFEASIBLE,
+    # 逐段复验时 A* 自己会说 no_safe_path（走廊被高危湍流封死），那确实是「确定不行」
+    "no_safe_path": VERDICT_INFEASIBLE,
+    "detour_exceeds_threshold": VERDICT_OVER_BUDGET,
+    "search_iteration_limit": VERDICT_OVER_BUDGET,
+    "time_limit": VERDICT_UNDETERMINED,
+    "iteration_limit": VERDICT_UNDETERMINED,
+    "weather_data_missing": VERDICT_UNDETERMINED,
+}
+
+
 class SearchEffort(BaseModel):
     """A* 为这条线真正研究过多少路口、预算给了多少、花了多少秒。
 
@@ -382,3 +407,72 @@ class FeasibilityMultiResponse(BaseModel):
     results: List[FeasibilityResponse] = []
     active: str = "normal"
     meta: Dict[str, Any] = {}
+
+
+# ==================== M7 · 站点自动规划（多航点模式） ====================
+
+class SitePlanRequest(BaseModel):
+    """多航点模式的一次请求：给定 OD（或已经手填的 waypoints）+ 机型 + 载重，求中继序列。
+
+    载重是**自变量**：段长上限、可用站点池、需要几处中继都由它派生，
+    所以界面允许输入，后端只在厂家公开锚点覆盖的区间内作答（见 SITE_REASON_VERDICT）。
+    """
+    start: Point
+    end: Point
+    waypoints: List[Point] = []
+    date: str = '2022-07-01'
+    start_time: str = '08:00'
+    speed: float = 60.0
+    # 载重为空时由端点填入 settings.SITE_DEFAULT_PAYLOAD_KG（默认值留给后端，避免两处真相）
+    payload_kg: Optional[float] = None
+    aircraft: Optional[str] = None        # 为空 = 按 settings.SITE_AIRCRAFT_ORDER 出双机对照
+    mission: str = 'cargo'                # cargo | crew
+    priority: str = 'normal'              # 逐段复验时沿用哪一档的湍流惩罚倍率
+    leg_limit_km: Optional[float] = None  # 仅用于敏感性分析：手工覆盖段长上限
+    weather_metrics: bool = True          # Pass 2 的邻域统计开关（关掉可省一次读场）
+
+
+class SitePlanOption(BaseModel):
+    """一台机型在一次请求里的完整答复。"""
+    aircraft: str
+    label: str
+    certified: bool = True
+    payload_kg: float = 0.0
+    mission: str = 'cargo'
+    leg_limit_km: float = 0.0
+    margin_k: float = 0.0
+    ceiling_m: float = 0.0
+    feasible: bool = False
+    verdict: str = VERDICT_INFEASIBLE
+    conclusion: str = ''
+    reason: Optional[str] = None
+    message: str = ''
+    legs: List[Dict[str, Any]] = []
+    relay_count: int = 0
+    total_distance: float = 0.0
+    total_time_h: Optional[float] = None
+    worst_level: str = ''
+    pool_sites: int = 0
+    usable_sites: int = 0
+    diagnostics: Dict[str, Any] = {}
+    search_effort: Optional[SearchEffort] = None
+    notes: List[str] = []
+
+
+class SitePlanResponse(BaseModel):
+    options: List[SitePlanOption] = []
+    meta: Dict[str, Any] = {}
+
+
+class TaskParseRequest(BaseModel):
+    """自然语言任务 → 表单预填。一期是半自动：解析结果不直接触发规划。"""
+    text: str
+    use_llm: bool = True
+
+
+class TaskParseResponse(BaseModel):
+    fields: Dict[str, Any] = {}
+    rule_fields: Dict[str, Any] = {}
+    # llm = 模型抽取；rule = 关键词兜底。界面必须显示这个来源，
+    # 否则用户会把"规则猜的"当成"AI 理解的"。
+    source: str = "rule"

@@ -825,8 +825,8 @@ def _warnings(lats, lons, takeoff_data, landing_data, bbox) -> List[Dict[str, An
         lo = float(np.nanmin(tc_v))
         if lo < settings.WARN_TEMP_LOW:
             out.append({"type": "temperature", "level": "warning",
-                        "text": f"500hPa 温度低于 {settings.WARN_TEMP_LOW:.0f} ℃，"
-                                f"注意低温对电池与设备的影响",
+                        "text": f"航路 500 hPa（约 5 km 高度）温度低于 "
+                                f"{settings.WARN_TEMP_LOW:.0f} ℃，注意低温对电池性能的影响",
                         "value": round(lo, 2)})
 
     if u_v is not None and v_v is not None:

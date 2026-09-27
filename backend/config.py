@@ -185,6 +185,30 @@ class Settings(BaseModel):
     TW_GRID_CACHE_SIZE: int = 4
     TW_MAX_SCAN_SLOTS: int = 48        # 单日最多扫描槽位（防御异常步长）
 
+    # ==================== M7：站点自动规划（多航点模式） ====================
+    # 站表是**输入数据**不是配置：站点集合一旦决定哪些航段合法，它就和气象场一样
+    # 必须固定下来才能复现，所以 sites.json 进 git、放仓库根目录与 config.json 同级。
+    # 机型能力包（载重/航程锚点/海拔门限及其出处）在 sites.py 里，不放这里——
+    # 那些是带引用的领域数据，改它们等于改结论依据，不该和调参混在同一个文件。
+    SITES_FILE: str = "sites.json"
+    # 默认载重 200 kg 是**证据的上限**，不是商载上限：V2000CG 最大商载 400 kg，
+    # 但厂家只给到 200 kg 档的运营航程；超过公开锚点的载重一律判「无依据」而非外推。
+    SITE_DEFAULT_PAYLOAD_KG: float = 200.0
+    SITE_LEG_MARGIN_CARGO: float = 0.8     # 段长余度：货运
+    SITE_LEG_MARGIN_CREW: float = 0.6      # 段长余度：载人（约束模式，见 sites.py 的载人横幅说明）
+    # 建图时把段长上限按绕行系数折掉：A* 交出的线比直线长，逐段复验若超段长上限
+    # 就是"物理上飞不完"，与其事后报错不如在建图时留余量。取 1.25 = 紧急档的绕行上限。
+    SITE_DETOUR_FACTOR: float = 1.25
+    SITE_MAX_LEGS: int = 4                 # 逐段 A* 复验的段数上限，超出的段标 reverified=false
+    SITE_SCAN_PAD_KM: float = 150.0        # 走廊外扩：候选站点只取走廊附近的
+    SITE_MIN_SPACING_KM: float = 2.0       # 候选最小间距，见 §3.2 端点 round(·,2)≈1.1 km 的量化陷阱
+    # 海拔是硬门限字段，但站表里多数条目是 DEM 采样值（±50~100 m）。落在门槛
+    # ±此带宽内 且 证据不可靠的站点，不直接判可用，降级为「需复核」结论。
+    SITE_ELEV_UNVERIFIED_BAND_M: float = 100.0
+    SITE_MAX_SCAN_CELLS: int = 60000       # 邻域统计的格数硬闸（公网无鉴权，见 §11）
+    SITE_TOPK_ALT_PER_LEG: int = 3         # 每跳保留的同层备选站点数（气象换位的搜索宽度）
+    SITE_AIRCRAFT_ORDER: List[str] = ["td550", "v2000cg"]
+
     # 其他预警阈值（除湍流外的飞行提示）
     WARN_RH_RAIN: float = 80.0     # 相对湿度超过该值提示可能降水（代理指标）
     WARN_RH_ICE: float = 90.0      # 更高阈值提示结冰 / 云中飞行风险

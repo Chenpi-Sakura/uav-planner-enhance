@@ -8,12 +8,14 @@ from schemas import (
     ProfileRequest, ProfileResponse, ProfileDataPoint,
     PlanRequest, PlanResponse, PlanMultiResponse,
     FeasibilityRequest, FeasibilityResponse, FeasibilityMultiResponse,
+    SitePlanRequest, SitePlanResponse, TaskParseRequest, TaskParseResponse,
 )
 from data_loader import data_loader
 from planner import compute_path_turbulence, plan_path_ex, _haversine_km
 from route_options import plan_route_options
 from feasibility import assess_feasibility, assess_feasibility_multi, to_response_dict
 from time_window import assess_time_window
+import sites
 import assessor
 import geo
 from config import ROOT_DIR, settings
@@ -256,6 +258,42 @@ async def get_coverage():
     if bbox is None:
         return {"available": False}
     return {"available": True, **bbox}
+
+@app.get("/api/meta/sites")
+async def list_sites():
+    """站点表视图（M7 多航点模式的输入数据）+ 机型能力包的公开口径。
+
+    站表是决定航段合法性的输入数据，与气象场同级：随仓库一起版本化，
+    每条点位带 `source`（公开出处）与 `geodatum`（GCJ-02 / WGS-84 之分）。
+    这两个字段供后端与台账使用，界面上只展示地名与海拔，不播报出处。
+    """
+    try:
+        return sites.public_sites()
+    except sites.SitesFileError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/site/parse-task", response_model=TaskParseResponse)
+async def parse_site_task(request: TaskParseRequest):
+    """把一句话任务（"从昌都把 200 公斤兽药送到米林"）抽成表单字段。
+
+    只做抽取不做规划：机型门限、航程锚点一律不进 prompt，解析结果回填表单后
+    **要用户点确认**才发起规划。LLM 不可用时降级到关键词规则，并在 `source` 里如实标出来。
+    """
+    return TaskParseResponse(**sites.parse_task(request))
+
+
+@app.post("/api/site/plan", response_model=SitePlanResponse)
+async def plan_site_route(request: SitePlanRequest):
+    """多航点模式：按机型能力包与场地海拔，给出最少中继落地序列 + 逐段 A* 复验。
+
+    不带 `aircraft` 时一次产出双机对照（油动 / 纯电各一份）。两台是竞争关系，
+    所以不做「择优丢弃」：一台被拒另一台照出，差异本身就是结论。
+    载重只在厂家公开锚点覆盖的区间内作答，超出一律判「无依据」而非外推。
+    """
+    result = await _run_assess(sites.plan_site_options, request)
+    return SitePlanResponse(**result)
+
 
 @app.get("/api/weather/overlay")
 async def get_weather_overlay(min_lat: float, max_lat: float, min_lon: float, max_lon: float, layer: str = 'tke', date: str = '2022-07-01', start_time: str = '08:00'):

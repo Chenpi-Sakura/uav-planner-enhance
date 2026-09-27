@@ -174,7 +174,7 @@
 
   <section v-else class="control-section">
     <p class="hint-text">
-      设置起点与终点后，点击「开始评估」获取可飞性结论、风险等级与绕行成本分析。
+      设置起点与终点后，点击「开始规划」获取可飞性结论、风险等级与绕行成本分析。
     </p>
   </section>
 </template>

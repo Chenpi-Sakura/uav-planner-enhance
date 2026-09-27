@@ -15,8 +15,6 @@
         <li v-for="(item, i) in notice.actions" :key="i">{{ item }}</li>
       </ul>
 
-      <p class="notice-foot">地图与折线图已清掉上一次结果，不会保留旧航线。</p>
-
       <button class="notice-btn" @click="close">知道了</button>
     </div>
   </div>
@@ -47,7 +45,7 @@ const COPY: Record<PlanNoticeReason, NoticeCopy> = {
     actions: [
       '换一个起飞时刻，或用「时间窗口」标签找出当天的可飞时段',
       '调整起降点位置',
-      '到「可行性评估」查看具体是哪片湍流区挡住了路',
+      '在「路径规划」的评估结果里查看具体是哪片湍流区挡住了路',
     ],
   },
   over_budget: {
@@ -69,16 +67,15 @@ const COPY: Record<PlanNoticeReason, NoticeCopy> = {
   },
   iteration_limit: {
     title: '搜索未收敛，不代表没有航线',
-    body: '寻路在本次任务的展开预算内没能找到满足当前阈值的路径。预算按航程伸缩（短线的下限就是过去的固定值），所以航程很长、或沿途中等以上湍流很多时可能撞上。',
+    body: '本次搜索在步数上限内没能找到满足当前阈值的路径。上限按航程伸缩，所以航程很长、或沿途中等以上湍流很多时可能撞上。',
     actions: [
-      '在设置里适当放宽 TKE / EDR 阈值',
       '减少途经点，或把长航线拆成几段分别验证',
       '换一个湍流更弱的起飞时刻',
     ],
   },
   request_failed: {
     title: '规划请求失败',
-    body: '后端没有正常响应。请确认后端服务已启动（端口见根目录 config.json）。',
+    body: '后端没有正常响应，请确认后端服务已启动。',
     actions: [],
   },
 };
@@ -175,14 +172,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
   gap: 6px;
   font-size: 12.5px;
   line-height: 1.5;
-  color: var(--text-secondary);
-}
-
-.notice-foot {
-  margin: 0;
-  padding-top: 10px;
-  border-top: 1px solid var(--panel-border);
-  font-size: 11.5px;
   color: var(--text-secondary);
 }
 

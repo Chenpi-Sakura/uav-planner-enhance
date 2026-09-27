@@ -1,10 +1,6 @@
 <template>
   <!-- ============ 输入区：查找最佳窗口 ============ -->
   <section class="control-section">
-    <p class="hint-text">
-      在期望日期内扫描逐小时湍流强度，找出全程安全且湍流最低的起飞时段。
-    </p>
-
     <div class="field-row">
       <label class="field-label">推演天数</label>
       <div class="stepper-group">
@@ -19,9 +15,7 @@
         </button>
       </div>
     </div>
-    <p class="hint-text small">
-      当日无安全时段时向前推演的天数（0 = 只看当日）。
-    </p>
+    <p class="hint-text small">0 = 只看当日。</p>
 
     <div class="action-row">
       <button
@@ -206,11 +200,9 @@
     <!-- AI 评估报告（流式生成） -->
     <ReportCard task="time_window" :payload="r" />
 
-    <!-- 数据口径声明（两种情况都展示） -->
+    <!-- 数据口径只留这一句；TKE/EDR 的算法细节在下方 AI 报告里已完整给出 -->
     <p class="hint-text small data-note">
-      数据口径：500hPa 等压面，约 5km 空间分辨率、逐小时时间分辨率；
-      TKE 为同层三维风场在 ±{{ TURB.windowHalfHours }} 小时窗口内的脉动方差，EDR 由其换算。
-      时间为北京时间（UTC+8）。
+      数据口径：500 hPa 等压面，逐小时；时间为北京时间（UTC+8）。
     </p>
   </section>
 
@@ -352,8 +344,9 @@ const renderChart = () => {
     grid: { left: 44, right: 52, top: 44, bottom: 28 },
     tooltip: {
       trigger: 'axis',
-      backgroundColor: 'rgba(15, 23, 42, 0.92)',
+      backgroundColor: 'rgba(0, 0, 0, 0.75)',
       borderColor: 'rgba(148, 163, 184, 0.3)',
+      className: 'panel-noise',
       textStyle: { color: '#e2e8f0', fontSize: 11 },
     },
     legend: {

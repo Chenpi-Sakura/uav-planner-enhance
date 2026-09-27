@@ -11,47 +11,38 @@
       
       <!-- 1. Time Selection (Fixed at Top) -->
       <section class="time-section">
-        <h3 class="section-title"><Clock :size="16" /> 时间选择</h3>
-        <div class="form-group">
-          <label>具体日期</label>
-          <input type="date" class="capsule-input full-width" v-model="store.targetDate" />
-        </div>
-        <div class="input-row">
-          <div class="form-group" style="flex:1">
-            <label>起飞时间</label>
-            <input type="time" step="3600" class="capsule-input full-width" v-model="store.targetTime" />
+        <button class="section-toggle" @click="timeOpen = !timeOpen">
+          <span class="section-title"><Clock :size="16" /> 时间选择</span>
+          <ChevronDown v-if="timeOpen" :size="16" class="chev" />
+          <ChevronRight v-else :size="16" class="chev" />
+        </button>
+        <div class="fold-body" v-show="timeOpen">
+          <div class="form-group">
+            <label>具体日期</label>
+            <input type="date" class="capsule-input full-width" v-model="store.targetDate" />
           </div>
-          <div class="form-group" style="flex:1">
-            <label>速度 (km/h)</label>
-            <input type="number" class="capsule-input full-width" v-model="store.uavSpeed" />
+          <div class="input-row">
+            <div class="form-group" style="flex:1">
+              <label>起飞时间</label>
+              <input type="time" step="3600" class="capsule-input full-width" v-model="store.targetTime" />
+            </div>
+            <div class="form-group" style="flex:1">
+              <label>速度 (km/h)</label>
+              <input type="number" class="capsule-input full-width" v-model="store.uavSpeed" />
+            </div>
           </div>
         </div>
       </section>
 
-
-      <!-- 标签页切换：路径规划 / 可行性评估 / 时间窗口 -->
-      <div class="tab-bar">
-        <button
-          class="tab-btn"
-          :class="{ active: store.sidebarTab === 'plan' }"
-          @click="store.sidebarTab = 'plan'"
-        >
-          <Navigation :size="14" /> 路径规划
+      <!-- 2. 起降点与途经点：三个标签页共用的输入，所以放在标签页之上而不是某个标签页里 -->
+      <section class="route-section">
+        <button class="section-toggle" @click="routeOpen = !routeOpen">
+          <span class="section-title"><MapPin :size="16" /> 起降点与途经点</span>
+          <ChevronDown v-if="routeOpen" :size="16" class="chev" />
+          <ChevronRight v-else :size="16" class="chev" />
         </button>
-        <button
-          class="tab-btn"
-          :class="{ active: store.sidebarTab === 'timeWindow' }"
-          @click="store.sidebarTab = 'timeWindow'"
-        >
-          <CalendarClock :size="14" /> 时间窗口
-        </button>
-      </div>
 
-      <!-- Scrollable Area for Path Planning -->
-      <div class="scroll-area">
-        <template v-if="store.sidebarTab === 'plan'">
-        <!-- 2. Path Planning -->
-        <section class="control-section">
+        <div class="fold-body route-body" v-show="routeOpen">
           <!-- Quick Bases -->
           <div class="quick-bases">
             <span class="base-chip" v-for="b in store.bases" :key="b.name" @click="handleBaseClick(b)" title="点击取点后再点击此处快速填入">
@@ -101,11 +92,11 @@
               <input type="number" placeholder="相对高度" class="capsule-input mini" v-model="wp.alt" />
             </div>
           </div>
-          
+
           <button class="add-waypoint-btn" @click="addWaypoint">
             <Plus :size="14" /> 添加途经点
           </button>
-          
+
           <!-- End -->
           <div class="waypoint-group">
             <div class="waypoint-header space-between">
@@ -125,28 +116,64 @@
               <input type="number" placeholder="相对高度" class="capsule-input mini" v-model="store.end.alt" />
             </div>
           </div>
+        </div>
+      </section>
 
+      <!-- 标签页切换：路径规划 / 可行性评估 / 时间窗口 -->
+      <div class="tab-bar">
+        <button
+          class="tab-btn"
+          :class="{ active: store.sidebarTab === 'plan' }"
+          @click="store.sidebarTab = 'plan'"
+        >
+          <Navigation :size="14" /> 路径规划
+        </button>
+        <button
+          class="tab-btn"
+          :class="{ active: store.sidebarTab === 'timeWindow' }"
+          @click="store.sidebarTab = 'timeWindow'"
+        >
+          <CalendarClock :size="14" /> 时间窗口
+        </button>
+        <button
+          class="tab-btn"
+          :class="{ active: store.sidebarTab === 'site' }"
+          @click="store.sidebarTab = 'site'"
+        >
+          <Route :size="14" /> 多航点
+        </button>
+      </div>
+
+      <!-- Scrollable Area for Path Planning -->
+      <div class="scroll-area">
+        <template v-if="store.sidebarTab === 'plan'">
           <div class="action-row">
             <button class="capsule-btn full-width" @click="runPlan" :disabled="store.planLoading" :class="{'disabled-btn': store.planLoading}">
               <span v-if="store.planLoading" class="loading-icon"><Loader :size="16" class="spin"/> 正在规划并评估三条航线...</span>
               <span v-else style="display:flex; align-items:center; gap:8px;"><Send :size="16" /> 开始规划</span>
             </button>
           </div>
-        </section>
 
-        <!-- 三档横向卡片 + 当前档的评估详情（原「可行性评估」标签页并入此处） -->
-        <RouteTierCards v-if="store.routeOptions" />
-        <FeasibilityPanel v-if="store.routeOptions" />
+          <!-- 三档横向卡片 + 当前档的评估详情（原「可行性评估」标签页并入此处） -->
+          <RouteTierCards v-if="store.routeOptions" />
+          <FeasibilityPanel v-if="store.routeOptions" />
         </template>
 
         <!-- 时间窗口面板 -->
         <TimeWindowPanel v-if="store.sidebarTab === 'timeWindow'" />
+
+        <!-- 多航点模式：站点自动规划（M7） -->
+        <SitePanel v-if="store.sidebarTab === 'site'" />
       </div>
 
       <!-- 3. Overlays (Fixed at Bottom) -->
       <section class="overlay-section">
-        <h3 class="section-title"><Layers :size="16" /> 叠加层</h3>
-        <div class="checkbox-grid">
+        <button class="section-toggle" @click="overlayOpen = !overlayOpen">
+          <span class="section-title"><Layers :size="16" /> 叠加层</span>
+          <ChevronDown v-if="overlayOpen" :size="16" class="chev" />
+          <ChevronRight v-else :size="16" class="chev" />
+        </button>
+        <div class="fold-body checkbox-grid" v-show="overlayOpen">
           <label class="custom-checkbox" v-for="layer in overlayOptions" :key="layer.id">
             <input type="checkbox" v-model="store.overlays" :value="layer.id" />
             <span class="checkmark"></span>
@@ -159,12 +186,19 @@
 </template>
 
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight, Clock, Navigation, Layers, Send, Plus, X, Crosshair, Loader, MapPin, CalendarClock } from 'lucide-vue-next';
+import { ref } from 'vue';
+import { ChevronLeft, ChevronRight, ChevronDown, Clock, Navigation, Layers, Send, Plus, X, Crosshair, Loader, MapPin, CalendarClock, Route } from 'lucide-vue-next';
 import { store, runPlan } from '../store';
 import type { BaseStation } from '../store';
 import FeasibilityPanel from './FeasibilityPanel.vue';
 import RouteTierCards from './RouteTierCards.vue';
 import TimeWindowPanel from './TimeWindowPanel.vue';
+import SitePanel from './SitePanel.vue';
+
+/** 三个固定区都能折：展开优先给高频输入，纵向不够时收起来换内容区高度 */
+const timeOpen = ref(true);
+const routeOpen = ref(true);
+const overlayOpen = ref(true);
 
 const overlayOptions = [
   { id: 'tke', label: 'TKE (湍动能)' },
@@ -310,14 +344,45 @@ const handleBaseClick = (base: BaseStation) => {
   flex-shrink: 0;
 }
 
-.scroll-area {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
+.route-section {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--panel-border);
+  background: rgba(0,0,0,0.1);
+  flex-shrink: 0;
 }
 
-.control-section {
-  margin-bottom: 10px;
+/* 折叠只在标题行响应，展开后收起不必去内容里找按钮 */
+.section-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+}
+.section-toggle .section-title { margin-bottom: 0; }
+.section-toggle:hover .section-title { color: var(--text-primary); }
+.chev { color: var(--text-secondary); flex-shrink: 0; }
+
+.fold-body { margin-top: 14px; }
+
+/* 途经点可以一直加：这一段自己滚，不要把下面的标签页内容挤没 */
+.route-body {
+  max-height: 30vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+}
+
+.scroll-area {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px;
 }
 
 .overlay-section {
@@ -485,7 +550,7 @@ const handleBaseClick = (base: BaseStation) => {
 }
 
 .action-row {
-  margin-top: 16px;
+  margin-bottom: 14px;
 }
 
 /* Custom Checkbox Grid */

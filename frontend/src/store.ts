@@ -194,7 +194,7 @@ export interface StoreState {
   /** 气象数据覆盖框；null = 后端数据未加载或还没问到（地图据此跳过该图层） */
   coverage: CoverageBox | null;
   // ---- 决策平台新增 ----
-  sidebarTab: 'plan' | 'timeWindow';   // 侧边栏标签页（可行性已并入路径规划）
+  sidebarTab: 'plan' | 'timeWindow' | 'site';   // 侧边栏标签页（可行性已并入路径规划）
   planLoading: boolean;                // 一次「开始规划」请求是否在飞（侧栏与功能二共用）
   priority: 'urgent' | 'normal' | 'economy';  // 当前选中的方案档位
   routeOptions: RouteOptions | null;  // 一次规划产出的三档评估（null = 还没规划过）
@@ -209,6 +209,112 @@ export interface StoreState {
   hoveredSegmentIndex: number | null;    // 地图联动：悬停的分段
   pendingTimeWindowScan: boolean;        // 从功能一跳转功能二时自动执行一次扫描
   planNotice: PlanNotice | null;         // 路径规划失败弹窗（null = 不显示）
+  // ---- 功能三：多航点模式（M7 站点自动规划） ----
+  siteLoading: boolean;
+  siteResult: SitePlanResult | null;      // 最近一次双机对照结果
+  siteCatalog: SiteCatalog | null;        // 站表与机型能力包（进程内取一次）
+  siteForm: SiteForm;
+  activeSiteAircraft: string | null;      // 地图上展示哪一台的序列
+}
+
+/** 功能三的参数：载重是**自变量**，站点数是它的输出，所以这里不给"站点数量"这种反因果的输入 */
+export interface SiteForm {
+  aircraft: string;            // '' = 双机对照
+  payload_kg: number;
+  mission: 'cargo' | 'crew';
+  text: string;                // 自然语言任务（只预填表单，不直接触发规划）
+  parseSource: '' | 'llm' | 'rule';
+}
+
+export interface SiteLegEndpoint {
+  name: string;
+  lat: number;
+  lon: number;
+  site_id: string;
+  elevation_m: number | null;
+}
+
+export interface SiteLegWeather {
+  fly_ratio?: number | null;
+  worst_tke?: number | null;
+  nan_ratio?: number;
+  label?: string;
+}
+
+export interface SiteLeg {
+  seq: number;
+  from: SiteLegEndpoint;
+  to: SiteLegEndpoint;
+  straight_km: number;
+  route_km: number | null;
+  flight_time_h?: number | null;
+  level?: string;
+  reverified: boolean;
+  over_range?: boolean;
+  note?: string;
+  weather?: SiteLegWeather;
+  description?: string;
+  feasible?: boolean;
+  reason?: string | null;
+  verdict?: string;
+}
+
+export interface SiteOption {
+  aircraft: string;
+  label: string;
+  certified: boolean;
+  payload_kg: number;
+  mission: string;
+  leg_limit_km: number;
+  margin_k: number;
+  ceiling_m: number;
+  feasible: boolean;
+  verdict: string;
+  conclusion: string;
+  reason?: string | null;
+  message?: string;
+  legs: SiteLeg[];
+  relay_count: number;
+  total_distance: number;
+  total_time_h?: number | null;
+  worst_level?: string;
+  pool_sites: number;
+  usable_sites: number;
+  diagnostics: Record<string, any>;
+  search_effort?: { expansions: number; budget: number; elapsed_s?: number } | null;
+  notes: string[];
+  elapsed_s?: number;
+}
+
+export interface SitePlanResult {
+  options: SiteOption[];
+  meta: Record<string, any>;
+}
+
+export interface SiteCatalogSite {
+  id: string;
+  name: string;
+  type: string;
+  region?: string;
+  lat: number;
+  lon: number;
+  elevation_m: number;
+  elev_kind?: string;
+  geodatum?: string;
+  hajin?: boolean;
+  usable?: boolean;
+  near_gate?: string;
+  verify_priority?: number;
+}
+
+export interface SiteCatalog {
+  stats: Record<string, any>;
+  altitude_gates: Record<string, any>;
+  attribution?: string;
+  aircraft: Array<{ key: string; label: string; power: string; certified: boolean;
+                    cert: string; max_payload_kg: number; ceiling_m: number;
+                    ceiling_basis: string }>;
+  sites: SiteCatalogSite[];
 }
 
 /** 规划弹窗种类：由后端 reason 映射而来，request_failed 表示请求本身没走通 */
@@ -260,6 +366,11 @@ export const store = reactive<StoreState>({
   hoveredSegmentIndex: null,
   pendingTimeWindowScan: false,
   planNotice: null,
+  siteLoading: false,
+  siteResult: null,
+  siteCatalog: null,
+  siteForm: { aircraft: '', payload_kg: 200, mission: 'cargo', text: '', parseSource: '' },
+  activeSiteAircraft: null,
 });
 
 /** 风险等级 -> 展示色 */
@@ -383,7 +494,7 @@ export const FEAS_REASON_TEXT: Record<string, string> = {
 export function effortText(e?: { expansions: number; budget: number; elapsed_s?: number } | null): string {
   if (!e || !e.budget) return '';
   const spent = e.elapsed_s ? ` / 用时 ${Math.round(e.elapsed_s)} 秒` : '';
-  return `已研究 ${e.expansions} 个路口 / 预算 ${e.budget}${spent}`;
+  return `已尝试 ${e.expansions} 种走法 / 上限 ${e.budget}${spent}`;
 }
 
 /**
@@ -470,3 +581,134 @@ export function applyTimeWindowRoute(route: TimeWindowRoute): void {
 watch([() => store.targetTime, () => store.targetDate], () => {
   anchorSimulationClock();
 });
+
+// ==================== 功能三 · 多航点模式（M7 站点自动规划） ====================
+
+/** 双机对照的配色：油动暖色、纯电冷色，与风险档配色刻意不撞（数据线一律实线那条规矩同样适用） */
+export const SITE_AIRCRAFT_COLORS: Record<string, string> = {
+  td550: '#f59e0b',
+  v2000cg: '#38bdf8',
+};
+
+export const SITE_REASON_TEXT: Record<string, string> = {
+  payload_exceeds_max: '任务重量超出本机最大商载',
+  payload_beyond_published_envelope: '该载重档没有公开数据，不作答',
+  site_elevation_exceeds: '起降场地海拔超出本机运行高度门限',
+  site_elevation_unverified: '海拔证据不可靠，贴着门限不判可用',
+  network_unreachable: '可用站网不连通，缺中途落地点',
+  no_candidate_in_corridor: '走廊内没有满足门限的站点',
+  detour_exceeds_threshold: '逐段复验后实际里程超出段长上限',
+  time_limit: '本次时间上限已到，尚未算完',
+  iteration_limit: '搜索未收敛，结论尚未确定',
+};
+
+/** 站表与机型能力包：进程内取一次（站表是随仓库版本化的静态数据，不会自己变） */
+export async function fetchSiteCatalog(): Promise<void> {
+  try {
+    const response = await fetch(`${API_BASE}/api/meta/sites`);
+    if (!response.ok) return;
+    store.siteCatalog = await response.json();
+  } catch (error) {
+    console.error('站点表请求失败:', error);
+  }
+}
+
+/**
+ * 自然语言任务 → 表单预填。**只回填，不触发规划**：
+ * 模型认不出的字段留空由用户补，绝不能让一句话直接把一次 A* 踢出去。
+ */
+export async function parseSiteTask(): Promise<void> {
+  const text = store.siteForm.text.trim();
+  if (!text) return;
+  try {
+    const response = await fetch(`${API_BASE}/api/site/parse-task`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) throw new Error('parse failed');
+    const result = await response.json();
+    const f = result.fields ?? {};
+    if (f.payload_kg != null) store.siteForm.payload_kg = Number(f.payload_kg);
+    if (f.aircraft) store.siteForm.aircraft = String(f.aircraft);
+    if (f.mission) store.siteForm.mission = f.mission === 'crew' ? 'crew' : 'cargo';
+    const byName = (name?: string | null) => {
+      if (!name) return null;
+      return store.bases.find(b => b.name === name) ?? null;
+    };
+    const s = byName(f.start_name);
+    const e = byName(f.end_name);
+    if (s) { store.start.lat = s.lat; store.start.lng = s.lng; }
+    if (e) { store.end.lat = e.lat; store.end.lng = e.lng; }
+    store.siteForm.parseSource = result.source === 'llm' ? 'llm' : 'rule';
+  } catch (error) {
+    console.error('任务解析请求失败:', error);
+    store.siteForm.parseSource = 'rule';
+  }
+}
+
+/**
+ * 一次「站点规划」= 双机对照（不带 aircraft 时后端两台各出一份）。
+ *
+ * 与 runPlan 一样放在 store：地图上点站点、侧栏点按钮、结果卡上点"换一台"
+ * 都要能发起同一个请求，各写一遍迟早会出现行为差异。
+ */
+export async function runSitePlan(): Promise<void> {
+  if (!store.start.lat || !store.start.lng || !store.end.lat || !store.end.lng) {
+    alert('请先设置起点和终点！');
+    return;
+  }
+  store.siteLoading = true;
+  try {
+    const body: Record<string, any> = {
+      start: { lat: Number(store.start.lat), lon: Number(store.start.lng) },
+      end: { lat: Number(store.end.lat), lon: Number(store.end.lng) },
+      waypoints: store.waypoints
+        .filter(wp => wp.lat !== '' && wp.lng !== '')
+        .map(wp => ({ lat: Number(wp.lat), lon: Number(wp.lng) })),
+      date: store.targetDate,
+      start_time: store.targetTime,
+      speed: Number(store.uavSpeed),
+      payload_kg: Number(store.siteForm.payload_kg),
+      mission: store.siteForm.mission,
+      priority: store.priority,
+    };
+    if (store.siteForm.aircraft) body.aircraft = store.siteForm.aircraft;
+    const response = await fetch(`${API_BASE}/api/site/plan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error('site plan failed');
+    const result: SitePlanResult = await response.json();
+    store.siteResult = result;
+    const first = (result.options ?? []).find(o => o.feasible) ?? result.options?.[0];
+    store.activeSiteAircraft = first ? first.aircraft : null;
+  } catch (error) {
+    console.error('站点规划请求失败:', error);
+    store.planNotice = { reason: 'request_failed' };
+    store.siteResult = null;
+  } finally {
+    store.siteLoading = false;
+  }
+}
+
+/**
+ * 把选中的中继序列落到现有航线上：起点/终点保持用户所填，中继写进 waypoints。
+ *
+ * 之后一切照旧 —— 「开始规划」的逐段 A* 与功能二的曲线都吃同一份 waypoints，
+ * 不在这里另画一条线（那等于再造一个会出现差异的入口）。
+ */
+export function applySiteOption(opt: SiteOption): void {
+  // legs 的最后一跳就是终点（site_id 以 OD- 开头），所以 relays 天然只含中途落地站
+  const relays = (opt.legs ?? []).map(l => l.to).filter(e => e && !String(e.site_id).startsWith('OD-'));
+  const last = opt.legs?.[opt.legs.length - 1]?.to;
+  if (last) {
+    store.end.lat = String(last.lat);
+    store.end.lng = String(last.lon);
+  }
+  store.waypoints = relays.map(e => ({
+    lat: String(e.lat), lng: String(e.lon), alt: '',
+  }));
+  store.activeSiteAircraft = opt.aircraft;
+}

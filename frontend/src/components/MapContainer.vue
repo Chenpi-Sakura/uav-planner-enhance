@@ -7,7 +7,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { store, RISK_COLORS, TIER_COLORS, PRIORITY_LABELS, activateRouteTier, fetchCoverage } from '../store';
+import { store, RISK_COLORS, TIER_COLORS, PRIORITY_LABELS, activateRouteTier, fetchCoverage, SITE_AIRCRAFT_COLORS } from '../store';
 import { API_BASE, DEFAULT_REL_ALT } from '../config';
 
 const props = defineProps<{
@@ -25,6 +25,8 @@ let basesLayer = L.layerGroup(); // layer for city bases
 let coverageLayer = L.layerGroup();
 let altLayer = L.layerGroup();    // 替代起降点（后端 suggestions.alt_bases）
 let peakLayer = L.layerGroup();   // 沿程最危险点（risk.stats.worst_index）
+let siteLayer = L.layerGroup();   // 多航点模式：中继序列与段长可达圆（M7）
+let siteCatalogLayer = L.layerGroup(); // 多航点模式：站表全量候选点，只在「多航点」页显示
 
 // Map Layers
 const layers: Record<string, L.TileLayer> = {
@@ -77,6 +79,9 @@ onMounted(() => {
   blockLayer.addTo(map);
   altLayer.addTo(map);
   peakLayer.addTo(map);
+  siteLayer.addTo(map);
+  siteCatalogLayer.addTo(map);
+  map.on('zoomend', () => renderSiteCatalog());
   renderCoverageBox();
   void fetchCoverage().then(renderCoverageBox);
 
@@ -380,6 +385,98 @@ const renderAltBases = () => {
   });
 };
 
+/**
+ * 多航点模式：把双机对照的中继序列画成两条实线（颜色区分机型，不靠线型）。
+ *
+ * 只画"能飞的"那台；被拒的那台在侧栏卡片里给结论与原因，不在地图上留残线。
+ * 可达圆只画当前选中那台的起跳点一圈 —— 213 个站点铺满屏幕不会让任何人更懂这条线，
+ * 而"段长上限是个圆"这一眼就看出来了（池外灰点按 2026-09-27 裁定不进一期）。
+ */
+const renderSitePlan = () => {
+  siteLayer.clearLayers();
+  if (!map || !store.siteResult) return;
+  const opts = (store.siteResult.options ?? []).filter(o => o.feasible);
+  const active = store.activeSiteAircraft;
+
+  opts.forEach(o => {
+    const color = SITE_AIRCRAFT_COLORS[o.aircraft] ?? '#94a3b8';
+    const isActive = !active || active === o.aircraft;
+    const pts: [number, number][] = [];
+    (o.legs ?? []).forEach((l, i) => {
+      if (i === 0) pts.push([l.from.lat, l.from.lon]);
+      pts.push([l.to.lat, l.to.lon]);
+    });
+    if (pts.length < 2) return;
+    L.polyline(pts, {
+      color, weight: 3, opacity: isActive ? 0.95 : 0.35,
+      interactive: false,
+    }).addTo(siteLayer);
+
+    (o.legs ?? []).forEach(l => {
+      const e = l.to;
+      if (!e || String(e.site_id).startsWith('OD-')) return;
+      const w = l.weather || {};
+      L.circleMarker([e.lat, e.lon], {
+        color, weight: 2, fillColor: color, fillOpacity: isActive ? 1 : 0.4, radius: 7,
+      }).addTo(siteLayer).bindTooltip(
+        `${e.name} · 第 ${l.seq} 段落地<br>`
+        + `海拔 ${e.elevation_m ?? '—'} m · 直线 ${l.straight_km} km`
+        + `${l.route_km != null ? ' · 实飞 ' + l.route_km + ' km' : ' · 未复验'}<br>`
+        + `${w.label ?? ''}${l.level ? ' · 风险 ' + l.level : ''}`,
+        { direction: 'top', offset: [0, -10] }
+      );
+      // 落地站必须自带地名：只给一个彩色圆点，看上去就跟随机取点连线没区别
+      if (isActive) {
+        L.marker([e.lat, e.lon], {
+          interactive: false,
+          icon: L.divIcon({
+            className: 'site-relay-marker',
+            html: `<div class="site-relay-label">${l.seq} ${e.name}</div>`,
+            iconSize: [1, 1], iconAnchor: [0, 0],
+          }),
+        }).addTo(siteLayer);
+      }
+    });
+
+    if (!isActive) return;
+    const start = pts[0];
+    L.circle(start, {
+      radius: o.leg_limit_km * 1000, color, weight: 1, opacity: 0.5,
+      dashArray: '4, 6', fill: false, interactive: false,
+    }).addTo(siteLayer);
+    L.marker(start, {
+      interactive: false,
+      icon: L.divIcon({
+        className: 'alt-marker',
+        html: `<div class="alt-tag">段长上限 ${o.leg_limit_km} km（直线）</div>`,
+        iconSize: [220, 26], iconAnchor: [110, -14],
+      }),
+    }).addTo(siteLayer);
+  });
+};
+
+/** 站表全量候选点：进「多航点」页就带地名画出来，不让人对着一串无名圆点猜算法随机落了哪儿 */
+const renderSiteCatalog = () => {
+  siteCatalogLayer.clearLayers();
+  if (!map || store.sidebarTab !== 'site') return;
+  // 默认 zoom 7 铺 210 条地名会糊成一片：远景只标机场，放大后才连县城一起标
+  const labelAll = map.getZoom() >= 8;
+  (store.siteCatalog?.sites ?? []).forEach(s => {
+    if (s.usable === false) return;
+    if (!labelAll && s.type !== 'airport') return;
+    L.marker([s.lat, s.lon], {
+      zIndexOffset: -200,
+      icon: L.divIcon({
+        className: 'site-cat-marker',
+        html: `<div class="site-cat-dot"></div><div class="site-cat-label">${s.name}</div>`,
+        iconSize: [12, 12], iconAnchor: [6, 6],
+      }),
+    }).addTo(siteCatalogLayer).bindTooltip(
+      `${s.name} · ${s.elevation_m ?? '—'} m`,
+      { direction: 'top', offset: [0, -6] });
+  });
+};
+
 /** 沿程最危险点：risk.stats.worst_index 指向的那个样本，标在真正飞的那条线上 */
 const renderPeakWorst = () => {
   peakLayer.clearLayers();
@@ -670,6 +767,16 @@ watch([() => store.routeOptions, () => store.priority, () => store.hoveredTier],
   renderPeakWorst();
 });
 
+// 多航点模式：换看哪一台、重跑一次规划，都要跟着重画
+watch([() => store.siteResult, () => store.activeSiteAircraft], () => {
+  renderSitePlan();
+});
+
+// 站表只在「多航点」页铺出来；首次进页时目录可能还没取到，取到后再画一次
+watch([() => store.sidebarTab, () => store.siteCatalog], () => {
+  renderSiteCatalog();
+});
+
 watch([() => store.overlays, () => store.targetDate, () => store.simulationTime, () => store.simulationDate], () => {
   renderRealOverlays();
 }, { deep: true });
@@ -790,6 +897,32 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+/* 站表候选点：小圆点 + 地名，刻意不用城堡图标（那是起降预设点专属） */
+:deep(.site-cat-marker) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+:deep(.site-cat-marker .site-cat-dot) {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  border: 1px solid rgba(0, 0, 0, 0.75);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+:deep(.site-cat-marker .site-cat-label) {
+  position: absolute;
+  top: 9px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: rgba(255,255,255,0.9);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.95), 0 0 2px rgba(0,0,0,0.7);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 /* 阻塞湍流区标注 */
 :deep(.blocking-marker) {
   display: flex;
@@ -819,7 +952,8 @@ onUnmounted(() => {
 }
 :deep(.coverage-tag),
 :deep(.alt-tag),
-:deep(.peak-tag) {
+:deep(.peak-tag),
+:deep(.site-relay-label) {
   font-size: 14px;
   font-weight: 700;
   line-height: 1.35;
@@ -827,19 +961,28 @@ onUnmounted(() => {
   border-radius: 9999px;
   white-space: nowrap;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  /* 与 .glass-panel 同一档底：纯黑 0.75 + 同一份颗粒纹理 */
+  background-color: var(--panel-bg);
+  background-image: var(--panel-noise);
 }
 :deep(.coverage-tag) {
-  background: rgba(15, 23, 42, 0.78);
   color: #e2e8f0;
   border: 1px dashed rgba(203, 213, 225, 0.9);
 }
 :deep(.alt-tag) {
-  background: rgba(15, 23, 42, 0.82);
   color: #e2e8f0;
   border: 1px solid rgba(226, 232, 240, 0.65);
 }
 :deep(.peak-tag) {
-  background: rgba(15, 23, 42, 0.82);
   border: 1px solid;
+}
+:deep(.site-relay-label) {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  /* 描边与字色取同一个值：机型色只留给航线与圆点，标签本身不再二色 */
+  border: 1px solid #e2e8f0;
+  color: #e2e8f0;
 }
 </style>

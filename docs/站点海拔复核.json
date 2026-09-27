@@ -1,0 +1,286 @@
+[
+  {
+    "name": "波密县",
+    "old_elev_m": 2730,
+    "new_elev_m": 2720,
+    "kind": "official_county_seat",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "https://www.bomi.gov.cn/bmx/zjbm/201901/bdf119867ed94fd9ab8b58edb6d58aee.shtml",
+      "https://wlt.xizang.gov.cn/xccx/lytg/202111/t20211118_270402.html"
+    ],
+    "confidence": "high",
+    "note": "波密县政府《自然地理》原文：\"县城驻地扎木镇海拔2720米\"（境内最高6648米、最低2001.4米）。自治区文旅厅2021-11-18精确海拔清单作2730米，两者相差10米，均在3000米门槛以下，结论不变。原表标注的2730实为文旅厅清单值而非DEM采样值。"
+  },
+  {
+    "name": "格尔木机场",
+    "old_elev_m": 2845,
+    "new_elev_m": 2842,
+    "kind": "published_airport_elevation",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "https://www.caac.gov.cn/PHONE/ZTZL/RDZT/MHAQSJ/AQSJDT/201509/t20150922_1617.html",
+      "http://www.qinghai.gov.cn/zwgk/system/2024-08-14/030051150.shtml"
+    ],
+    "confidence": "high",
+    "note": "民航局官网（格尔木机场安全审计专题）原文：\"该机场海拔2842米，为高高原机场\"，军民合用。与DEM值2845仅差3米，两侧同处门槛下，可用/不可用结论不变。"
+  },
+  {
+    "name": "米林县（现米林市）",
+    "old_elev_m": 2938,
+    "new_elev_m": 2950,
+    "kind": "official_county_seat",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "https://www.milin.gov.cn/mlx/zjml/201901/77e295d143d246f2b198bd29e8c31e08.shtml",
+      "https://wlt.xizang.gov.cn/xccx/lytg/202111/t20211118_270402.html"
+    ],
+    "confidence": "high",
+    "note": "米林市政府《自然地理》原文：\"市驻地东多村海拔2950米\"，\"全市平均海拔3700米\"——不可把3700当驻地值用。文旅厅清单作2938米。两值相差12米且都低于3000米，纯电机型仍可用。2023年后米林已撤县设市。"
+  },
+  {
+    "name": "亚东县",
+    "old_elev_m": 2940,
+    "new_elev_m": 2940,
+    "kind": "conflicting",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "https://wlt.xizang.gov.cn/xccx/lytg/202111/t20211118_270402.html",
+      "https://wlt.xizang.gov.cn/xccx/hzhd/201810/t20181012_118347.html",
+      "https://www.xizang.gov.cn/xwzx_406/qxxw/202609/t20260919_559684.html"
+    ],
+    "confidence": "low",
+    "note": "未查到亚东县政府/日喀则市对县城（下司马镇，县政府驻地）的官方高程。唯一逐县公布驻地海拔的官方来源仍是文旅厅清单2940米。其余官方口径均为县均或分乡镇值、不可混用：文旅厅称亚东\"平均海拔3500米以上\"，帕里镇\"海拔4360米\"，堆纳乡古汝村4570米。此前传闻的\"官方值约2844米（差+96米）\"本次未能找到可引用出处，未采信、也未据此改数。表内坐标27.4828,88.9068落在下司马一带河谷，与驻地一致。3000米符号：2940与2844同在门槛下，翻转风险低，但该值本身仍需1:1万地形图或现场RTK定值。"
+  },
+  {
+    "name": "茫崖花土沟机场（2025-10-26更名 海西茫崖机场）",
+    "old_elev_m": 2945,
+    "new_elev_m": 2906,
+    "kind": "published_airport_elevation",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "http://www.caac.gov.cn/big5/www.caac.gov.cn/XWZX/DFDT/201507/t20150701_14508.html",
+      "http://www.caacnews.com.cn/1/5/202510/t20251031_1390986.html"
+    ],
+    "confidence": "high",
+    "note": "民航局官网通航消息原文：\"花土沟机场是西北地区第21个、青海省第5个民用机场，海拔高度2906米，属国内4C级支线机场\"，2015-06-26通航；2025-10更名为海西茫崖机场，仍在运营。DEM值2945偏高39米，两值都低于3000米（余量94米），可用结论不变。"
+  },
+  {
+    "name": "巴宜区（林芝市驻地）",
+    "old_elev_m": 2995,
+    "new_elev_m": 2995,
+    "kind": "conflicting",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "https://wlt.xizang.gov.cn/xccx/lytg/202111/t20211118_270402.html",
+      "https://www.bayiqu.gov.cn/byq/zjby/202311/6eb33b2d97394499a4e857a6f2c41f79.shtml",
+      "https://www.linzhi.gov.cn/linzhi/zmlz/zmlz.shtml"
+    ],
+    "confidence": "low",
+    "note": "本条距3000米门限只有5米，是全部20条里最脆弱的一条。文旅厅清单驻地海拔2995米；巴宜区政府《基本情况》只给\"平均海拔3000米\"（区均值，非驻地），林芝市政府页只给\"平均海拔3100米\"。未找到八一镇（区政府驻地）的独立官方高程。按现有官方驻地口径仍判为门槛下（可用），但建议按\"边界不达标\"处理或现场复测后再入表。"
+  },
+  {
+    "name": "德令哈机场",
+    "old_elev_m": 3001,
+    "new_elev_m": 2862.2,
+    "kind": "published_airport_elevation",
+    "status": "operating",
+    "crosses_3000_gate": true,
+    "source": [
+      "http://www.caac.gov.cn/XWZX/DFDT/201403/t20140317_19622.html",
+      "http://www.caac.gov.cn/XWZX/DFDT/201406/t20140618_19637.html",
+      "https://www.baike.com/wikiid/4223901305873355975"
+    ],
+    "confidence": "high",
+    "note": "★符号翻转：民航局西北管理局《新建海西德令哈机场工程行业验收》（2014-03-11~13）原文\"机场标高为2862.2米\"，4C级、跑道3000米，2014-06-16通航。DEM采样3001米把该站误判到3000米以上（纯电机型不可用），实际标高2862.2米在门槛下138米，应改为可用。抖音百科亦记为高高原机场2862米，与官方一致。"
+  },
+  {
+    "name": "共和青海湖机场（现名：海南州共和机场）",
+    "old_elev_m": 3064,
+    "new_elev_m": 3064,
+    "kind": "dem_only_still",
+    "status": "planned",
+    "crosses_3000_gate": false,
+    "source": [
+      "https://www.hainanzhou.gov.cn/xwzx/hnyw/content_1013652718",
+      "https://m.thepaper.cn/newsDetail_forward_32870215",
+      "https://www.xinghai.gov.cn/lnb/zc1__zwgk/zc/aztfl/gf/content_1614832"
+    ],
+    "confidence": "low",
+    "note": "该条目在2026年9月时点尚不存在\"共和青海湖机场\"这座运营机场：项目为新建4C级支线机场，场址共和县恰卜恰镇廿地乡，海南州政府2026-04-09通报\"年内实现通航\"（目标2026-10）；民航局2026-04-01批准命名为\"海南州共和机场\"，而\"共和青海湖机场\"这一拟名因不符合命名规定被排除（早年前期工作曾以\"青海湖机场\"上报，见兴海县2013页）。未找到该场址已发布的机场标高/跑道入口标高，故海拔保留DEM值3064米不改动。参考背景（非场址值）：共和县人大概况记全县\"平均海拔3200米\"、恰卜恰河谷最低点2759米。建议按规划站处理，投用后取民航局验收/使用许可证文件里的标高再入表。"
+  },
+  {
+    "name": "朗县",
+    "old_elev_m": 3100,
+    "new_elev_m": 3100,
+    "kind": "official_county_seat",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "https://wlt.xizang.gov.cn/xccx/lytg/202111/t20211118_270402.html",
+      "https://www.langxian.gov.cn/lx/zjlx/201901/c98c3d24be4d433eadadb3fdfa08f7dc.shtml"
+    ],
+    "confidence": "medium",
+    "note": "朗县政府《自然地理》未给驻地（朗镇）高程，只有\"全县平均海拔3200米\"与\"谷地最低海拔3016米\"、最高6157.9米；县均3200不可当驻地用。逐县公布驻地海拔的官方来源仍是文旅厅3100米。注意：政府页\"谷地最低3016米\"从下方卡住了县域河谷高程下限，说明驻地不可能低于约3016米，因此即便采用传闻中的约3019米，也仍在3000米以上——符号不翻转，纯电机型判不可用不变。"
+  },
+  {
+    "name": "海晏（青海湖）通用机场候选",
+    "old_elev_m": 3141,
+    "new_elev_m": 3141,
+    "kind": "dem_only_still",
+    "status": "planned",
+    "crosses_3000_gate": false,
+    "source": [
+      "http://www.caac.gov.cn/PHONE/GLJ_PHONE/XBGLJ/XB_XWZX/XB_DQYW/201904/t20190428_195930.html",
+      "https://www.neac.gov.cn/seac/c103548/201802/1012487.shtml"
+    ],
+    "confidence": "low",
+    "note": "未建成、未投用。可查到的最新官方进展只有民航局西北管理局2019-04-28《组织青海海晏通用机场场址现场踏勘》：\"拟定为A1类通用机场，位于青海省海北州海晏县西北侧、西海镇东侧的台地上\"——仍是\"拟定\"场址阶段；此后未见立项、开工、行业验收或使用许可类官方文件，也未查到青海任何已投用通用机场名单含海晏。海拔保留DEM值3141米（未发布标高），仅可作规划候选点参考。参考背景：国家民委海晏县页记\"平均海拔3000米以上\"。"
+  },
+  {
+    "name": "海北祁连机场",
+    "old_elev_m": 3162,
+    "new_elev_m": 3162.9,
+    "kind": "published_airport_elevation",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "https://www.caac.gov.cn/PHONE/XWZX/DFDT/201808/t20180830_191462.html",
+      "http://www.caac.gov.cn/PHONE/GLJ_PHONE/XBGLJ/XB_XWZX/XB_DQYW/201808/t20180808_190276.html"
+    ],
+    "confidence": "high",
+    "note": "民航局西北管理局《组织完成新建祁连机场使用许可证颁发工作》原文：\"新建祁连机场位于祁连县东南峨堡镇，海拔3162.9米\"、\"机场标高3162.9米\"，4C级、跑道3400米，2018年8月颁发使用许可证并通航。DEM值3162与官方标高3162.9几乎重合，均在3000米以上，不可用结论不变。"
+  },
+  {
+    "name": "察雅县",
+    "old_elev_m": 3170,
+    "new_elev_m": 3170,
+    "kind": "official_county_seat",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "https://wlt.xizang.gov.cn/xccx/lytg/202111/t20211118_270402.html",
+      "https://chaya.changdu.gov.cn/cyxrmzf/c105851/zjcd.shtml"
+    ],
+    "confidence": "medium",
+    "note": "察雅县政府\"走进察雅\"只有地势区间，无驻地高程：\"总体地势2900~4000米\"、最高点5630米、最低处巴日乡则松村（澜沧江出境处）水面2870米。驻地海拔的官方口径只有文旅厅清单3170米（单一来源）。符号不翻转（3170与县域河谷下限2870分列门槛两侧，故若日后改用河谷低点口径需重判；现按驻地3170米不可用）。"
+  },
+  {
+    "name": "甘南夏河机场",
+    "old_elev_m": 3203,
+    "new_elev_m": 3189,
+    "kind": "published_airport_elevation",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "http://www.caac.gov.cn/PHONE/XWZX/HYDT/201307/t20130722_16146.html",
+      "http://www.caac.gov.cn/PHONE/XWZX/HYDT/201308/t20130823_16165.html"
+    ],
+    "confidence": "high",
+    "note": "民航局官网《新建甘肃甘南/夏河机场试飞成功》（2013-07-18试飞）原文：\"机场标高3189米，跑道长度3200米\"，并记\"夏河机场是甘肃辖区第一个高高原机场\"。DEM值3203偏高14米，均在3000米以上，不可用结论不变（2023年曾短暂停航后复航，仍为运营中运输机场）。"
+  },
+  {
+    "name": "卡若区（昌都市驻地）",
+    "old_elev_m": 3250,
+    "new_elev_m": 3250,
+    "kind": "official_county_seat",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "https://wlt.xizang.gov.cn/xccx/lytg/202111/t20211118_270402.html",
+      "https://karuo.changdu.gov.cn/krqrmzf/c105852/202511/d9b2d233176d4a8d8db1daf561411659.shtml"
+    ],
+    "confidence": "medium",
+    "note": "卡若区政府《基本情况》只给\"是昌都市委、市政府驻地，平均海拔3500米\"——这是全区均值，不能当驻地值。驻地口径采用文旅厅清单3250米（单一来源）。两值都远高于3000米，不可用结论不变；但3250与3500的差需在建站表里注明取的是哪一口径。"
+  },
+  {
+    "name": "加查县",
+    "old_elev_m": 3260,
+    "new_elev_m": 3260,
+    "kind": "official_county_seat",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "https://wlt.xizang.gov.cn/xccx/lytg/202111/t20211118_270402.html",
+      "http://www.jiacha.gov.cn/zjjc/jcgk/zrdl/201903/t20190306_20216.html"
+    ],
+    "confidence": "medium",
+    "note": "驻地海拔只有文旅厅清单3260米一个官方口径可用；加查县政府网\"自然地理\"页本次抓取失败（未能核对第二来源，链接保留待复核）。距3000米门限260米、且为县均值/驻地混用风险较低的一侧，符号不翻转，不可用结论不变。"
+  },
+  {
+    "name": "八宿县",
+    "old_elev_m": 3275,
+    "new_elev_m": 3260,
+    "kind": "official_county_seat",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "https://basu.changdu.gov.cn/bsxrmzf/c105854/202511/47571a71712e4370b07490ada8d3e63c.shtml",
+      "https://wlt.xizang.gov.cn/xccx/lytg/202111/t20211118_270402.html"
+    ],
+    "confidence": "high",
+    "note": "八宿县政府《自然地理》原文：\"县城所在地白马镇海拔3260米\"（县政府未给全县平均值）。文旅厅清单作3275米，高15米。两值均远高于3000米，不可用结论不变。"
+  },
+  {
+    "name": "香格里拉机场（迪庆）",
+    "old_elev_m": 3280,
+    "new_elev_m": 3287.9,
+    "kind": "published_airport_elevation",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "http://www.caac.gov.cn/PHONE/ZTZL/RDZT/XJSYY/201511/t20151126_14892.html",
+      "https://www.ynairport.com/RouteXGLL.jhtml"
+    ],
+    "confidence": "high",
+    "note": "民航局官网《高原、复杂机场地形、地貌展（第一期）》逐条给出：\"迪庆/香格里拉机场 机场标高：3287.9m(10787ft)\"；云南机场集团页记\"海拔3287.8米，1999年4月30日建成通航\"，飞行区等级4D。取民航局3287.9米。DEM值3280低8米，同在门槛上侧，不可用结论不变。"
+  },
+  {
+    "name": "宁蒗泸沽湖机场",
+    "old_elev_m": 3293,
+    "new_elev_m": 3292.9,
+    "kind": "published_airport_elevation",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "https://km.ynairport.com/news/945.jhtml"
+    ],
+    "confidence": "high",
+    "note": "云南机场集团（运营方）《宁蒗泸沽湖机场正式通航》原文：\"机场标高3292.9米\"、\"机场海拔3293米\"，位于宁蒗县红桥乡石佛山，飞行区等级4C，2015-10-12正式通航。与DEM值3293一致（取3292.9米官方标高）。不可用结论不变。"
+  },
+  {
+    "name": "班戈县",
+    "old_elev_m": 4715,
+    "new_elev_m": 4715,
+    "kind": "official_county_seat",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "https://wlt.xizang.gov.cn/xccx/lytg/202111/t20211118_270402.html",
+      "https://wlt.xizang.gov.cn/xccx/lytg/202206/t20220621_304119.html"
+    ],
+    "confidence": "medium",
+    "note": "驻地口径为文旅厅精确海拔清单\"班戈4715米\"；文旅厅另有\"（班戈）平均海拔4700米\"（县均值，不可混用）。对纯电机3000米门限无意义（远高于门槛）。真正敏感的是油机5000米门限：余量仅285米，且4715是单一来源，建议这条也走现场/大比例尺地形图复核。"
+  },
+  {
+    "name": "双湖县",
+    "old_elev_m": 4920,
+    "new_elev_m": 4920,
+    "kind": "conflicting",
+    "status": "operating",
+    "crosses_3000_gate": false,
+    "source": [
+      "https://wlt.xizang.gov.cn/xccx/lytg/202111/t20211118_270402.html",
+      "https://wlt.xizang.gov.cn/xwzx_69/wlyw/dsdt/202106/t20210622_247629.html",
+      "http://www.news.cn/politics/2022-07/22/c_1128855900.htm"
+    ],
+    "confidence": "medium",
+    "note": "口径直接冲突且踩在油机5000米门限上：文旅厅精确海拔清单给驻地4920米（并注\"应该是世界上海拔最高的县城\"）；文旅厅/新华社另记双湖\"平均海拔超过5000米\"\"全国海拔最高县\"。若按县均口径则越过5000米、油机判不可用，按驻地4920米则勉强可用（余量80米）。另需注意高海拔生态搬迁已把部分人口迁至山南市贡嘎县森布日村，原县城驻地的实际保障能力需另核。对3000米门限无影响（远超）。"
+  }
+]

@@ -30,7 +30,7 @@
                 <Play v-else :size="16" />
               </button>
               <button class="sim-btn stop" @click="stopSimulation"><Square :size="16" /></button>
-              <span class="sim-clock" title="推演游标当前时刻（含跨午夜后的日期），起飞时间以上方输入框为准">
+              <span class="sim-clock" :title="simClockText">
                 {{ simClockText }}
               </span>
             </div>
@@ -46,7 +46,7 @@
           <div class="echarts-area" ref="chartRef"></div>
           <div class="chart-empty" v-if="store.plannedPath.length === 0">
             <span class="chart-empty-text">暂无路线</span>
-            <span class="chart-empty-hint">请先在左侧规划航线或运行可行性评估</span>
+            <span class="chart-empty-hint">请先在左侧规划航线</span>
           </div>
         </div>
       </div>
@@ -92,8 +92,9 @@ const initChart = () => {
     backgroundColor: 'transparent',
     tooltip: {
       trigger: 'axis',
-      backgroundColor: 'rgba(15, 23, 42, 0.9)',
+      backgroundColor: 'rgba(0, 0, 0, 0.75)',
       borderColor: 'rgba(255, 255, 255, 0.2)',
+      className: 'panel-noise',
       textStyle: { color: '#f8fafc', fontSize: 12 }
     },
     grid: {

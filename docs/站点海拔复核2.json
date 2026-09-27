@@ -1,0 +1,460 @@
+[
+  {
+    "id": "CT-131",
+    "name": "祁连县",
+    "old_elev_m": 2738,
+    "new_elev_m": 2787,
+    "kind": "official_county_seat",
+    "crosses_3000_gate": false,
+    "confidence": "medium",
+    "source": [
+      "https://baike.baidu.com/item/%E7%A5%81%E8%BF%9E%E5%8E%BF/3852179",
+      "https://www.weather.com.cn/cityintro/101150803.shtml"
+    ],
+    "note": "条目原句：『祁连县地处祁连山中段腹地，境内平均海拔3169米，县城海拔2787米』，即县城（八宝镇，县政府驻地）2787 m，非全县平均。来源为百度百科（转引地方志口径），baike 反复 403、祁连县政府网与 qinghai.gov.cn 均不可抓取，故只给 medium。天气网祁连城市介绍页无海拔字段。原 DEM 2738 m 偏低 49 m，两值都远低于 3000 m，可用/不可用结论不变。"
+  },
+  {
+    "id": "CT-155",
+    "name": "格尔木市",
+    "old_elev_m": 2818,
+    "new_elev_m": 2818,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "https://www.weather.com.cn/cityintro/101150901.shtml"
+    ],
+    "note": "保留原值。唯一拿到的公开值是『平均海拔2800米』（中国天气网城市介绍，坐标 94.89/36.42 与站表点位一致），但格尔木市辖区含唐古拉山乡，该数为全境口径、不可当市政府驻地高程使用。格尔木市政府网仅有留言页可抓，无市情海拔。2818 与 2800 均 <3000，纯电机型结论不变。"
+  },
+  {
+    "id": "CT-128",
+    "name": "化隆回族自治县",
+    "old_elev_m": 2832,
+    "new_elev_m": 2832,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "https://zh.wikipedia.org/zh-cn/%E5%8C%96%E9%9A%86%E5%9B%9E%E6%97%8F%E8%87%AA%E6%B2%BB%E5%8E%BF",
+      "http://www.xzqh.org/html/show/qh/20633.html"
+    ],
+    "note": "保留原值。海东市/化隆县政府门户未检索到可抓取页面，巴燕镇政府驻地海拔未取得任何官方口径；zh 维基与 xzqh 只有沿革与驻地名称、无高程。"
+  },
+  {
+    "id": "CT-138",
+    "name": "共和县",
+    "old_elev_m": 2855,
+    "new_elev_m": 2855,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "https://www.hainanzhou.gov.cn/sjhn/gxgk/content_72270",
+      "https://www.ghxrd.gov.cn/ghxgk/202201/t20220105_190426.html",
+      "https://www.weather.com.cn/cityintro/101150409.shtml"
+    ],
+    "note": "保留原值。州/县两级政府《共和县概况》只给『平均海拔3200米』与极值（鄂拉山5290 m、龙羊峡2460 m），恰卜恰镇驻地高程未单独列出；天气网共和城市介绍同为『平均海拔3200米』。2855 与坊间『恰卜恰镇海拔2855米』一致，但该说法本轮未能从可访问的官方页复核（qinghai.gov.cn『恰卜恰镇的过去与现在』与新华网青海 qh.news.cn 均抓取失败/504）。海拔与门槛差 145 m，结论不变。"
+  },
+  {
+    "id": "CT-130",
+    "name": "门源回族自治县",
+    "old_elev_m": 2867,
+    "new_elev_m": 2867,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "medium",
+    "source": [
+      "https://www.weather.com.cn/cityintro/101150802.shtml"
+    ],
+    "note": "保留原值，但交叉验证通过：中国天气网门源城市介绍记 2866 m，与 DEM 2867 m 仅差 1 m，说明浩门镇点位高程可信。注意该 2866 为『平均海拔』表述、非政府驻地口径，故 kind 仍记 dem_only_still。距 3000 m 门槛 133 m，结论不变。"
+  },
+  {
+    "id": "CT-17",
+    "name": "九龙县",
+    "old_elev_m": 2887,
+    "new_elev_m": 2887,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "https://www.scjl.gov.cn/dxdm/article/245128"
+    ],
+    "note": "保留原值。九龙县政府《九龙地形地貌》只有区域极值（北部山岳 3600~5500 m、洪坝山 6010 m、县境最低三垭河与雅砻江汇流处 1440 m），无县政府驻地（九龙镇）高程。距门槛 113 m。"
+  },
+  {
+    "id": "CT-109",
+    "name": "合作市",
+    "old_elev_m": 2893,
+    "new_elev_m": 2893,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "https://www.weather.com.cn/cityintro/101161201.shtml",
+      "http://www.hezuo.gov.cn/info/1178/61085.htm"
+    ],
+    "note": "保留原值，并记录一条疑点：中国天气网 101161201（标题'合作'）页面写『平均海拔3000米以上』，但标注坐标 东经102°54′/北纬39°59′ 与合作市实际位置（35.0N/102.9E）不符，疑为串页数据，不可采用。合作市政府网 hezuo.gov.cn 与甘南州政府站均拒绝连接（http/https 都 fetch failed）。门槛余量 107 m；若日后取到 3000 m 以上的官方驻地值需重判，建议列为人工复核项。"
+  },
+  {
+    "id": "CT-29",
+    "name": "乡城县",
+    "old_elev_m": 2917,
+    "new_elev_m": 2917,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "http://www.xcx.gov.cn/xcgk/article/136856"
+    ],
+    "note": "保留原值。乡城县政府《乡城概况》只给极值：最高『县城东南面的萨苟峰5336米』、最低南部洞松乡仲达村 2560 m，未列县城（桑披镇）高程。门槛余量 83 m。"
+  },
+  {
+    "id": "CT-116",
+    "name": "夏河县",
+    "old_elev_m": 2924,
+    "new_elev_m": 2800,
+    "kind": "official_county_seat",
+    "crosses_3000_gate": false,
+    "confidence": "medium",
+    "source": [
+      "https://www.weather.com.cn/cityintro/101161208.shtml"
+    ],
+    "note": "中国天气网夏河城市介绍原句『县城海拔 2800 米』，是本轮唯一明确的'县城'口径值（拉卜楞镇/原夏河镇）。与原 GeoNames/DEM 值 2924 m 相差 124 m，偏差不算小但两值都 <3000 m，可用/不可用结论不变。甘南州《夏河县情简介》(gnzrmzf.gov.cn/info/1014/1049.htm) 与夏河县政府网均无法抓取，未能二次校核；海拔以 2800 m 采纳，若需精确请以《夏河县志》或拉卜楞寺高程复核。"
+  },
+  {
+    "id": "CT-157",
+    "name": "茫崖市",
+    "old_elev_m": 2946,
+    "new_elev_m": 2946,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "https://www.weather.com.cn/cityintro/101150712.shtml",
+      "http://www.qinghai.gov.cn/zwgk/system/2021-09-18/010393133.shtml",
+      "https://www.cnr.cn/qhfw/dmqh/20211018/t20211018_525636592.shtml"
+    ],
+    "note": "保留原值。天气网茫崖城市介绍只有气候/降水文字、无海拔字段；青海省政府网与央广茫崖专题抓取失败，新华网《文旅新探·茫崖》全文无'海拔'。市政府驻地花土沟镇高程本轮无官方值。距门槛 54 m，属本批余量最小的青南条目之一，建议列为人工复核项。"
+  },
+  {
+    "id": "AP-3",
+    "name": "林芝米林机场",
+    "old_elev_m": 2949,
+    "new_elev_m": 2949,
+    "kind": "published_airport_elevation",
+    "crosses_3000_gate": false,
+    "confidence": "high",
+    "source": [
+      "https://www.linzhi.gov.cn/linzhi/zmlz/201812/960b90a6bba94ec98886aa736ce5febe.shtml",
+      "https://jtt.xizang.gov.cn/xxgk/fdzdgknr/jggk/jtgk/201611/t20161130_233598.html"
+    ],
+    "note": "最终结论：采用 2949 m，符号为『低于 3000 m 门槛 51 m』→ 纯电机型在西藏仍判定有可用机场，结论不翻转。依据两个互相独立的政府源：林芝市人民政府网《林芝米林机场》两处原句『机场海拔2949米，属于高原机场』、『……距林芝市巴宜区八一镇50公里，海拔2949米』；西藏自治区交通运输厅《西藏机场简介》『海拔2949米，低于4334米的昌都邦达机场和3570米的拉萨贡嘎机场，其海拔高度在国内民用机场中排位第五』。'2952 m' 说法本轮未在政府源/民航局源中出现（仍 <3000，不影响符号）。DEM 2938 m 与 OurAirports 9675 ft≈2949 m 之差属正常，不改变判定。风险提示：余量仅 51 m，若要用于运行放行须以 AIP China 机场标高 + 机型温度修正复核。"
+  },
+  {
+    "id": "CT-158",
+    "name": "乌兰县",
+    "old_elev_m": 2971,
+    "new_elev_m": 2971,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "https://www.weather.com.cn/cityintro/101150709.shtml",
+      "http://cdmxhjj.haixi.gov.cn/system/2015-09-02/010177432.shtml"
+    ],
+    "note": "保留原值。天气网乌兰页面正文无海拔；柴达木循环经济试验区《乌兰工业园概况》抓取失败。县政府驻地希乐口镇海拔无官方值。门槛余量仅 29 m，是本批翻转风险最高的两条之一（另一条为 CT-156），务必人工复核。"
+  },
+  {
+    "id": "CT-19",
+    "name": "道孚县",
+    "old_elev_m": 2975,
+    "new_elev_m": 2960,
+    "kind": "official_county_seat",
+    "crosses_3000_gate": false,
+    "confidence": "high",
+    "source": [
+      "http://www.gzdf.gov.cn/dfnj/article/521277"
+    ],
+    "note": "道孚县人民政府《2022年道孚年鉴》原句：『县城位于鲜水河畔的鲜水镇，海拔2960米，距州府康定198公里，距成都478公里』，为县政府驻地口径。较 DEM 2975 低 15 m；两值均 <3000 m，余量 40 m，结论不变但余量偏小。"
+  },
+  {
+    "id": "CT-156",
+    "name": "德令哈市",
+    "old_elev_m": 2993,
+    "new_elev_m": 2993,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "https://www.weather.com.cn/cityintro/101150716.shtml"
+    ],
+    "note": "保留原值。天气网德令哈城市介绍只给『（东经96°15′—98°15′，北纬36°55′—38°22′之间）平均海拔2980米』，是全市域口径，不能当市政府驻地高程。本批最危险条目：DEM 2993 距 3000 m 仅 7 m，公开值 2980 亦仅余 20 m，无论取哪个都判'可用'，但一次 50 m 级的口径修正就会翻转，强烈建议以德令哈气象台站/城区官方高程定值。"
+  },
+  {
+    "id": "CT-24",
+    "name": "白玉县",
+    "old_elev_m": 3004,
+    "new_elev_m": 3050,
+    "kind": "official_county_seat",
+    "crosses_3000_gate": false,
+    "confidence": "high",
+    "source": [
+      "https://www.baiyu.gov.cn/byxgk/article/617904"
+    ],
+    "note": "白玉县人民政府《白玉县概况》原句：『县城驻地建设镇，海拔 3050 米，距州府康定 622 公里，距省会成都 998 公里，县境内平均海拔 3500 米』。官方驻地值比 DEM 3004 高 46 m，两者都 >3000 m，纯电机型'不可用'判定成立且更稳固（原值 3004 只剩 4 m 余量，属边界侥幸）。"
+  },
+  {
+    "id": "CT-22",
+    "name": "新龙县",
+    "old_elev_m": 3060,
+    "new_elev_m": 3060,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "http://www.gzxl.gov.cn/xlgk/article/731820"
+    ],
+    "note": "保留原值。新龙县政府《新龙县概况》只有北部 4800~5400 m、最高点卡洼洛日 5992 m、最低点子拖西乡当巴村 2700 m，以及县城山形描述，无驻地高程。距门槛 60 m，若官方驻地值低于 3000 m 会翻转成'可用'，建议人工复核。"
+  },
+  {
+    "id": "CT-142",
+    "name": "贵南县",
+    "old_elev_m": 3091,
+    "new_elev_m": 3091,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "https://www.guinan.gov.cn/zjgn/content_1013653523",
+      "https://www.hainanzhou.gov.cn/sjhn/gxgk/gnx"
+    ],
+    "note": "保留原值。贵南县政府页原句『境内平均海拔3100米，……县政府所在地茫曲镇是全县政治、经济、文化中心』——茫曲镇本身高程未载；州府《贵南县概况》同样只有极值（拉西瓦黄河边 2222 m、直亥峰 5011 m）。注意：'3100 m' 是全境平均口径，不可直接替换。距门槛 91 m，结论不变。"
+  },
+  {
+    "id": "CT-139",
+    "name": "同德县",
+    "old_elev_m": 3105,
+    "new_elev_m": 3060,
+    "kind": "official_county_seat",
+    "crosses_3000_gate": false,
+    "confidence": "high",
+    "source": [
+      "https://www.hainanzhou.gov.cn/sjhn/gxgk/tdx"
+    ],
+    "note": "海南藏族自治州人民政府《同德县概况》原句：『县城所在地尕巴松多镇海拔3060米，距州府恰卜恰镇256公里，距省会西宁市282公里』，另记县内最高 4671 m / 最低 2648 m / 平均 3660 m。驻地口径明确，confidence high。3060 与 3105 均 >3000，结论不变。"
+  },
+  {
+    "id": "CT-115",
+    "name": "碌曲县",
+    "old_elev_m": 3110,
+    "new_elev_m": 3110,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "http://www.gnzrmzf.gov.cn/info/1014/1051.htm"
+    ],
+    "note": "保留原值。甘南州政府《碌曲县情简介》与 xiahe.gov.cn、hezuo.gov.cn 同域，本机 http/https 一律 fetch failed（站点拒连），未能取到县政府驻地（碌曲镇）高程。距门槛 110 m，结论不变。"
+  },
+  {
+    "id": "CT-132",
+    "name": "海晏县",
+    "old_elev_m": 3115,
+    "new_elev_m": 3115,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "https://www.neac.gov.cn/seac/c103548/201802/1012487.shtml",
+      "https://www.weather.com.cn/cityintro/101150801.shtml"
+    ],
+    "note": "保留原值。海晏县政府门户未检索到；国家民委海晏页与天气网'海北'城市介绍均未给西海镇/三角城驻地高程。距门槛 115 m，结论不变。（注：本表另有'海北祁连机场'与'海晏通用机场候选'两条属第一批，未动。）"
+  },
+  {
+    "id": "CT-161",
+    "name": "大柴旦",
+    "old_elev_m": 3183,
+    "new_elev_m": 3183,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "http://weather.cma.cn/web/weather/52713.html"
+    ],
+    "note": "保留原值。中国气象局大柴旦城市页返回人机验证占位文本，无海拔；大柴旦行委/管委会门户未检索到可抓取概况页。距门槛 183 m，结论不变。"
+  },
+  {
+    "id": "CT-159",
+    "name": "都兰县",
+    "old_elev_m": 3192,
+    "new_elev_m": 3192,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "http://www.xzqh.org/quhua/63qh/2822dl.htm"
+    ],
+    "note": "保留原值。xzqh 只有驻地名称（察汗乌苏镇）无高程；都兰县政府门户与海西州概况页（qhnews/qinghai.gov.cn）均不可抓取。距门槛 192 m，结论不变。"
+  },
+  {
+    "id": "AP-30",
+    "name": "塔什库尔干红其拉甫机场",
+    "old_elev_m": 3200,
+    "new_elev_m": 3258,
+    "kind": "published_airport_elevation",
+    "crosses_3000_gate": false,
+    "confidence": "high",
+    "source": [
+      "https://news.gmw.cn/2022-12/26/content_36256223.htm",
+      "http://www.news.cn/fortune/2022-12/23/c_1129227783.htm",
+      "https://www.caac.gov.cn/PHONE/GLJ_PHONE/XJGLJ/XJ_DQXW/202408/t20240821_225113.html"
+    ],
+    "note": "改为 3258 m。光明网转载通航报道原句：『该机场飞行区等级为4C，机场标高3258.4米，跑道长3800米，是目前新疆海拔最高、跑道长度最长的民用运输机场』；新华社 2022-12-23 同口径『海拔3258米的塔什库尔干机场是新疆第一座高高原机场』；民航局新疆管理局稿件只引 2438 m 高高原定义、未给数值。原 DEM 3200 m 偏低 58 m，两值均 >3000，纯电机型'不可用'结论不变。"
+  },
+  {
+    "id": "CT-20",
+    "name": "炉霍县",
+    "old_elev_m": 3204,
+    "new_elev_m": 3250,
+    "kind": "official_county_seat",
+    "crosses_3000_gate": false,
+    "confidence": "high",
+    "source": [
+      "https://www.luhuo.gov.cn/luhuo/c103360/202303/456b1c7c30844aec8beca172eaacc5b1.shtml"
+    ],
+    "note": "炉霍县人民政府《炉霍简介》原句：『县政府驻地新都镇，海拔约3250米』（用词为'约'）。较 DEM 3204 高 46 m，均 >3000，'不可用'结论不变。"
+  },
+  {
+    "id": "CT-33",
+    "name": "德钦县",
+    "old_elev_m": 3218,
+    "new_elev_m": 3218,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "https://www.diqing.gov.cn/dqgk/ztgk.html"
+    ],
+    "note": "保留原值。迪庆州政府《总体概况》含海拔的唯一句子是『地处青藏高原南延部分，是云南省海拔最高的地方』，无德钦县城（升平镇）数值。距门槛 218 m，即便有 ±100 m 口径误差也不会跨过 3000 m。"
+  },
+  {
+    "id": "CT-23",
+    "name": "德格县",
+    "old_elev_m": 3261,
+    "new_elev_m": 3261,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "https://www.dege.gov.cn/gzdgx/c101553/202108/3336fcd155944e15a3c2d35e291363dc.shtml"
+    ],
+    "note": "保留原值。德格县政府《德格概况》原句：『雀儿山山口海拔5050米。最高点为绒麦峨扎山峰，海拔6168米；最低点是和白玉县交界处的丁都桥麦曲河口，海拔2980米。全县……平均海拔4325米』——注意其中 2980 m 是县界最低点（河口），不是县城，切勿误用为更正的值。更庆镇驻地高程仍未获。距门槛 261 m。"
+  },
+  {
+    "id": "CT-10",
+    "name": "壤塘县",
+    "old_elev_m": 3283,
+    "new_elev_m": 3283,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [],
+    "note": "保留原值（纯 GeoNames/DEM）。本轮未检索到阿坝州/壤塘县政府门户的可抓取县情页，尕多/壤柯镇驻地海拔无官方口径。距门槛 283 m，超出一期复核能力范围。"
+  },
+  {
+    "id": "CT-32",
+    "name": "香格里拉市",
+    "old_elev_m": 3284,
+    "new_elev_m": 3284,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "https://xianggelila.gov.cn/mlxgll/ZRZY.html",
+      "https://www.diqing.gov.cn/dqgk/ztgk.html"
+    ],
+    "note": "保留原值。香格里拉市政府《自然资源》原句：『最高点……巴拉格宗雪山，海拔5545米；最低点……吉函金沙江边，海拔1503米；海拔高差4042米，平均海拔3459米』——3459 m 是全市域平均（DEM 口径），不能当建塘镇城区值；坊间通行'香格里拉市区 3300 m'本轮未取得官方出处。距门槛 284 m。"
+  },
+  {
+    "id": "CT-11",
+    "name": "阿坝县",
+    "old_elev_m": 3285,
+    "new_elev_m": 3285,
+    "kind": "dem_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [],
+    "note": "保留原值（纯 GeoNames/DEM）。未检索到阿坝县政府门户可抓取县情页，阿坝镇驻地海拔无官方口径。距门槛 285 m。"
+  },
+  {
+    "id": "RS-12",
+    "name": "雁石坪镇（安多县青藏线补给镇）",
+    "old_elev_m": 4770,
+    "new_elev_m": 4721,
+    "kind": "published_site_elevation",
+    "crosses_3000_gate": false,
+    "confidence": "medium",
+    "source": [
+      "https://xz.chinadaily.com.cn/a/202512/12/WS693bb4d3a310942cc4996549.html",
+      "https://wlt.xizang.gov.cn/xwzx_69/wlyw/dsdt/202411/t20241105_445280.html"
+    ],
+    "note": "口径需注明：4721 m 出自 China Daily 西藏频道 2025-12-12 标题《青藏铁路新增海拔4721米雁石坪乘降所》，是铁路乘降所高程，不是镇政府驻地实测；自治区文旅厅 2024-11-05《雁石坪镇：从帐篷到小镇的传奇变迁》正文只说『这里海拔高、年平均气温在零下4摄氏度』，无数字（青海省政府网同名'两路'70周年稿不可抓取）。乘降所与镇区相距数公里、同处 4700 m 级台地，与原 GeoNames 4770 m 差 49 m，两者都远低于 5000 m 油动门槛，结论不变。"
+  },
+  {
+    "id": "RS-6",
+    "name": "绒布寺（珠峰公路终点补给点）",
+    "old_elev_m": 5047,
+    "new_elev_m": 5047,
+    "kind": "conflicting",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "https://www.xzxw.com/lyrw/2015-03/21/content_1159189.html",
+      "https://www.xzxw.com/rkz/2018-12/19/content_3479401.html",
+      "https://wlt.xizang.gov.cn/xwzx_69/wlyw/dsdt/201904/t20190415_120829.html"
+    ],
+    "note": "保留原值，但这是全表唯一可能翻转 5000 m 油动门槛的点，务必人工定口径。冲突证据：中国西藏新闻网（自治区级官方新闻网站）绒布寺条目原句『位于西藏日喀则地区定日县巴松乡南面珠穆朗玛峰下绒布沟东西侧的卓玛山顶，始建于1899年，距县驻地九十公里，海拔4980米』——若采用 4980 m，绒布寺将从'高于 5000 m 判不可用'翻成'可用'；同媒体 2018-12 稿记『位于定日县扎西宗乡海拔5200米的珠峰大本营』，文旅厅 2019-04 稿只说『标有海拔8844.43米的珠峰高程测量纪念碑已移至绒布寺一带』，未给寺址高程。旅游口径另有 5060/5100 m。本轮未取得寺方或县政府的权威定值，故不填新数。"
+  },
+  {
+    "id": "RS-11",
+    "name": "唐古拉山口",
+    "old_elev_m": 5116,
+    "new_elev_m": 5231,
+    "kind": "published_site_elevation",
+    "crosses_3000_gate": false,
+    "confidence": "high",
+    "source": [
+      "https://www.xizang.gov.cn/xwzx_406/ztzl_416/gdzt/dsxgs/202006/t20200605_143840.html",
+      "http://xz.people.com.cn/BIG5/n2/2024/1211/c138901-41072163.html",
+      "http://www.chinapeace.gov.cn/chinapeace/c100062/2021-05/12/content_12487444.shtml"
+    ],
+    "note": "改为 5231 m（青藏公路山口官方/主流口径）。西藏自治区人民政府网《天下第一道班》原句：『而海拔5231米的唐古拉山口是整条青藏公路最高的路段』；人民网西藏频道 2024-12-11 同值；长安网 2021-05-12《在海拔5231米的'生命禁区'唐古拉山口》同值。原 GeoNames/DEM 5116 m 偏低 115 m——但两值都 >5000 m，油动机'可用'判定不变。区分：青藏铁路唐古拉站海拔 5068~5072 m，与公路山口不是同一点，勿混用。"
+  },
+  {
+    "id": "RS-9",
+    "name": "天文点（新藏线道班/兵站旧址）",
+    "old_elev_m": 5138,
+    "new_elev_m": 5138,
+    "kind": "geonames_only_still",
+    "crosses_3000_gate": false,
+    "confidence": "low",
+    "source": [
+      "https://jtt.xizang.gov.cn/xxgk/fdzdgknr/jggk/jtgk/201611/t20161130_233600.html"
+    ],
+    "note": "保留原值（GeoNames/DEM 派生）。自治区交通运输厅《新藏公路简介》未列天文点标高，其余命中仅为骑行/自驾游记（zhihu、77bike、autohome），不采信。阿克赛钦一带无民政驻地口径可用。距 5000 m 门槛 138 m，即便有 ±100 m 误差结论不变，但数值本身仍是地形采样。"
+  },
+  {
+    "id": "RS-8",
+    "name": "界山达坂（新藏公路 219 国道）",
+    "old_elev_m": 5290,
+    "new_elev_m": 5347,
+    "kind": "conflicting",
+    "crosses_3000_gate": false,
+    "confidence": "medium",
+    "source": [
+      "https://tidenews.com.cn/short_news.html?id=684b966ec91208000126e01f",
+      "https://jtt.xizang.gov.cn/xxgk/fdzdgknr/jggk/jtgk/201611/t20161130_233600.html"
+    ],
+    "note": "三个互斥值：①潮新闻（浙江日报报业集团）2025-06 G219 逐达坂清单『第6个界山达坂，海拔：约5347米』；②自治区交通运输厅《新藏公路简介》『其中最高的界山达坂，海拔高达6035米』；③同页另一句『越过新疆、西藏之间海拔5406米的界山大坂……和海拔5432米的库达恩布等11年山口』——同页自相矛盾，6035 m 疑指附近山峰而非公路垭口，故不采用。取最低候选 5347 m（媒体口径、与旧版新藏线资料一致）作新值，confidence 只给 medium。原 DEM 5290 m 偏低 57~116 m，但任一候选都 >5000 m，油动机'可用'判定不变。"
+  }
+]
