@@ -6,8 +6,8 @@ r"""M7 站点自动规划的行为契约（合成站表 + 替身 A\*，不读真
   2. 场地海拔不参与判定（2026-09-28 裁定）：站表的 elevation_m / elev_kind 只作展示与
      复核台账，两台机型拿到的站点池必须相同；
   3. 目标函数是字典序（跳数 → 直线里程 → 气象），落地次数优先于总里程；
-  4. 双机对照必须共用同一份气象场（读盘 1 次）——这是 <6 s 预算成立的前提，
-     只测编排层等于没测；两台各按自己的巡航速度推时间窗，窗口长短不一也不许重读盘；
+  4. 一次请求只读一次场（Pass 2 与 Pass 3 共用同一份）——这是 <6 s 预算成立的前提，
+     只测编排层等于没测；双机对照已于 2026-09-28 撤销，两台的差异改用两次单机请求对照；
   5. 段数上限或墙钟封顶时返回部分结果并标注「未复验」，不许回空数组装作无解；
   6. 自然语言兜底解析不许发明参数：认不出的字段留空，编一个载重就是拿演示骗自己。
 """
@@ -217,14 +217,14 @@ class TestGraphObjective(_Base):
 
 
 class TestFieldAndBudget(_Base):
-    def test_two_aircraft_share_one_field_read(self):
-        """双机对照只读盘一次：<6 s 性能预算成立的前提，只测编排层等于没测。"""
+    def test_one_request_reads_the_field_once(self):
+        """一次请求只读一次盘：Pass 2 邻域统计与 Pass 3 逐段复验共用同一份场。"""
         row = [_site(f"CT-{i}", f"站{i}", 90.7 + 0.6 * i, 2500) for i in range(4)]
         self.use_doc(_doc(*row))
         req = _req(Point(lat=LAT, lon=90.0), Point(lat=LAT, lon=93.2))   # 不给 aircraft
         out = sites.plan_site_options(req)
-        self.assertEqual(len(out["options"]), 2)
-        self.assertEqual(out["meta"]["field_reads"], 1)
+        self.assertEqual(len(out["options"]), 1)                        # 一台一请求
+        self.assertEqual(out["meta"]["aircraft"], sites.settings.SITE_DEFAULT_AIRCRAFT)
         self.assertEqual(sites.data_loader.calls, 1)
 
     def test_max_legs_marks_the_rest_as_unverified(self):
@@ -296,22 +296,25 @@ class TestCruiseSpeed(_Base):
         self.use_doc(_doc(*row))
         return _req(Point(lat=LAT, lon=90.0), Point(lat=LAT, lon=93.2))
 
+    def _run(self, pack_key, **kw):
+        req = self._corridor()
+        req.aircraft = pack_key
+        for k, v in kw.items():
+            setattr(req, k, v)
+        return sites.plan_site_options(req)["options"][0]
+
     def test_each_aircraft_uses_its_own_cruise_speed(self):
-        out = sites.plan_site_options(self._corridor())
-        a, b = out["options"]                       # 顺序 = SITE_AIRCRAFT_ORDER：油动、纯电
-        self.assertEqual(a["aircraft"], "td550")
-        self.assertEqual(b["aircraft"], "v2000cg")
+        # 双机对照下线之后，"两台各用自己的速度"要靠两次单机请求对照出来
+        a = self._run("td550")
+        b = self._run("v2000cg")
         self.assertTrue(a["feasible"] and b["feasible"], (a["message"], b["message"]))
         self.assertEqual(a["total_distance"], b["total_distance"])   # 同一条线
         # 同一条线，纯电按 161 km/h 推的时间要比油动按 100 km/h 少约四成
         self.assertAlmostEqual(b["total_time_h"] / a["total_time_h"], 100.0 / 161.0, places=2)
 
-    def test_explicit_speed_overrides_both_packs(self):
-        req = self._corridor()
-        req.speed = 60.0
-        out = sites.plan_site_options(req)
-        times = [o["total_time_h"] for o in out["options"]]
-        self.assertEqual(times[0], times[1])
+    def test_explicit_speed_overrides_the_pack(self):
+        one = self._run("td550", speed=60.0)
+        self.assertAlmostEqual(one["total_time_h"], one["total_distance"] / 60.0, places=2)
         self.assertEqual(sites.data_loader.calls, 1)
 
     def test_pack_speeds_are_the_same_ruler_as_the_range_anchors(self):

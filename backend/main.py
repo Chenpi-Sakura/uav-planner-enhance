@@ -47,6 +47,19 @@ async def _run_assess(func, request):
         )
 
 
+def _require_known_aircraft(request) -> None:
+    """机型名认不出来就在入口报 400，别让它走到编排层抛 ValueError 变成 500。
+
+    这个端点在公网无鉴权（见 AGENTS.md），任何拼错 `aircraft` 的调用都该看见"可选哪些"，
+    而不是一条 traceback。留空的语义是"用默认那台"，与填了错名是两回事。
+    """
+    key = request.aircraft or settings.SITE_DEFAULT_AIRCRAFT
+    if key not in sites.AIRCRAFT_PACKS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"未知机型 {key}（可选：{'、'.join(sites.AIRCRAFT_PACKS)}）")
+
+
 def _require_valid_od(request) -> None:
     """起终点不足一个气象格时按「输入不成立」拒掉，而不是交出一条 0 km 的"可飞"结论。
 
@@ -308,11 +321,12 @@ async def parse_site_task(request: TaskParseRequest):
 async def plan_site_route(request: SitePlanRequest):
     """多航点模式：按机型能力包给出最少中继落地序列 + 逐段 A* 复验。
 
-    不带 `aircraft` 时一次产出双机对照（油动 / 纯电各一份），两份各按自己的巡航速度推时间轴。
-    两台是竞争关系，所以不做「择优丢弃」：一台被拒另一台照出，差异本身就是结论。
+    一次请求只算**一台**机型（`aircraft` 留空取 `SITE_DEFAULT_AIRCRAFT`），按该机的巡航速度推时间轴。
+    双机对照已于 2026-09-28 撤销：要比就换一台再点一次，两次请求各自完整复验。
     载重只在厂家公开锚点覆盖的区间内作答，超出一律判「无依据」而非外推。
     """
     _require_valid_od(request)
+    _require_known_aircraft(request)
     result = await _run_assess(sites.plan_site_options, request)
     return SitePlanResponse(**result)
 

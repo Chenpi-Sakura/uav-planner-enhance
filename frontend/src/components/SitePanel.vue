@@ -1,17 +1,15 @@
 <template>
   <section class="site-panel">
-    <!-- 机型：默认「双机对照」，因为两台是竞争关系，差异本身就是结论 -->
+    <!-- 机型：一次只算一台（双机对照已于 2026-09-28 撤销）。不预选 = 后端按默认那台出 -->
     <div class="field">
       <label class="field-label">机型</label>
       <div class="seg">
-        <button class="seg-btn" :class="{ on: store.siteForm.aircraft === '' }"
-                @click="pickAircraft()">双机对照</button>
         <button class="seg-btn" v-for="a in aircraftList" :key="a.key"
                 :class="{ on: store.siteForm.aircraft === a.key }"
-                @click="pickAircraft(a)">{{ shortName(a) }}</button>
+                @click="store.siteForm.aircraft = a.key">{{ shortName(a) }}</button>
       </div>
-      <p class="hint" v-if="!store.siteForm.aircraft && aircraftList.length" :title="speedNotes">
-        双机对照各按本机巡航速度推算（{{ speedSummary }} km/h，*为换算值），改上方速度框不影响这一模式。
+      <p class="hint" v-if="aircraftList.length" :title="speedNotes">
+        时间轴按所选机型的巡航速度推算（{{ speedSummary }} km/h，*为换算值），上方速度框只作用于另外两页。
       </p>
     </div>
 
@@ -55,12 +53,10 @@
       <span v-else style="display:flex; align-items:center; gap:8px;"><MapPin :size="16" /> 规划中继站点</span>
     </button>
 
-    <!-- 双机对照：两张卡并排，一台被拒另一台照出 -->
+    <!-- 结果卡：一次一台，被拒也照出结论与原因 -->
     <div class="options" v-if="options.length">
       <div class="opt-card" v-for="o in options" :key="o.aircraft"
-           :class="{ active: store.activeSiteAircraft === o.aircraft }"
-           :style="{ borderColor: store.activeSiteAircraft === o.aircraft ? colorOf(o.aircraft) : 'transparent' }"
-           @click="store.activeSiteAircraft = o.aircraft">
+           :style="{ borderColor: colorOf(o.aircraft) }">
         <div class="opt-head">
           <span class="dot-color" :style="{ background: colorOf(o.aircraft) }"></span>
           <span class="opt-title">{{ o.label }}</span>
@@ -95,7 +91,7 @@
           <button class="capsule-btn tiny" @click.stop="planFrom(o)">按此起飞重新规划</button>
         </div>
 
-        <ol class="legs" v-if="o.feasible && store.activeSiteAircraft === o.aircraft">
+        <ol class="legs" v-if="o.feasible">
           <li v-for="l in o.legs" :key="l.seq">
             <span class="leg-seq">{{ l.seq }}</span>
             <span class="leg-name">{{ l.from.name }} → {{ l.to.name }}</span>
@@ -110,7 +106,7 @@
           </li>
         </ol>
 
-        <ul class="notes" v-if="store.activeSiteAircraft === o.aircraft && o.notes?.length">
+        <ul class="notes" v-if="o.notes?.length">
           <li v-for="(n, i) in o.notes" :key="i">{{ n }}</li>
         </ul>
       </div>
@@ -121,7 +117,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { Loader, MapPin } from 'lucide-vue-next';
 import {
   store, runSitePlan, parseSiteTask, applySiteOption, fetchSiteCatalog,
@@ -141,15 +137,16 @@ const reasonText = (r?: string | null) => SITE_REASON_TEXT[r ?? ''] ?? (r || '')
 type Pack = SiteCatalog['aircraft'][number];
 
 /**
- * 选单机 = 顺手把速度框换成该机型的能力口径。
+ * 选中哪台 = 顺手把速度框换成该机能力口径（自然语言回填机型也走这里）。
  *
- * 段长本来就是「航时锚点 × 巡航速度」折出来的，时间轴若另用一个速度，等于距离按 100 说
- * 飞得完、时刻表按 60 说飞多久。换完仍可手改，改了就走显式覆盖。
+ * 段长本来就是「航时锚点 × 巡航速度」折出来的，框里显示的数必须就是推算用的数，
+ * 否则距离按 100 说飞得完、时刻表按 60 说飞多久。多航点这一页不吃框里的值——
+ * 速度由能力包定，框是留给另外两个标签页的。
  */
-const pickAircraft = (a?: Pack) => {
-  store.siteForm.aircraft = a?.key ?? '';
+watch([() => store.siteForm.aircraft, aircraftList], ([key]) => {
+  const a = aircraftList.value.find(x => x.key === key);
   if (a) store.uavSpeed = a.cruise_kmh;
-};
+});
 
 const isDerived = (a: Pack) => a.cruise_note.startsWith('换算值');
 const speedSummary = computed(() => aircraftList.value
@@ -206,10 +203,9 @@ onMounted(() => {
 .capsule-btn.tiny { padding: 5px 10px; font-size: 11px; width: auto; }
 .options { display: flex; flex-direction: column; gap: 8px; }
 .opt-card {
-  border: 1px solid transparent; border-radius: 8px; padding: 8px 10px; cursor: pointer;
+  border: 1px solid transparent; border-radius: 8px; padding: 8px 10px;
   background: rgba(255,255,255,0.04);
 }
-.opt-card.active { background: rgba(255,255,255,0.07); }
 .opt-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .opt-title { font-size: 12px; color: var(--text-primary); }
 .dot-color { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }

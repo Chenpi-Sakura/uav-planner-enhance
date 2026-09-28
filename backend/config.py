@@ -209,7 +209,9 @@ class Settings(BaseModel):
     SITE_MIN_SPACING_KM: float = 2.0       # 候选最小间距，见 §3.2 端点 round(·,2)≈1.1 km 的量化陷阱
     SITE_MAX_SCAN_CELLS: int = 60000       # 邻域统计的格数硬闸（公网无鉴权，见 §11）
     SITE_TOPK_ALT_PER_LEG: int = 3         # 每跳保留的同层备选站点数（气象换位的搜索宽度）
-    SITE_AIRCRAFT_ORDER: List[str] = ["td550", "v2000cg"]
+    # 一次请求只算一台（双机对照已于 2026-09-28 撤销）；`aircraft` 留空时用这台。
+    # 取值必须是 sites.py AIRCRAFT_PACKS 里的键，界面默认选中的也是它。
+    SITE_DEFAULT_AIRCRAFT: str = "td550"
 
     # 其他预警阈值（除湍流外的飞行提示）
     WARN_RH_RAIN: float = 80.0     # 相对湿度超过该值提示可能降水（代理指标）

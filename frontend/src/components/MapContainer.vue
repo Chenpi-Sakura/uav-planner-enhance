@@ -392,21 +392,19 @@ const renderAltBases = () => {
 };
 
 /**
- * 多航点模式：把双机对照的中继序列画成两条实线（颜色区分机型，不靠线型）。
+ * 多航点模式：把这一台机型的中继序列画成一条实线（颜色区分机型，不靠线型）。
  *
- * 只画"能飞的"那台；被拒的那台在侧栏卡片里给结论与原因，不在地图上留残线。
- * 可达圆只画当前选中那台的起跳点一圈 —— 213 个站点铺满屏幕不会让任何人更懂这条线，
+ * 只画"能飞的"那份；被拒的结果在侧栏卡片里给结论与原因，不在地图上留残线。
+ * 可达圆只画起跳点那一圈 —— 213 个站点铺满屏幕不会让任何人更懂这条线，
  * 而"段长上限是个圆"这一眼就看出来了（池外灰点按 2026-09-27 裁定不进一期）。
  */
 const renderSitePlan = () => {
   siteLayer.clearLayers();
   if (!map || !store.siteResult) return;
   const opts = (store.siteResult.options ?? []).filter(o => o.feasible);
-  const active = store.activeSiteAircraft;
 
   opts.forEach(o => {
     const color = SITE_AIRCRAFT_COLORS[o.aircraft] ?? '#94a3b8';
-    const isActive = !active || active === o.aircraft;
     const pts: [number, number][] = [];
     (o.legs ?? []).forEach((l, i) => {
       if (i === 0) pts.push([l.from.lat, l.from.lon]);
@@ -414,7 +412,7 @@ const renderSitePlan = () => {
     });
     if (pts.length < 2) return;
     L.polyline(pts, {
-      color, weight: 3, opacity: isActive ? 0.95 : 0.35,
+      color, weight: 3, opacity: 0.95,
       interactive: false,
     }).addTo(siteLayer);
 
@@ -423,7 +421,7 @@ const renderSitePlan = () => {
       if (!e || String(e.site_id).startsWith('OD-')) return;
       const w = l.weather || {};
       L.circleMarker([e.lat, e.lon], {
-        color, weight: 2, fillColor: color, fillOpacity: isActive ? 1 : 0.4, radius: 7,
+        color, weight: 2, fillColor: color, fillOpacity: 1, radius: 7,
       }).addTo(siteLayer).bindTooltip(
         `${e.name} · 第 ${l.seq} 段落地<br>`
         + `海拔 ${e.elevation_m ?? '—'} m · 直线 ${l.straight_km} km`
@@ -432,19 +430,16 @@ const renderSitePlan = () => {
         { direction: 'top', offset: [0, -10] }
       );
       // 落地站必须自带地名：只给一个彩色圆点，看上去就跟随机取点连线没区别
-      if (isActive) {
-        L.marker([e.lat, e.lon], {
-          interactive: false,
-          icon: L.divIcon({
-            className: 'site-relay-marker',
-            html: `<div class="site-relay-label">${l.seq} ${e.name}</div>`,
-            iconSize: [1, 1], iconAnchor: [0, 0],
-          }),
-        }).addTo(siteLayer);
-      }
+      L.marker([e.lat, e.lon], {
+        interactive: false,
+        icon: L.divIcon({
+          className: 'site-relay-marker',
+          html: `<div class="site-relay-label">${l.seq} ${e.name}</div>`,
+          iconSize: [1, 1], iconAnchor: [0, 0],
+        }),
+      }).addTo(siteLayer);
     });
 
-    if (!isActive) return;
     const start = pts[0];
     L.circle(start, {
       radius: o.leg_limit_km * 1000, color, weight: 1, opacity: 0.5,
@@ -769,8 +764,8 @@ watch([() => store.routeOptions, () => store.priority, () => store.hoveredTier],
   renderPeakWorst();
 });
 
-// 多航点模式：换看哪一台、重跑一次规划，都要跟着重画
-watch([() => store.siteResult, () => store.activeSiteAircraft], () => {
+// 多航点模式：重跑一次规划就跟着重画
+watch([() => store.siteResult], () => {
   renderSitePlan();
 });
 

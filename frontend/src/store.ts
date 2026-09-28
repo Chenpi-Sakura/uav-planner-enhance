@@ -211,15 +211,14 @@ export interface StoreState {
   planNotice: PlanNotice | null;         // 路径规划失败弹窗（null = 不显示）
   // ---- 功能三：多航点模式（M7 站点自动规划） ----
   siteLoading: boolean;
-  siteResult: SitePlanResult | null;      // 最近一次双机对照结果
+  siteResult: SitePlanResult | null;      // 最近一次站点规划结果（一台一份）
   siteCatalog: SiteCatalog | null;        // 站表与机型能力包（进程内取一次）
   siteForm: SiteForm;
-  activeSiteAircraft: string | null;      // 地图上展示哪一台的序列
 }
 
 /** 功能三的参数：载重是**自变量**，站点数是它的输出，所以这里不给"站点数量"这种反因果的输入 */
 export interface SiteForm {
-  aircraft: string;            // '' = 双机对照
+  aircraft: string;            // '' = 未选，后端按 SITE_DEFAULT_AIRCRAFT 出一台
   payload_kg: number;
   mission: 'cargo' | 'crew';
   text: string;                // 自然语言任务（只预填表单，不直接触发规划）
@@ -393,7 +392,6 @@ export const store = reactive<StoreState>({
   siteResult: null,
   siteCatalog: null,
   siteForm: { aircraft: '', payload_kg: 200, mission: 'cargo', text: '', parseSource: '' },
-  activeSiteAircraft: null,
 });
 
 /** 风险等级 -> 展示色 */
@@ -607,7 +605,7 @@ watch([() => store.targetTime, () => store.targetDate], () => {
 
 // ==================== 功能三 · 多航点模式（M7 站点自动规划） ====================
 
-/** 双机对照的配色：油动暖色、纯电冷色，与风险档配色刻意不撞（数据线一律实线那条规矩同样适用） */
+/** 机型配色：油动暖色、纯电冷色，与风险档配色刻意不撞（数据线一律实线那条规矩同样适用） */
 export const SITE_AIRCRAFT_COLORS: Record<string, string> = {
   td550: '#f59e0b',
   v2000cg: '#38bdf8',
@@ -669,7 +667,7 @@ export async function parseSiteTask(): Promise<void> {
 }
 
 /**
- * 一次「站点规划」= 双机对照（不带 aircraft 时后端两台各出一份）。
+ * 一次「站点规划」= 一台机型的一份答复（`aircraft` 留空时后端取默认那台）。
  *
  * 与 runPlan 一样放在 store：地图上点站点、侧栏点按钮、结果卡上点"换一台"
  * 都要能发起同一个请求，各写一遍迟早会出现行为差异。
@@ -689,8 +687,8 @@ export async function runSitePlan(): Promise<void> {
         .map(wp => ({ lat: Number(wp.lat), lon: Number(wp.lng) })),
       date: store.targetDate,
       start_time: store.targetTime,
-      // 双机对照不给统一速度：一次请求两份结果，两台各按能力包的巡航速度推时间轴
-      speed: store.siteForm.aircraft ? Number(store.uavSpeed) : null,
+      // 不发 speed：时间轴交给该机能力包的巡航速度，与段长换算同一把尺。
+      // 界面上那个速度框仍会在选机型时被填成同值，但它是给另两个标签页用的。
       payload_kg: Number(store.siteForm.payload_kg),
       mission: store.siteForm.mission,
       priority: store.priority,
@@ -702,10 +700,7 @@ export async function runSitePlan(): Promise<void> {
       body: JSON.stringify(body),
     });
     if (!response.ok) await failRequest(response, 'site plan failed');
-    const result: SitePlanResult = await response.json();
-    store.siteResult = result;
-    const first = (result.options ?? []).find(o => o.feasible) ?? result.options?.[0];
-    store.activeSiteAircraft = first ? first.aircraft : null;
+    store.siteResult = await response.json();
   } catch (error) {
     console.error('站点规划请求失败:', error);
     store.planNotice = noticeForError(error);
@@ -732,5 +727,4 @@ export function applySiteOption(opt: SiteOption): void {
   store.waypoints = relays.map(e => ({
     lat: String(e.lat), lng: String(e.lon), alt: '',
   }));
-  store.activeSiteAircraft = opt.aircraft;
 }

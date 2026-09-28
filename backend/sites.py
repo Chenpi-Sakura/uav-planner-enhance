@@ -339,23 +339,6 @@ def _corridor_bbox(nodes: List[Dict[str, Any]]) -> Tuple[float, float, float, fl
             min(lons) - SEGMENT_PAD_DEG, max(lons) + SEGMENT_PAD_DEG)
 
 
-def _field_for(bbox, hours: int, base_data_time: np.datetime64, cache: Dict[str, Any]):
-    """一次请求内按 bbox 共用一份湍流场。双机对照读盘两次是可避免的浪费。
-
-    缓存键**不含 hours**：两台各按自己的巡航速度推时间窗（100 km/h 与 161 km/h 在同一
-    条走廊上差一小时），把 hours 写进键就会读两次盘。存下来的按最长窗口算，短窗口是它的
-    子集，取值都按绝对时刻定位，复用不影响结论。
-    """
-    key = (str(base_data_time), round(bbox[0], 3), round(bbox[1], 3),
-           round(bbox[2], 3), round(bbox[3], 3))
-    hit = cache.get(key)
-    if hit is not None and hit[1] >= hours:
-        return hit[0]
-    field = data_loader.read_turbulence_field(base_data_time, hours, bbox)
-    cache[key] = (field, hours)
-    return field
-
-
 def _neighborhood_stats(field, nodes: List[Dict[str, Any]], arrival_ns: Dict[str, Any],
                         radius_cells: int = 3) -> Tuple[Dict[str, Any], int]:
     """每个候选点邻域的 fly_ratio / worst_tke / nan_ratio。纯 numpy，一次算完。
@@ -503,14 +486,13 @@ def _schedule(nodes: List[Dict[str, Any]], path: List[int], speed_kmh: float,
 
 
 def _plan_for_aircraft(doc: Dict[str, Any], pack_key: str, req: SitePlanRequest,
-                       payload_kg: float, deadline: Optional[float],
-                       io_cache: Dict[str, Any]) -> Dict[str, Any]:
+                       payload_kg: float, deadline: Optional[float]) -> Dict[str, Any]:
     pack = AIRCRAFT_PACKS[pack_key]
     mission = (req.mission or "cargo").lower()
     opt = _stub_option(pack_key, payload_kg, mission)
     t0 = time.monotonic()
-    # 缺省按各能力包的巡航速度：双机对照是一次请求出两份，共享一个速度框就没法表达
-    # 「两台速度不一样」；界面显式填了才覆盖（单机模式下框会被自动填成该机口径）。
+    # 缺省按该机能力包的巡航速度：段长本来就是「航时锚点 × 这个速度」折出来的，
+    # 时间轴换一把尺，距离与航时就互相打脸。界面选机型时把速度框填成同值，显式改过才算覆盖。
     speed = float(req.speed) if req.speed else float(pack["cruise_kmh"])
 
     ll = leg_limit(pack_key, payload_kg, mission)
@@ -552,14 +534,14 @@ def _plan_for_aircraft(doc: Dict[str, Any], pack_key: str, req: SitePlanRequest,
     base_data = np.datetime64(to_data_time_str(f"{req.date}T{req.start_time}"), 'ns')
     base_ns = int(base_data.astype('datetime64[ns]').astype('int64'))
     sched, ns_map = _schedule(nodes, res["path"], speed, base_ns)
-    # bbox 与 hours 在这里定一次：双机对照与 Pass 2/3 共用同一把缓存键，读盘只发生一次
+    # bbox 与 hours 在这里定一次：Pass 2 的邻域统计与 Pass 3 的逐段复验共用这一份场
     bbox = _corridor_bbox(nodes)
     hours = int(min(max(math.ceil(sched[-1]["cum_km"] / max(speed, 1e-6)) + 2, 2), 31))
     field = None
     metrics: Dict[str, Any] = {}
     scanned = 0
     if req.weather_metrics:
-        field = _field_for(bbox, hours, base_data, io_cache)
+        field = data_loader.read_turbulence_field(base_data, hours, bbox)
         if field is not None and field[0] is not None:
             scanned = int(np.asarray(field[0]).shape[-2] * np.asarray(field[0]).shape[-1])
             opt["diagnostics"]["field_shape"] = list(np.asarray(field[0]).shape)
@@ -665,36 +647,32 @@ def _plan_for_aircraft(doc: Dict[str, Any], pack_key: str, req: SitePlanRequest,
 
 
 def plan_site_options(req: SitePlanRequest) -> Dict[str, Any]:
-    """一次请求 = 一笔墙钟余额 + 一份共用气象场，跑 N 台机型的对照。
+    """一次请求 = 一笔墙钟余额 + 一次读场，跑**一台**机型。
 
-    两台是**竞争**关系（2026-09-27 裁定），所以这里不做「择优丢弃」：一台被拒另一台照出，
-    两张卡并排展示，差异本身就是结论。与三档仲裁（enforce_tier_monotonicity）刻意不同——
-    档位有「越保守不许更贵」的序关系，机型之间没有。
+    双机对照已于 2026-09-28 撤销：海拔不再判站之后，两台在同一条走廊上给出的是同一条中继序列，
+    差异只剩「谁在哪个载重档不答话」与一个航时刻度——两张并排的卡换来的是重复信息，
+    而界面本来就决定不印型号。要比就换一台再点一次，两次请求各自完整复验。
     """
     doc = load_sites_doc()
     payload = float(req.payload_kg if req.payload_kg is not None
                     else settings.SITE_DEFAULT_PAYLOAD_KG)
-    keys = [req.aircraft] if req.aircraft else [k for k in settings.SITE_AIRCRAFT_ORDER
-                                                if k in AIRCRAFT_PACKS]
-    unknown = [k for k in keys if k not in AIRCRAFT_PACKS]
-    if unknown:
-        raise ValueError(f"未知机型：{'、'.join(unknown)}（可选：{'、'.join(AIRCRAFT_PACKS)}）")
+    key = req.aircraft or settings.SITE_DEFAULT_AIRCRAFT
+    if key not in AIRCRAFT_PACKS:
+        raise ValueError(f"未知机型：{key}（可选：{'、'.join(AIRCRAFT_PACKS)}）")
 
     t0 = time.monotonic()
     deadline = search_deadline(settings.ASTAR_REQUEST_TIME_LIMIT_S)
-    io_cache: Dict[str, Any] = {}
-    options = [_plan_for_aircraft(doc, k, req, payload, deadline, io_cache) for k in keys]
+    options = [_plan_for_aircraft(doc, key, req, payload, deadline)]
     return {
         "options": options,
         "meta": {
             "payload_kg": payload,
             "mission": (req.mission or "cargo"),
-            "aircraft": keys,
+            "aircraft": key,
             "sites_total": len(doc.get("sites", [])),
             "sites_usable": sum(1 for s in doc.get("sites", []) if s.get("usable")),
             "site_stats": doc.get("stats", {}),
             "elapsed_s": round(time.monotonic() - t0, 2),
-            "field_reads": len(io_cache),
             "wall_clock_s": float(settings.ASTAR_REQUEST_TIME_LIMIT_S),
         },
     }

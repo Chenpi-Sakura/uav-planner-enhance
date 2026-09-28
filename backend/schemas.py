@@ -420,12 +420,11 @@ class SitePlanRequest(BaseModel):
     waypoints: List[Point] = []
     date: str = '2022-07-01'
     start_time: str = '08:00'
-    # 为空 = 每台按能力包自己的巡航速度推算时间轴（双机对照一次请求出两份，
-    # 共享一个速度就没法表达两台速度不同）；显式填了才对两台统一覆盖。
+    # 为空 = 按该机能力包的巡航速度推算时间轴（段长与航时必须同一把尺，见 §3.4）
     speed: Optional[float] = None
     # 载重为空时由端点填入 settings.SITE_DEFAULT_PAYLOAD_KG（默认值留给后端，避免两处真相）
     payload_kg: Optional[float] = None
-    aircraft: Optional[str] = None        # 为空 = 按 settings.SITE_AIRCRAFT_ORDER 出双机对照
+    aircraft: Optional[str] = None        # 为空 = settings.SITE_DEFAULT_AIRCRAFT，一次只算一台
     mission: str = 'cargo'                # cargo | crew
     priority: str = 'normal'              # 逐段复验时沿用哪一档的湍流惩罚倍率
     leg_limit_km: Optional[float] = None  # 仅用于敏感性分析：手工覆盖段长上限
