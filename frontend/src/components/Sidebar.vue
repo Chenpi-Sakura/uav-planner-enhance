@@ -15,9 +15,9 @@
           <span class="section-title"><Clock :size="16" /> 时间选择</span>
           <ChevronDown :size="16" class="chev" :class="{ open: timeOpen }" />
         </button>
-        <Transition name="fold">
-          <div class="fold-wrap" v-show="timeOpen">
-            <div class="fold-clip"><div class="fold-body">
+        <Transition @enter="foldGrow" @after-enter="foldRelease"
+                    @leave="foldShrink" @after-leave="foldRelease">
+          <div class="fold-wrap" v-show="timeOpen"><div class="fold-body">
               <div class="form-group">
                 <label>具体日期</label>
                 <input type="date" class="capsule-input full-width" v-model="store.targetDate" />
@@ -32,7 +32,7 @@
                   <input type="number" class="capsule-input full-width" v-model="store.uavSpeed" />
                 </div>
               </div>
-            </div></div>
+            </div>
           </div>
         </Transition>
       </section>
@@ -44,9 +44,9 @@
           <ChevronDown :size="16" class="chev" :class="{ open: routeOpen }" />
         </button>
 
-        <Transition name="fold">
-          <div class="fold-wrap" v-show="routeOpen">
-            <div class="fold-clip"><div class="fold-body route-body">
+        <Transition @enter="foldGrow" @after-enter="foldRelease"
+                    @leave="foldShrink" @after-leave="foldRelease">
+          <div class="fold-wrap" v-show="routeOpen"><div class="fold-body route-body">
               <!-- Quick Bases -->
               <div class="quick-bases">
                 <span class="base-chip" v-for="b in store.bases" :key="b.name" @click="handleBaseClick(b)" title="点击取点后再点击此处快速填入">
@@ -120,7 +120,7 @@
                   <input type="number" placeholder="相对高度" class="capsule-input mini" v-model="store.end.alt" />
                 </div>
               </div>
-            </div></div>
+            </div>
           </div>
         </Transition>
       </section>
@@ -178,15 +178,15 @@
           <span class="section-title"><Layers :size="16" /> 叠加层</span>
           <ChevronDown :size="16" class="chev" :class="{ open: overlayOpen }" />
         </button>
-        <Transition name="fold">
-          <div class="fold-wrap" v-show="overlayOpen">
-            <div class="fold-clip"><div class="fold-body checkbox-grid">
+        <Transition @enter="foldGrow" @after-enter="foldRelease"
+                    @leave="foldShrink" @after-leave="foldRelease">
+          <div class="fold-wrap" v-show="overlayOpen"><div class="fold-body checkbox-grid">
               <label class="custom-checkbox" v-for="layer in overlayOptions" :key="layer.id">
                 <input type="checkbox" v-model="store.overlays" :value="layer.id" />
                 <span class="checkmark"></span>
                 {{ layer.label }}
               </label>
-            </div></div>
+            </div>
           </div>
         </Transition>
       </section>
@@ -208,6 +208,38 @@ import SitePanel from './SitePanel.vue';
 const timeOpen = ref(true);
 const routeOpen = ref(true);
 const overlayOpen = ref(true);
+
+const FOLD_TRANSITION = 'height 200ms ease';
+
+/**
+ * 收起/展开的过程动画：高度由 JS 量出来直接写在元素上。
+ *
+ * 不用 CSS 类驱动，也不动 `grid-template-rows`——前者要求 JS 与 CSS 两份产物同时到位
+ * （差一个就退化成瞬间跳），后者的插值要 Chrome/Edge 107+。`height` 的过渡没有这两个前提。
+ */
+const foldGrow = (el: Element) => {
+  const h = el as HTMLElement;
+  h.style.height = '0px';
+  void h.offsetHeight;                 // 强制回流：0 没被渲染过，auto→N 是不可插值的
+  h.style.transition = FOLD_TRANSITION;
+  h.style.height = `${h.scrollHeight}px`;
+};
+
+const foldShrink = (el: Element) => {
+  const h = el as HTMLElement;
+  h.style.transition = 'none';
+  h.style.height = `${Math.round(h.getBoundingClientRect().height)}px`;
+  void h.offsetHeight;                 // 起点必须是一个已渲染的确定像素值
+  h.style.transition = FOLD_TRANSITION;
+  h.style.height = '0px';
+};
+
+/** 收尾把内联样式交还给 CSS：展开态高度要跟着「添加途经点」继续自己长 */
+const foldRelease = (el: Element) => {
+  const h = el as HTMLElement;
+  h.style.height = '';
+  h.style.transition = '';
+};
 
 const overlayOptions = [
   { id: 'tke', label: 'TKE (湍动能)' },
@@ -377,13 +409,10 @@ const handleBaseClick = (base: BaseStation) => {
 .section-toggle:hover .section-title { color: var(--text-primary); }
 .chev { color: var(--text-secondary); flex-shrink: 0; transform: rotate(-90deg); transition: transform 0.2s ease; }
 .chev.open { transform: none; }
-/* 折叠过渡：grid-template-rows 1fr→0fr，内容多高都不用 JS 量像素。
-   裁剪交给 .fold-clip，间距写在它里面——放在壳上会在收到 0 时残留一截。 */
-.fold-wrap { display: grid; grid-template-rows: 1fr; }
-.fold-clip { overflow: hidden; min-height: 0; }
+/* 折叠动画的壳只负责裁剪。那 14px 间距放在被裁的 .fold-body 里——
+   放在壳上时 height 收到 0 也夹不掉 padding，会残留一截。 */
+.fold-wrap { overflow: hidden; }
 .fold-body { padding-top: 14px; }
-.fold-enter-active, .fold-leave-active { transition: grid-template-rows 0.2s ease; }
-.fold-enter-from, .fold-leave-to { grid-template-rows: 0fr; }
 
 /* 途经点可以一直加：这一段自己滚，不要把下面的标签页内容挤没 */
 .route-body {
