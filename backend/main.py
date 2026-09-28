@@ -306,10 +306,10 @@ async def parse_site_task(request: TaskParseRequest):
 
 @app.post("/api/site/plan", response_model=SitePlanResponse)
 async def plan_site_route(request: SitePlanRequest):
-    """多航点模式：按机型能力包与场地海拔，给出最少中继落地序列 + 逐段 A* 复验。
+    """多航点模式：按机型能力包给出最少中继落地序列 + 逐段 A* 复验。
 
-    不带 `aircraft` 时一次产出双机对照（油动 / 纯电各一份）。两台是竞争关系，
-    所以不做「择优丢弃」：一台被拒另一台照出，差异本身就是结论。
+    不带 `aircraft` 时一次产出双机对照（油动 / 纯电各一份），两份各按自己的巡航速度推时间轴。
+    两台是竞争关系，所以不做「择优丢弃」：一台被拒另一台照出，差异本身就是结论。
     载重只在厂家公开锚点覆盖的区间内作答，超出一律判「无依据」而非外推。
     """
     _require_valid_od(request)

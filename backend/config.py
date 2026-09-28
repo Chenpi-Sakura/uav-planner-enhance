@@ -207,9 +207,6 @@ class Settings(BaseModel):
     SITE_MAX_LEGS: int = 4                 # 逐段 A* 复验的段数上限，超出的段标 reverified=false
     SITE_SCAN_PAD_KM: float = 150.0        # 走廊外扩：候选站点只取走廊附近的
     SITE_MIN_SPACING_KM: float = 2.0       # 候选最小间距，见 §3.2 端点 round(·,2)≈1.1 km 的量化陷阱
-    # 海拔是硬门限字段，但站表里多数条目是 DEM 采样值（±50~100 m）。落在门槛
-    # ±此带宽内 且 证据不可靠的站点，不直接判可用，降级为「需复核」结论。
-    SITE_ELEV_UNVERIFIED_BAND_M: float = 100.0
     SITE_MAX_SCAN_CELLS: int = 60000       # 邻域统计的格数硬闸（公网无鉴权，见 §11）
     SITE_TOPK_ALT_PER_LEG: int = 3         # 每跳保留的同层备选站点数（气象换位的搜索宽度）
     SITE_AIRCRAFT_ORDER: List[str] = ["td550", "v2000cg"]

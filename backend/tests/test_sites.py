@@ -3,11 +3,11 @@ r"""M7 站点自动规划的行为契约（合成站表 + 替身 A\*，不读真
 要守住的口径：
   1. 载重是**自变量**：超商载上限与超公开锚点是两个不同结论——后者判「未算出」，
      因为"没依据说它能飞"和"确定飞不了"在答辩上是两回事；
-  2. 场地海拔是硬门限，但**贴着门限且证据不可靠**时结论必须降级为「未算出」，
-     不拿 DEM 采样值冒充物理结论；
+  2. 场地海拔不参与判定（2026-09-28 裁定）：站表的 elevation_m / elev_kind 只作展示与
+     复核台账，两台机型拿到的站点池必须相同；
   3. 目标函数是字典序（跳数 → 直线里程 → 气象），落地次数优先于总里程；
   4. 双机对照必须共用同一份气象场（读盘 1 次）——这是 <6 s 预算成立的前提，
-     只测编排层等于没测；
+     只测编排层等于没测；两台各按自己的巡航速度推时间窗，窗口长短不一也不许重读盘；
   5. 段数上限或墙钟封顶时返回部分结果并标注「未复验」，不许回空数组装作无解；
   6. 自然语言兜底解析不许发明参数：认不出的字段留空，编一个载重就是拿演示骗自己。
 """
@@ -46,7 +46,7 @@ def _doc(*rows):
 def _req(start, end, **kw):
     kw.setdefault("date", "2022-07-01")
     kw.setdefault("start_time", "08:00")
-    kw.setdefault("speed", 100.0)
+    # 不给 speed：这才是线上默认（每台按能力包的巡航速度推时间轴）
     return SitePlanRequest(start=start, end=end, **kw)
 
 
@@ -164,35 +164,6 @@ class TestPayloadGates(_Base):
         self.assertEqual(out["meta"]["payload_kg"],
                          sites.settings.SITE_DEFAULT_PAYLOAD_KG)
         self.assertEqual(out["meta"]["payload_kg"], 200.0)
-
-
-class TestAltitudeGate(_Base):
-    def test_od_above_ceiling_rejected_by_nearest_site_proxy(self):
-        """自由点没有海拔，用就近站点做代理：3660 m 的城关区卡死 3000 m 的电机。"""
-        self.use_doc(_doc(_site("CT-1", "城关区", 91.13, 3660)))
-        req = _req(Point(lat=29.65, lon=91.13), Point(lat=31.15, lon=97.18),
-                   aircraft="v2000cg")
-        opt = sites.plan_site_options(req)["options"][0]
-        self.assertEqual(opt["reason"], "site_elevation_exceeds")
-        self.assertEqual(opt["verdict"], VERDICT_INFEASIBLE)
-        self.assertEqual(opt["diagnostics"]["proxy"], "城关区")
-        self.assertEqual(opt["diagnostics"]["proxy_elev_m"], 3660)
-
-    def test_weak_elevation_right_at_gate_is_undetermined(self):
-        """2990 m 且海拔是 DEM 采样：贴着 3000 m 门限，不判可用也不判不可飞。"""
-        self.use_doc(_doc(_site("CT-1", "边坝", 91.13, 2990, kind="dem_sample", vp=1)))
-        req = _req(Point(lat=29.65, lon=91.13), Point(lat=29.65, lon=91.20),
-                   aircraft="v2000cg")
-        opt = sites.plan_site_options(req)["options"][0]
-        self.assertEqual(opt["reason"], "site_elevation_unverified")
-        self.assertEqual(opt["verdict"], VERDICT_UNDETERMINED)
-
-    def test_far_away_weak_site_does_not_taint_the_od(self):
-        """代理只在 50 km 内有效：远处一个不可靠的海拔不能拿来判起点。"""
-        self.use_doc(_doc(_site("CT-1", "远点", 96.0, 4800, kind="dem_sample", vp=1)))
-        req = _req(Point(lat=LAT, lon=90.0), Point(lat=LAT, lon=92.0), aircraft="v2000cg")
-        opt = sites.plan_site_options(req)["options"][0]
-        self.assertNotEqual(opt["reason"], "site_elevation_unverified")
 
 
 class TestGraphObjective(_Base):
@@ -317,6 +288,41 @@ class TestFieldAndBudget(_Base):
         self.assertIn("over_range_legs", opt["diagnostics"])
 
 
+class TestCruiseSpeed(_Base):
+    """巡航速度按机型取：距离是「航时 × 巡航速度」折出来的，时间轴不能用另一把尺。"""
+
+    def _corridor(self):
+        row = [_site(f"CT-{i}", f"站{i}", 90.7 + 0.6 * i, 2500) for i in range(4)]
+        self.use_doc(_doc(*row))
+        return _req(Point(lat=LAT, lon=90.0), Point(lat=LAT, lon=93.2))
+
+    def test_each_aircraft_uses_its_own_cruise_speed(self):
+        out = sites.plan_site_options(self._corridor())
+        a, b = out["options"]                       # 顺序 = SITE_AIRCRAFT_ORDER：油动、纯电
+        self.assertEqual(a["aircraft"], "td550")
+        self.assertEqual(b["aircraft"], "v2000cg")
+        self.assertTrue(a["feasible"] and b["feasible"], (a["message"], b["message"]))
+        self.assertEqual(a["total_distance"], b["total_distance"])   # 同一条线
+        # 同一条线，纯电按 161 km/h 推的时间要比油动按 100 km/h 少约四成
+        self.assertAlmostEqual(b["total_time_h"] / a["total_time_h"], 100.0 / 161.0, places=2)
+
+    def test_explicit_speed_overrides_both_packs(self):
+        req = self._corridor()
+        req.speed = 60.0
+        out = sites.plan_site_options(req)
+        times = [o["total_time_h"] for o in out["options"]]
+        self.assertEqual(times[0], times[1])
+        self.assertEqual(sites.data_loader.calls, 1)
+
+    def test_pack_speeds_are_the_same_ruler_as_the_range_anchors(self):
+        """油动锚点按 100 km/h 折公里，巡航速度就必须是 100，否则两处口径分叉。"""
+        pack = sites.AIRCRAFT_PACKS["td550"]
+        self.assertEqual(pack["cruise_kmh"], 100.0)
+        self.assertEqual(pack["range_anchors"][0], (100.0, 650.0))   # 6.5 h × 100 = 650 km
+        ev = sites.AIRCRAFT_PACKS["v2000cg"]
+        self.assertTrue(ev["cruise_note"].startswith("换算值"))       # 厂家未公布，必须标换算
+
+
 class TestResponseShape(_Base):
     def test_option_dict_validates_as_model(self):
         self.use_doc(_doc(_site("CT-1", "甲", 90.6, 2500), _site("CT-2", "乙", 91.2, 2500)))
@@ -405,7 +411,8 @@ class TestRealSiteTable(unittest.TestCase):
     def test_delingha_crossed_the_electric_gate_after_review(self):
         """德令哈机场：原表 3001 m（判电机不可用）→ 民航局验收文件 2862.2 m（可用）。
 
-        这条是"海拔复核值得单独立一项"的全部理由：一个符号之差决定一台机型有没有站可落。
+        这条是"海拔复核值得单独立一项"的全部理由：当年一个符号之差决定电机档有没有站可落。
+        2026-09-28 之后海拔不再判定，这条留作数据依据，不再是结论依据。
         """
         row = next(s for s in self.doc["sites"] if s["name"] == "德令哈机场")
         self.assertEqual(row["elevation_m"], 2862.2)
@@ -428,15 +435,18 @@ class TestRealSiteTable(unittest.TestCase):
             self.assertIn(s.get("geodatum"), ("WGS84", "GCJ02", "unknown"), s["id"])
             self.assertTrue(s.get("source"), s["id"])
 
-    def test_electric_pool_is_a_minority_of_the_table(self):
-        """§5 表 A 的机器化版本：3000 m 门限掐掉大部分站点，这条结论要能被测试钉住。"""
+    def test_elevation_no_longer_gates_the_pool(self):
+        """2026-09-28 裁定：海拔不筛站，两台机型拿到的池一样，且等于表内 usable 数。"""
         sites.plan_path_ex = _fake_plan
         sites.search_effort_of = lambda p: None
         sites.data_loader = _StubLoader()
-        req = _req(Point(lat=29.66, lon=94.36), Point(lat=29.89, lon=93.25),
-                   aircraft="v2000cg", weather_metrics=False)
-        opt = sites.plan_site_options(req)["options"][0]
-        self.assertLess(opt["usable_sites"], opt["pool_sites"] / 2)
+        got = {}
+        for key in ("td550", "v2000cg"):
+            req = _req(Point(lat=29.66, lon=94.36), Point(lat=29.89, lon=93.25),
+                       aircraft=key, weather_metrics=False)
+            got[key] = sites.plan_site_options(req)["options"][0]["usable_sites"]
+        self.assertEqual(got["td550"], got["v2000cg"], "池不该随机型变")
+        self.assertEqual(got["td550"], self.doc["stats"]["usable"])
 
 
 if __name__ == "__main__":

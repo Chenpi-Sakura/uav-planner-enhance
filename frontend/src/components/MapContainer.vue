@@ -1,5 +1,5 @@
 <template>
-  <div class="map-container" ref="mapElement" :class="{ 'cursor-crosshair': store.selectingMode }">
+  <div class="map-container" ref="mapElement" :class="{ 'cursor-crosshair': store.selectingMode, 'picking-od': !!store.selectingMode }">
   </div>
 </template>
 
@@ -68,6 +68,12 @@ onMounted(() => {
   map.createPane('uavPane');
   const uavPane = map.getPane('uavPane');
   if (uavPane) uavPane.style.zIndex = '660';
+
+  // 沿程最危险那个点同理：默认与航线同层就会被重画的航线埋掉，给它一层压在航线之上、
+  // 仍在起终点与标签（markerPane=600）之下
+  map.createPane('peakPane');
+  const peakPane = map.getPane('peakPane');
+  if (peakPane) peakPane.style.zIndex = '450';
 
   currentLayer = layers[props.activeLayer];
   currentLayer.addTo(map);
@@ -444,14 +450,6 @@ const renderSitePlan = () => {
       radius: o.leg_limit_km * 1000, color, weight: 1, opacity: 0.5,
       dashArray: '4, 6', fill: false, interactive: false,
     }).addTo(siteLayer);
-    L.marker(start, {
-      interactive: false,
-      icon: L.divIcon({
-        className: 'alt-marker',
-        html: `<div class="alt-tag">段长上限 ${o.leg_limit_km} km（直线）</div>`,
-        iconSize: [220, 26], iconAnchor: [110, -14],
-      }),
-    }).addTo(siteLayer);
   });
 };
 
@@ -490,9 +488,6 @@ const renderPeakWorst = () => {
 
   const p: [number, number] = [Number(s.lat), Number(s.lon)];
   const color = RISK_COLORS[s.level] ?? '#94a3b8';
-  L.circleMarker(p, {
-    color: '#0b1220', weight: 2.5, fillColor: color, fillOpacity: 1, radius: 9,
-  }).addTo(peakLayer);
 
   const cum = typeof s.cum_km === 'number' ? s.cum_km : null;
   const lines = [`${s.level} · TKE ${s.tke.toFixed(2)} / EDR ${s.edr.toFixed(3)}`];
@@ -503,6 +498,13 @@ const renderPeakWorst = () => {
     const mins = (parseInt(h0 || '0') * 60 + (parseInt(m0 || '0') || 0)) + Math.round(cum / speed * 60);
     lines.push(`到达约 ${String(Math.floor(mins / 60) % 24).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`);
   }
+  // tooltip 挂在可交互的圆点上：标签那枚是 interactive:false（不挡取点点击），
+  // 把 tooltip 绑在它上面就永远弹不出来。
+  L.circleMarker(p, {
+    pane: 'peakPane',
+    color: '#0b1220', weight: 2.5, fillColor: color, fillOpacity: 1, radius: 9,
+  }).addTo(peakLayer).bindTooltip(lines.join('<br>'), { direction: 'top', offset: [0, -12] });
+
   L.marker(p, {
     interactive: false,
     icon: L.divIcon({
@@ -511,7 +513,7 @@ const renderPeakWorst = () => {
       iconSize: [150, 26],
       iconAnchor: [75, -14],
     }),
-  }).addTo(peakLayer).bindTooltip(lines.join('<br>'), { direction: 'top', offset: [0, -22] });
+  }).addTo(peakLayer);
 };
 
 // 未选中档位：各档自己的颜色 + 各自的虚线疏密，压到 30% 只让位不消失
@@ -920,6 +922,12 @@ onUnmounted(() => {
   color: rgba(255,255,255,0.9);
   text-shadow: 0 1px 3px rgba(0,0,0,0.95), 0 0 2px rgba(0,0,0,0.7);
   white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 取点时站表的点要让开：它们要交互才有海拔 tooltip，而 Leaflet 一旦把点击判给某个
+   layer 就不再发地图 click —— 结果点在有站名的地方（如康定机场）设不起起点，只能偏一点 */
+.picking-od :deep(.site-cat-marker) {
   pointer-events: none;
 }
 

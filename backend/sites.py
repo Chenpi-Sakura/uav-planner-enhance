@@ -9,11 +9,12 @@ r"""M7 站点自动规划（多航点模式）：给定机型与载重，在站�
 不改 `planner.py`：选出的中继就是 `PlanRequest.waypoints`，逐段 A\* 是现成的。本模块
 最后做一次逐段复验，把「直线可达」换成「真实航线可达」，仅此而已。
 
-三条不外推的纪律，都写在 reason 码上：
+两条不外推的纪律，都写在 reason 码上：
   - 载重超商载上限 → `payload_exceeds_max`（确定的物理否）
   - 载重在商载内但超出公开锚点 → `payload_beyond_published_envelope`（**没依据**，判未算出）
-  - 场地海拔超机型门限 → `site_elevation_exceeds`；若卡点的海拔证据本身不可靠，
-    改判 `site_elevation_unverified`（未算出），不把数据质量冒充成物理结论。
+
+场地海拔不参与判定（2026-09-28 裁定）：站表的 elevation_m / elev_kind 只作展示与复核台账，
+既不再筛站，也不判起降点——机型没有可引用的最大起降海拔依据。
 """
 from __future__ import annotations
 
@@ -44,7 +45,9 @@ from timebase import to_data_time_str, to_user_time_str
 # 完整出处清单见 docs/决策平台M7-站点自动规划方案.md 附录 A.1。
 AIRCRAFT_PACKS: Dict[str, Dict[str, Any]] = {
     "td550": {
-        "label": "TD550 油动共轴无人直升机",
+        # 界面不印型号：两台的区别只允许体现在续航、载重、段长与里程上。
+        # 型号名留在 range_anchors / cert 这些内部字段与文档台账里。
+        "label": "油动 · 商载上限 260 kg",
         "power": "油",
         "certified": True,
         "cert": "TD550D 2025-03 取得 CAAC 型号合格证（全球首张无人直升机系统 TC）",
@@ -56,13 +59,15 @@ AIRCRAFT_PACKS: Dict[str, Dict[str, Any]] = {
         # 但换算后同为 200 km，冲突不影响本表。
         "range_anchors": [(100.0, 650.0), (200.0, 200.0), (260.0, 200.0)],
         "operational_cap_km": 200.0,   # 厂家「任务半径 200 km」，按单程口径读（2026-09-27 裁定 ②）
-        "ceiling_m": 5000.0,
-        "ceiling_basis": "derived",
-        "ceiling_note": "5000 m 是反推的使用限制，厂家未公布最大起降海拔。",
+        # 巡航速度把里程换成时刻：4D 时间对齐、每跳到达时刻、逐段复验的起飞时间都吃它。
+        # 取 100 是为了和上面的 range_anchors 同一把尺，别让段长按 100 说飞得完、
+        # 时刻表按别的速度说飞多久（2026-09-28 补：此前两处共用界面那一个速度框）。
+        "cruise_kmh": 100.0,
+        "cruise_note": "厂家产品页巡航 100–120 km/h，取区间下限",
         "notes": [],
     },
     "v2000cg": {
-        "label": "V2000CG 纯电复合翼货运 eVTOL",
+        "label": "纯电 · 商载上限 400 kg",
         "power": "电",
         "certified": True,
         "cert": "TC 2024-03-22、PC、AC 2025-07-21（三证齐全）",
@@ -72,25 +77,16 @@ AIRCRAFT_PACKS: Dict[str, Dict[str, Any]] = {
         # 该档无任何公开航程/航时数据 → 200 kg 以上一律判「超出公开依据」，不外推。
         "range_anchors": [(200.0, 200.0)],
         "operational_cap_km": None,
-        "ceiling_m": 3000.0,
-        "ceiling_basis": "published",
-        "ceiling_note": "",
+        # 厂家没有公布巡航速度；媒体那组「巡航可达 200 km/h」在附录 A.1 里登记、不采信。
+        # 161 是**换算值**：实飞 200 kg / 161 km / 1 h 除出来的平均速度，界面上要标是换算的。
+        "cruise_kmh": 161.0,
+        "cruise_note": "换算值：实飞 200 kg／161 km／1 h 除得",
         "notes": [],
     },
 }
 
-# 海拔证据不可靠的取值来源：这几类一律走 verify_priority 的「贴着门槛就不判可用」逻辑
-WEAK_ELEV_KINDS = ("dem_sample", "geonames", "mixed", "unknown")
-
-# 给用户看的说法——内部枚举不该原样印到界面上
-ELEV_KIND_CN = {
-    "official_published": "官方公布",
-    "ourairports": "第三方机场库",
-    "geonames": "第三方地名库",
-    "dem_sample": "地形采样",
-    "mixed": "两种来源混杂",
-    "unknown": "未标注来源",
-}
+# 海拔不再参与判定（2026-09-28 裁定）：站表里的 elevation_m / elev_kind / verify_priority
+# 只作展示与复核台账用，既筛站也不判起降点，所以这里不再有任何门限常量与来源分级表。
 
 CREW_BANNER = ("本系统机队内无高原载人合规机型（截至 2026-09，没有任何取证载人 eVTOL 宣称能在 "
                "3000 m 以上起降），载人任务按载货口径外推、段长余度收紧到 0.6，仅用于方案比较。")
@@ -134,15 +130,14 @@ def public_sites(doc: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if doc is None:
         doc = load_sites_doc()
     keep = ("id", "name", "type", "region", "lat", "lon", "elevation_m", "elev_kind",
-            "geodatum", "hajin", "usable", "near_gate", "verify_priority")
+            "geodatum", "hajin", "usable", "verify_priority")
     return {
         "stats": doc.get("stats", {}),
-        "altitude_gates": doc.get("altitude_gates", {}),
         "attribution": doc.get("attribution", ""),
         "aircraft": [{"key": k, "label": v["label"], "power": v["power"],
                       "certified": v["certified"], "cert": v["cert"],
-                      "max_payload_kg": v["max_payload_kg"], "ceiling_m": v["ceiling_m"],
-                      "ceiling_basis": v["ceiling_basis"]}
+                      "max_payload_kg": v["max_payload_kg"],
+                      "cruise_kmh": v["cruise_kmh"], "cruise_note": v["cruise_note"]}
                      for k, v in AIRCRAFT_PACKS.items()],
         "sites": [{k: s.get(k) for k in keep if s.get(k) is not None}
                   for s in doc.get("sites", [])],
@@ -181,8 +176,7 @@ def leg_limit(pack_key: str, payload_kg: float, mission: str) -> Dict[str, Any]:
     margin = settings.SITE_LEG_MARGIN_CREW if mission == "crew" else settings.SITE_LEG_MARGIN_CARGO
     if payload_kg > float(pack["max_payload_kg"]):
         return {"reason": "payload_exceeds_max", "margin_k": margin, "leg_limit_km": 0.0,
-                "message": (f"{pack['label']} 最大商载 {pack['max_payload_kg']:.0f} kg，"
-                            f"任务 {payload_kg:.0f} kg 装不下。")}
+                "message": (f"{pack['label']}：任务 {payload_kg:.0f} kg 装不下。")}
     km = _range_km(pack, payload_kg)
     if km is None:
         top = pack["range_anchors"][-1][0]
@@ -198,73 +192,9 @@ def _site_elev(s: Dict[str, Any]) -> float:
     return float(s.get("elevation_m") or 0.0)
 
 
-def _elev_weak(s: Dict[str, Any]) -> bool:
-    if (s.get("verify_priority") or 0) >= 1:
-        return True
-    if s.get("elev_conflict"):
-        return True
-    return s.get("elev_kind") in WEAK_ELEV_KINDS
-
-
-def _pool(doc: Dict[str, Any], ceiling_m: float) -> Dict[str, Any]:
-    """按场地海拔裁池。返回 strict（可直接判定）与 lenient（含证据不可靠项）两版。
-
-    两版分开的唯一目的：当 strict 不连通而 lenient 连通时，结论是「证据不够」而不是
-    「地形不允许」——这两句话在答辩上是不同的东西。
-    """
-    band = float(settings.SITE_ELEV_UNVERIFIED_BAND_M)
-    strict: List[Dict[str, Any]] = []
-    lenient: List[Dict[str, Any]] = []
-    above: List[Dict[str, Any]] = []
-    unverified: List[Dict[str, Any]] = []
-    for s in doc.get("sites", []):
-        if not s.get("usable"):
-            continue
-        e = _site_elev(s)
-        if e > ceiling_m:
-            above.append(s)
-            continue
-        weak = _elev_weak(s)
-        near = abs(e - ceiling_m) <= band
-        lenient.append(s)
-        if weak and near:
-            unverified.append(s)
-        else:
-            strict.append(s)
-    return {"strict": strict, "lenient": lenient, "above": above, "unverified": unverified}
-
-
-def _od_elevation_check(doc: Dict[str, Any], lat: float, lon: float,
-                        ceiling_m: float, tag: str) -> Dict[str, Any]:
-    """自由点在站表里没有海拔，用就近站点做代理（≤50 km 才敢用）。
-
-    代理必然带误差，所以结论里写清「按 X 的场地海拔判」，不假装知道这个坐标的高程。
-    """
-    sites = [s for s in doc.get("sites", []) if s.get("lat") is not None]
-    best = None
-    for s in sites:
-        d = _haversine_km(lat, lon, float(s["lat"]), float(s["lon"]))
-        if best is None or d < best[0]:
-            best = (d, s)
-    if best is None:
-        return {"reason": None, "note": f"{tag} 无站表参照，海拔门限未参与判定"}
-    dist, s = best
-    if dist > 50.0:
-        return {"reason": None,
-                "note": f"{tag} 距最近站表点 {s['name']} 约 {dist:.0f} km，其海拔不作本点判据"}
-    e = _site_elev(s)
-    if e > ceiling_m:
-        return {"reason": "site_elevation_exceeds",
-                "message": (f"{tag}（{lat:.2f}, {lon:.2f}）就近场地 {s['name']} 海拔 {e:.0f} m，"
-                            f"超过本机 {ceiling_m:.0f} m 运行高度门限。"),
-                "proxy": s["name"], "proxy_elev_m": e, "proxy_dist_km": round(dist, 1)}
-    if _elev_weak(s) and abs(e - ceiling_m) <= float(settings.SITE_ELEV_UNVERIFIED_BAND_M):
-        return {"reason": "site_elevation_unverified",
-                "message": (f"{tag} 就近场地 {s['name']} 海拔 {e:.0f} m 贴着 {ceiling_m:.0f} m 门限，"
-                            f"而该海拔是{ELEV_KIND_CN.get(s.get('elev_kind') or 'unknown', '未标注来源')}值，"
-                            "证据不足以判定。")}
-    # 常态（起终点就在站表点附近）不再播报"海拔是借来的"，只在判定不成立时才说明依据
-    return {"reason": None}
+def _pool(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """可用站点池：海拔不参与筛站，只过 usable 这一道数据质量标记。"""
+    return [s for s in doc.get("sites", []) if s.get("usable")]
 
 
 # ==================== Pass 1：走廊 + 站点图 + 最少跳数 ====================
@@ -317,7 +247,7 @@ def _nodes(doc: Dict[str, Any], pool: List[Dict[str, Any]], req: SitePlanRequest
     for s in _dedup_close(cands, float(settings.SITE_MIN_SPACING_KM)):
         nodes.append({"key": s["id"], "name": s["name"], "lat": float(s["lat"]),
                       "lon": float(s["lon"]), "elev": _site_elev(s), "site": s,
-                      "od": False, "weak_elev": _elev_weak(s)})
+                      "od": False})
     return nodes
 
 
@@ -410,13 +340,19 @@ def _corridor_bbox(nodes: List[Dict[str, Any]]) -> Tuple[float, float, float, fl
 
 
 def _field_for(bbox, hours: int, base_data_time: np.datetime64, cache: Dict[str, Any]):
-    """一次请求内按 bbox 共用一份湍流场。双机对照读盘两次是可避免的浪费。"""
+    """一次请求内按 bbox 共用一份湍流场。双机对照读盘两次是可避免的浪费。
+
+    缓存键**不含 hours**：两台各按自己的巡航速度推时间窗（100 km/h 与 161 km/h 在同一
+    条走廊上差一小时），把 hours 写进键就会读两次盘。存下来的按最长窗口算，短窗口是它的
+    子集，取值都按绝对时刻定位，复用不影响结论。
+    """
     key = (str(base_data_time), round(bbox[0], 3), round(bbox[1], 3),
-           round(bbox[2], 3), round(bbox[3], 3), hours)
-    if key in cache:
-        return cache[key]
+           round(bbox[2], 3), round(bbox[3], 3))
+    hit = cache.get(key)
+    if hit is not None and hit[1] >= hours:
+        return hit[0]
     field = data_loader.read_turbulence_field(base_data_time, hours, bbox)
-    cache[key] = field
+    cache[key] = (field, hours)
     return field
 
 
@@ -524,13 +460,13 @@ def _stub_option(pack_key: str, payload_kg: float, mission: str) -> Dict[str, An
     return {
         "aircraft": pack_key, "label": pack["label"], "certified": pack["certified"],
         "payload_kg": payload_kg, "mission": mission,
-        "leg_limit_km": 0.0, "margin_k": 0.0, "ceiling_m": float(pack["ceiling_m"]),
+        "leg_limit_km": 0.0, "margin_k": 0.0,
         "feasible": False, "verdict": VERDICT_UNDETERMINED,
         "conclusion": VERDICT_LABELS[VERDICT_UNDETERMINED], "reason": None, "message": "",
         "legs": [], "relay_count": 0, "total_distance": 0.0, "total_time_h": None,
-        "worst_level": "", "pool_sites": 0, "usable_sites": 0, "diagnostics": {},
+        "worst_level": "", "usable_sites": 0, "diagnostics": {},
         "search_effort": None,
-        "notes": [n for n in [pack.get("ceiling_note")] + list(pack.get("notes") or []) if n],
+        "notes": list(pack.get("notes") or []),
     }
 
 
@@ -573,7 +509,9 @@ def _plan_for_aircraft(doc: Dict[str, Any], pack_key: str, req: SitePlanRequest,
     mission = (req.mission or "cargo").lower()
     opt = _stub_option(pack_key, payload_kg, mission)
     t0 = time.monotonic()
-    speed = float(req.speed or 60.0)
+    # 缺省按各能力包的巡航速度：双机对照是一次请求出两份，共享一个速度框就没法表达
+    # 「两台速度不一样」；界面显式填了才覆盖（单机模式下框会被自动填成该机口径）。
+    speed = float(req.speed) if req.speed else float(pack["cruise_kmh"])
 
     ll = leg_limit(pack_key, payload_kg, mission)
     opt["margin_k"] = ll["margin_k"]
@@ -586,54 +524,25 @@ def _plan_for_aircraft(doc: Dict[str, Any], pack_key: str, req: SitePlanRequest,
     opt["leg_limit_km"] = round(leg_cap, 1)
     edge_cap = leg_cap / max(float(settings.SITE_DETOUR_FACTOR), 1.0)
 
-    all_usable = [s for s in doc.get("sites", []) if s.get("usable")]
-    pool = _pool(doc, float(pack["ceiling_m"]))
-    opt["pool_sites"] = len(all_usable)
-    opt["usable_sites"] = len(pool["strict"])
+    pool = _pool(doc)
+    opt["usable_sites"] = len(pool)
     opt["diagnostics"] = {
-        "ceiling_m": float(pack["ceiling_m"]),
-        "sites_above_ceiling": len(pool["above"]),
-        "sites_elev_unverified_near_gate": len(pool["unverified"]),
         "edge_cap_km": round(edge_cap, 1),
         "detour_factor": float(settings.SITE_DETOUR_FACTOR),
     }
     if mission == "crew":
         opt["notes"].append(CREW_BANNER)
 
-    # --- 起终点自身要能起降（自由点用就近站点做海拔代理） ---
-    for tag, pt in (("起点", req.start), ("终点", req.end)):
-        chk = _od_elevation_check(doc, float(pt.lat), float(pt.lon),
-                                  float(pack["ceiling_m"]), tag)
-        if chk.get("reason"):
-            return _reject(opt, chk["reason"], chk["message"],
-                           {"proxy": chk.get("proxy"), "proxy_elev_m": chk.get("proxy_elev_m"),
-                            "proxy_dist_km": chk.get("proxy_dist_km")})
-        if chk.get("note"):
-            opt["notes"].append(chk["note"])
-
-    nodes = _nodes(doc, pool["strict"], req, edge_cap)
+    nodes = _nodes(doc, pool, req, edge_cap)
     if len(nodes) <= 2:
-        loose = _nodes(doc, pool["lenient"], req, edge_cap)
-        if len(loose) > 2:
-            return _reject(opt, "site_elevation_unverified",
-                           f"走廊内 {pack['ceiling_m']:.0f} m 以下的站点海拔证据都不可靠"
-                           "（贴着门限的地形采样值），不据此判可用。",
-                           {"corridor_nodes": len(nodes)})
         return _reject(opt, "no_candidate_in_corridor",
-                       "走廊内没有海拔满足本机门限的站点；可换机型或调低任务重量。",
+                       "走廊内没有可用站点；把起降点挪近有场站的城镇，或调低任务重量换更长段长。",
                        {"corridor_nodes": len(nodes)})
 
     adj = _adjacency(nodes, edge_cap)
     res = _hop_min(nodes, adj, 0, 1)
     if res["path"] is None:
         report = _unreachable_report(nodes, adj, res["reached"], 1, edge_cap)
-        loose_nodes = _nodes(doc, pool["lenient"], req, edge_cap)
-        loose_adj = _adjacency(loose_nodes, edge_cap)
-        if _hop_min(loose_nodes, loose_adj, 0, 1)["path"] is not None:
-            return _reject(opt, "site_elevation_unverified",
-                           "按证据可靠的站点连不通，但把贴着门限的 DEM 采样海拔算进来就能连通"
-                           f"（本侧仅 {report['component_size']}/{report['total_nodes']} 站可达）"
-                           "——这是数据质量问题，不是地形不允许。", report)
         return _reject(opt, "network_unreachable",
                        (f"可用站网不连通：起点这一侧只能到 {report['component_size']} 个站点，"
                         f"最靠前的 {report.get('frontier_site', '')} 距终点还差约 "

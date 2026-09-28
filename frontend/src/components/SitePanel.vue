@@ -5,11 +5,14 @@
       <label class="field-label">机型</label>
       <div class="seg">
         <button class="seg-btn" :class="{ on: store.siteForm.aircraft === '' }"
-                @click="store.siteForm.aircraft = ''">双机对照</button>
+                @click="pickAircraft()">双机对照</button>
         <button class="seg-btn" v-for="a in aircraftList" :key="a.key"
                 :class="{ on: store.siteForm.aircraft === a.key }"
-                @click="store.siteForm.aircraft = a.key">{{ shortName(a) }}</button>
+                @click="pickAircraft(a)">{{ shortName(a) }}</button>
       </div>
+      <p class="hint" v-if="!store.siteForm.aircraft && aircraftList.length" :title="speedNotes">
+        双机对照各按本机巡航速度推算（{{ speedSummary }} km/h，*为换算值），改上方速度框不影响这一模式。
+      </p>
     </div>
 
     <div class="field-row">
@@ -75,14 +78,14 @@
         <div class="opt-line" v-if="o.feasible">
           <span>总里程</span><b>{{ o.total_distance }} km</b>
         </div>
+        <div class="opt-line" v-if="o.feasible && o.total_time_h != null">
+          <span>总航时</span><b>{{ o.total_time_h }} h</b>
+        </div>
         <div class="opt-line" v-if="o.feasible && o.worst_level">
           <span>最坏风险</span><b>{{ o.worst_level }}</b>
         </div>
         <div class="opt-line">
-          <span>可用站点</span><b>{{ o.usable_sites }} / {{ o.pool_sites }}</b>
-        </div>
-        <div class="opt-line" v-if="o.diagnostics?.sites_above_ceiling != null">
-          <span>因海拔排除</span><b>{{ o.diagnostics.sites_above_ceiling }} 处</b>
+          <span>可用站点</span><b>{{ o.usable_sites }}</b>
         </div>
         <p class="opt-msg" v-if="o.message">{{ o.message }}</p>
         <p class="opt-msg muted" v-else-if="o.reason">{{ reasonText(o.reason) }}</p>
@@ -124,7 +127,7 @@ import {
   store, runSitePlan, parseSiteTask, applySiteOption, fetchSiteCatalog,
   runPlan, SITE_AIRCRAFT_COLORS, SITE_REASON_TEXT,
 } from '../store';
-import type { SiteOption } from '../store';
+import type { SiteCatalog, SiteOption } from '../store';
 
 const parsing = ref(false);
 
@@ -134,6 +137,25 @@ const aircraftList = computed(() => store.siteCatalog?.aircraft ?? []);
 const colorOf = (key: string) => SITE_AIRCRAFT_COLORS[key] ?? '#94a3b8';
 const shortName = (a: { label: string }) => a.label.split(' ')[0];
 const reasonText = (r?: string | null) => SITE_REASON_TEXT[r ?? ''] ?? (r || '');
+
+type Pack = SiteCatalog['aircraft'][number];
+
+/**
+ * 选单机 = 顺手把速度框换成该机型的能力口径。
+ *
+ * 段长本来就是「航时锚点 × 巡航速度」折出来的，时间轴若另用一个速度，等于距离按 100 说
+ * 飞得完、时刻表按 60 说飞多久。换完仍可手改，改了就走显式覆盖。
+ */
+const pickAircraft = (a?: Pack) => {
+  store.siteForm.aircraft = a?.key ?? '';
+  if (a) store.uavSpeed = a.cruise_kmh;
+};
+
+const isDerived = (a: Pack) => a.cruise_note.startsWith('换算值');
+const speedSummary = computed(() => aircraftList.value
+  .map(a => `${shortName(a)} ${a.cruise_kmh}${isDerived(a) ? '*' : ''}`).join(' / '));
+const speedNotes = computed(() => aircraftList.value
+  .map(a => `${shortName(a)} ${a.cruise_kmh} km/h：${a.cruise_note}`).join('；'));
 const verdictClass = (o: SiteOption) => ({
   ok: o.feasible,
   warn: !o.feasible && o.verdict === 'undetermined',

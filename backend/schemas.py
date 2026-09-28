@@ -38,16 +38,14 @@ def verdict_of(feasible: bool, reason: Optional[str], mapping: Dict[str, str]) -
 
 
 # ==================== M7 选址的 reason → 四态 ====================
-# 三道门各有各的码，不共用「未算出」也不并入「不可飞」：
-# 「装不下」和「超出商载上限」是确定的物理否，「这一档没有公开航程数据」是**没依据**，
+# 各道门各有各的码，不共用「未算出」也不并入「不可飞」：
+# 「装不下」是确定的物理否，「这一档没有公开航程数据」是**没依据**，
 # 后者必须是 undetermined，否则我们就等于替厂家做了承诺。
+# 场地海拔不在其列：机型没有可引用的最大起降海拔依据，海拔只作展示与复核台账。
 SITE_REASON_VERDICT: Dict[str, str] = {
     "payload_exceeds_max": VERDICT_INFEASIBLE,
     # 载重在商载上限内、但超出公开锚点覆盖区间 —— 不外推
     "payload_beyond_published_envelope": VERDICT_UNDETERMINED,
-    "site_elevation_exceeds": VERDICT_INFEASIBLE,
-    # 海拔证据不可靠（DEM 采样 / 口径冲突）且判定结果贴着门槛
-    "site_elevation_unverified": VERDICT_UNDETERMINED,
     "network_unreachable": VERDICT_INFEASIBLE,
     "no_candidate_in_corridor": VERDICT_INFEASIBLE,
     "no_data": VERDICT_INFEASIBLE,
@@ -422,7 +420,9 @@ class SitePlanRequest(BaseModel):
     waypoints: List[Point] = []
     date: str = '2022-07-01'
     start_time: str = '08:00'
-    speed: float = 60.0
+    # 为空 = 每台按能力包自己的巡航速度推算时间轴（双机对照一次请求出两份，
+    # 共享一个速度就没法表达两台速度不同）；显式填了才对两台统一覆盖。
+    speed: Optional[float] = None
     # 载重为空时由端点填入 settings.SITE_DEFAULT_PAYLOAD_KG（默认值留给后端，避免两处真相）
     payload_kg: Optional[float] = None
     aircraft: Optional[str] = None        # 为空 = 按 settings.SITE_AIRCRAFT_ORDER 出双机对照
@@ -441,7 +441,6 @@ class SitePlanOption(BaseModel):
     mission: str = 'cargo'
     leg_limit_km: float = 0.0
     margin_k: float = 0.0
-    ceiling_m: float = 0.0
     feasible: bool = False
     verdict: str = VERDICT_INFEASIBLE
     conclusion: str = ''
@@ -452,7 +451,6 @@ class SitePlanOption(BaseModel):
     total_distance: float = 0.0
     total_time_h: Optional[float] = None
     worst_level: str = ''
-    pool_sites: int = 0
     usable_sites: int = 0
     diagnostics: Dict[str, Any] = {}
     search_effort: Optional[SearchEffort] = None

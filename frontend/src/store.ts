@@ -266,7 +266,6 @@ export interface SiteOption {
   mission: string;
   leg_limit_km: number;
   margin_k: number;
-  ceiling_m: number;
   feasible: boolean;
   verdict: string;
   conclusion: string;
@@ -277,7 +276,6 @@ export interface SiteOption {
   total_distance: number;
   total_time_h?: number | null;
   worst_level?: string;
-  pool_sites: number;
   usable_sites: number;
   diagnostics: Record<string, any>;
   search_effort?: { expansions: number; budget: number; elapsed_s?: number } | null;
@@ -302,17 +300,15 @@ export interface SiteCatalogSite {
   geodatum?: string;
   hajin?: boolean;
   usable?: boolean;
-  near_gate?: string;
   verify_priority?: number;
 }
 
 export interface SiteCatalog {
   stats: Record<string, any>;
-  altitude_gates: Record<string, any>;
   attribution?: string;
   aircraft: Array<{ key: string; label: string; power: string; certified: boolean;
-                    cert: string; max_payload_kg: number; ceiling_m: number;
-                    ceiling_basis: string }>;
+                    cert: string; max_payload_kg: number;
+                    cruise_kmh: number; cruise_note: string }>;
   sites: SiteCatalogSite[];
 }
 
@@ -620,8 +616,6 @@ export const SITE_AIRCRAFT_COLORS: Record<string, string> = {
 export const SITE_REASON_TEXT: Record<string, string> = {
   payload_exceeds_max: '任务重量超出本机最大商载',
   payload_beyond_published_envelope: '该载重档没有公开数据，不作答',
-  site_elevation_exceeds: '起降场地海拔超出本机运行高度门限',
-  site_elevation_unverified: '海拔证据不可靠，贴着门限不判可用',
   network_unreachable: '可用站网不连通，缺中途落地点',
   no_candidate_in_corridor: '走廊内没有满足门限的站点',
   detour_exceeds_threshold: '逐段复验后实际里程超出段长上限',
@@ -695,7 +689,8 @@ export async function runSitePlan(): Promise<void> {
         .map(wp => ({ lat: Number(wp.lat), lon: Number(wp.lng) })),
       date: store.targetDate,
       start_time: store.targetTime,
-      speed: Number(store.uavSpeed),
+      // 双机对照不给统一速度：一次请求两份结果，两台各按能力包的巡航速度推时间轴
+      speed: store.siteForm.aircraft ? Number(store.uavSpeed) : null,
       payload_kg: Number(store.siteForm.payload_kg),
       mission: store.siteForm.mission,
       priority: store.priority,

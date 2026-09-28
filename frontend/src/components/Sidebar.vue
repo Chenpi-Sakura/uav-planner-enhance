@@ -13,110 +13,116 @@
       <section class="time-section">
         <button class="section-toggle" @click="timeOpen = !timeOpen">
           <span class="section-title"><Clock :size="16" /> 时间选择</span>
-          <ChevronDown v-if="timeOpen" :size="16" class="chev" />
-          <ChevronRight v-else :size="16" class="chev" />
+          <ChevronDown :size="16" class="chev" :class="{ open: timeOpen }" />
         </button>
-        <div class="fold-body" v-show="timeOpen">
-          <div class="form-group">
-            <label>具体日期</label>
-            <input type="date" class="capsule-input full-width" v-model="store.targetDate" />
+        <Transition name="fold">
+          <div class="fold-wrap" v-show="timeOpen">
+            <div class="fold-clip"><div class="fold-body">
+              <div class="form-group">
+                <label>具体日期</label>
+                <input type="date" class="capsule-input full-width" v-model="store.targetDate" />
+              </div>
+              <div class="input-row">
+                <div class="form-group" style="flex:1">
+                  <label>起飞时间</label>
+                  <input type="time" step="3600" class="capsule-input full-width" v-model="store.targetTime" />
+                </div>
+                <div class="form-group" style="flex:1">
+                  <label>速度 (km/h)</label>
+                  <input type="number" class="capsule-input full-width" v-model="store.uavSpeed" />
+                </div>
+              </div>
+            </div></div>
           </div>
-          <div class="input-row">
-            <div class="form-group" style="flex:1">
-              <label>起飞时间</label>
-              <input type="time" step="3600" class="capsule-input full-width" v-model="store.targetTime" />
-            </div>
-            <div class="form-group" style="flex:1">
-              <label>速度 (km/h)</label>
-              <input type="number" class="capsule-input full-width" v-model="store.uavSpeed" />
-            </div>
-          </div>
-        </div>
+        </Transition>
       </section>
 
       <!-- 2. 起降点与途经点：三个标签页共用的输入，所以放在标签页之上而不是某个标签页里 -->
       <section class="route-section">
         <button class="section-toggle" @click="routeOpen = !routeOpen">
           <span class="section-title"><MapPin :size="16" /> 起降点与途经点</span>
-          <ChevronDown v-if="routeOpen" :size="16" class="chev" />
-          <ChevronRight v-else :size="16" class="chev" />
+          <ChevronDown :size="16" class="chev" :class="{ open: routeOpen }" />
         </button>
 
-        <div class="fold-body route-body" v-show="routeOpen">
-          <!-- Quick Bases -->
-          <div class="quick-bases">
-            <span class="base-chip" v-for="b in store.bases" :key="b.name" @click="handleBaseClick(b)" title="点击取点后再点击此处快速填入">
-              <MapPin :size="12" /> {{ b.name }}
-            </span>
-          </div>
-
-          <!-- Start -->
-          <div class="waypoint-group">
-            <div class="waypoint-header space-between">
-              <div><span class="dot green"></span> 起点 (S)</div>
-              <button class="target-btn" :class="{ active: store.selectingMode === 'start' }" @click="selectPointOnMap('start')">
-                <Crosshair :size="14" /> 取点
-              </button>
-            </div>
-            <div class="input-labels">
-              <span>经度</span>
-              <span>纬度</span>
-              <span>相对高度</span>
-            </div>
-            <div class="input-row">
-              <input type="number" placeholder="经度" class="capsule-input mini" v-model="store.start.lng" />
-              <input type="number" placeholder="纬度" class="capsule-input mini" v-model="store.start.lat" />
-              <input type="number" placeholder="相对高度" class="capsule-input mini" v-model="store.start.alt" />
-            </div>
-          </div>
-
-          <!-- Waypoints -->
-          <div class="waypoint-group" v-for="(wp, idx) in store.waypoints" :key="idx">
-            <div class="waypoint-header space-between">
-              <div><span class="dot blue"></span> 途经点 {{ idx + 1 }}</div>
-              <div class="flex-actions">
-                <button class="target-btn" :class="{ active: store.selectingMode === 'waypoint' && store.selectingIndex === idx }" @click="selectPointOnMap('waypoint', idx)">
-                  <Crosshair :size="14" /> 取点
-                </button>
-                <button class="remove-btn" @click="removeWaypoint(idx)" title="删除"><X :size="14" /></button>
+        <Transition name="fold">
+          <div class="fold-wrap" v-show="routeOpen">
+            <div class="fold-clip"><div class="fold-body route-body">
+              <!-- Quick Bases -->
+              <div class="quick-bases">
+                <span class="base-chip" v-for="b in store.bases" :key="b.name" @click="handleBaseClick(b)" title="点击取点后再点击此处快速填入">
+                  <MapPin :size="12" /> {{ b.name }}
+                </span>
               </div>
-            </div>
-            <div class="input-labels">
-              <span>经度</span>
-              <span>纬度</span>
-              <span>相对高度</span>
-            </div>
-            <div class="input-row">
-              <input type="number" placeholder="经度" class="capsule-input mini" v-model="wp.lng" />
-              <input type="number" placeholder="纬度" class="capsule-input mini" v-model="wp.lat" />
-              <input type="number" placeholder="相对高度" class="capsule-input mini" v-model="wp.alt" />
-            </div>
-          </div>
 
-          <button class="add-waypoint-btn" @click="addWaypoint">
-            <Plus :size="14" /> 添加途经点
-          </button>
+              <!-- Start -->
+              <div class="waypoint-group">
+                <div class="waypoint-header space-between">
+                  <div><span class="dot green"></span> 起点 (S)</div>
+                  <button class="target-btn" :class="{ active: store.selectingMode === 'start' }" @click="selectPointOnMap('start')">
+                    <Crosshair :size="14" /> 取点
+                  </button>
+                </div>
+                <div class="input-labels">
+                  <span>经度</span>
+                  <span>纬度</span>
+                  <span>相对高度</span>
+                </div>
+                <div class="input-row">
+                  <input type="number" placeholder="经度" class="capsule-input mini" v-model="store.start.lng" />
+                  <input type="number" placeholder="纬度" class="capsule-input mini" v-model="store.start.lat" />
+                  <input type="number" placeholder="相对高度" class="capsule-input mini" v-model="store.start.alt" />
+                </div>
+              </div>
 
-          <!-- End -->
-          <div class="waypoint-group">
-            <div class="waypoint-header space-between">
-              <div><span class="dot red"></span> 终点 (E)</div>
-              <button class="target-btn" :class="{ active: store.selectingMode === 'end' }" @click="selectPointOnMap('end')">
-                <Crosshair :size="14" /> 取点
+              <!-- Waypoints -->
+              <div class="waypoint-group" v-for="(wp, idx) in store.waypoints" :key="idx">
+                <div class="waypoint-header space-between">
+                  <div><span class="dot blue"></span> 途经点 {{ idx + 1 }}</div>
+                  <div class="flex-actions">
+                    <button class="target-btn" :class="{ active: store.selectingMode === 'waypoint' && store.selectingIndex === idx }" @click="selectPointOnMap('waypoint', idx)">
+                      <Crosshair :size="14" /> 取点
+                    </button>
+                    <button class="remove-btn" @click="removeWaypoint(idx)" title="删除"><X :size="14" /></button>
+                  </div>
+                </div>
+                <div class="input-labels">
+                  <span>经度</span>
+                  <span>纬度</span>
+                  <span>相对高度</span>
+                </div>
+                <div class="input-row">
+                  <input type="number" placeholder="经度" class="capsule-input mini" v-model="wp.lng" />
+                  <input type="number" placeholder="纬度" class="capsule-input mini" v-model="wp.lat" />
+                  <input type="number" placeholder="相对高度" class="capsule-input mini" v-model="wp.alt" />
+                </div>
+              </div>
+
+              <button class="add-waypoint-btn" @click="addWaypoint">
+                <Plus :size="14" /> 添加途经点
               </button>
-            </div>
-            <div class="input-labels">
-              <span>经度</span>
-              <span>纬度</span>
-              <span>相对高度</span>
-            </div>
-            <div class="input-row">
-              <input type="number" placeholder="经度" class="capsule-input mini" v-model="store.end.lng" />
-              <input type="number" placeholder="纬度" class="capsule-input mini" v-model="store.end.lat" />
-              <input type="number" placeholder="相对高度" class="capsule-input mini" v-model="store.end.alt" />
-            </div>
+
+              <!-- End -->
+              <div class="waypoint-group">
+                <div class="waypoint-header space-between">
+                  <div><span class="dot red"></span> 终点 (E)</div>
+                  <button class="target-btn" :class="{ active: store.selectingMode === 'end' }" @click="selectPointOnMap('end')">
+                    <Crosshair :size="14" /> 取点
+                  </button>
+                </div>
+                <div class="input-labels">
+                  <span>经度</span>
+                  <span>纬度</span>
+                  <span>相对高度</span>
+                </div>
+                <div class="input-row">
+                  <input type="number" placeholder="经度" class="capsule-input mini" v-model="store.end.lng" />
+                  <input type="number" placeholder="纬度" class="capsule-input mini" v-model="store.end.lat" />
+                  <input type="number" placeholder="相对高度" class="capsule-input mini" v-model="store.end.alt" />
+                </div>
+              </div>
+            </div></div>
           </div>
-        </div>
+        </Transition>
       </section>
 
       <!-- 标签页切换：路径规划 / 可行性评估 / 时间窗口 -->
@@ -170,16 +176,19 @@
       <section class="overlay-section">
         <button class="section-toggle" @click="overlayOpen = !overlayOpen">
           <span class="section-title"><Layers :size="16" /> 叠加层</span>
-          <ChevronDown v-if="overlayOpen" :size="16" class="chev" />
-          <ChevronRight v-else :size="16" class="chev" />
+          <ChevronDown :size="16" class="chev" :class="{ open: overlayOpen }" />
         </button>
-        <div class="fold-body checkbox-grid" v-show="overlayOpen">
-          <label class="custom-checkbox" v-for="layer in overlayOptions" :key="layer.id">
-            <input type="checkbox" v-model="store.overlays" :value="layer.id" />
-            <span class="checkmark"></span>
-            {{ layer.label }}
-          </label>
-        </div>
+        <Transition name="fold">
+          <div class="fold-wrap" v-show="overlayOpen">
+            <div class="fold-clip"><div class="fold-body checkbox-grid">
+              <label class="custom-checkbox" v-for="layer in overlayOptions" :key="layer.id">
+                <input type="checkbox" v-model="store.overlays" :value="layer.id" />
+                <span class="checkmark"></span>
+                {{ layer.label }}
+              </label>
+            </div></div>
+          </div>
+        </Transition>
       </section>
     </div>
   </div>
@@ -366,9 +375,15 @@ const handleBaseClick = (base: BaseStation) => {
 }
 .section-toggle .section-title { margin-bottom: 0; }
 .section-toggle:hover .section-title { color: var(--text-primary); }
-.chev { color: var(--text-secondary); flex-shrink: 0; }
-
-.fold-body { margin-top: 14px; }
+.chev { color: var(--text-secondary); flex-shrink: 0; transform: rotate(-90deg); transition: transform 0.2s ease; }
+.chev.open { transform: none; }
+/* 折叠过渡：grid-template-rows 1fr→0fr，内容多高都不用 JS 量像素。
+   裁剪交给 .fold-clip，间距写在它里面——放在壳上会在收到 0 时残留一截。 */
+.fold-wrap { display: grid; grid-template-rows: 1fr; }
+.fold-clip { overflow: hidden; min-height: 0; }
+.fold-body { padding-top: 14px; }
+.fold-enter-active, .fold-leave-active { transition: grid-template-rows 0.2s ease; }
+.fold-enter-from, .fold-leave-to { grid-template-rows: 0fr; }
 
 /* 途经点可以一直加：这一段自己滚，不要把下面的标签页内容挤没 */
 .route-body {
