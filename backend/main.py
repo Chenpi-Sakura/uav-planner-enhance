@@ -46,6 +46,22 @@ async def _run_assess(func, request):
             detail=f"评估超时（>{settings.ASSESS_TIMEOUT_S:.0f}s），数据可能正在冷读，请稍后重试。",
         )
 
+
+def _require_valid_od(request) -> None:
+    """起终点不足一个气象格时按「输入不成立」拒掉，而不是交出一条 0 km 的"可飞"结论。
+
+    只卡 HTTP 入口：feasibility / sites / time_window 都会在进程内自己构造
+    PlanRequest（逐段复验、候选基点、Top-K 时刻），那条路上的短段是合法的。
+    """
+    km = _haversine_km(request.start.lat, request.start.lon,
+                       request.end.lat, request.end.lon)
+    if km < float(settings.MIN_OD_KM):
+        raise HTTPException(
+            status_code=400,
+            detail=(f"起终点直线距离 {km:.1f} km，不足一个气象数据格"
+                    f"（约 {settings.MIN_OD_KM:.0f} km），沿途湍流无从判断。"),
+        )
+
 @app.on_event("startup")
 async def startup_event():
     print("\n=== Pre-loading weather data... ===")
@@ -140,6 +156,7 @@ async def plan_route(request: PlanRequest):
     Plan a 4D path from start to end via waypoints using A*.
     Returns the path points, total distance, max TKE, and max EDR along the route.
     """
+    _require_valid_od(request)
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(None, plan_path_ex, request)
 
@@ -165,6 +182,7 @@ async def plan_route_multi(request: PlanRequest):
     三档只差湍流软惩罚倍率；硬阈值与 NaN 禁区一致。响应里除几何外还带每档的
     里程、绕行比与风险统计，供前端叠图与选主。
     """
+    _require_valid_od(request)
     result = await _run_assess(plan_route_options, request)
     return PlanMultiResponse(**result)
 
@@ -177,6 +195,7 @@ async def assess_route_feasibility(request: FeasibilityRequest):
     （可飞 / 不可飞 / 超预算 / 未算出）、距离与时间成本、风险等级（全程 +
     分城市段）、阻塞原因、绕行成本分析与建议措施。
     """
+    _require_valid_od(request)
     result = await _run_assess(assess_feasibility, request)
     return FeasibilityResponse(**to_response_dict(result))
 
@@ -191,6 +210,7 @@ async def assess_time_window_endpoint(request: TimeWindowRequest):
 
     时间口径：输入与输出均为北京时间；数据标签基准为 UTC（见 time_window 模块）。
     """
+    _require_valid_od(request)
     result = await _run_assess(assess_time_window, request)
     return TimeWindowResponse(**result)
 
@@ -201,6 +221,7 @@ async def assess_route_feasibility_multi(request: FeasibilityRequest):
 
     请求体的 `priority` 在这里表示「详情面板要展开哪一档」，不影响另外两档的几何。
     """
+    _require_valid_od(request)
     result = await _run_assess(assess_feasibility_multi, request)
     return FeasibilityMultiResponse(**result)
 
@@ -291,6 +312,7 @@ async def plan_site_route(request: SitePlanRequest):
     所以不做「择优丢弃」：一台被拒另一台照出，差异本身就是结论。
     载重只在厂家公开锚点覆盖的区间内作答，超出一律判「无依据」而非外推。
     """
+    _require_valid_od(request)
     result = await _run_assess(sites.plan_site_options, request)
     return SitePlanResponse(**result)
 

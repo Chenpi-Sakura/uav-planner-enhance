@@ -30,7 +30,6 @@ from config import ROOT_DIR, settings
 from data_loader import data_loader
 import assessor
 import geo
-from geo import describe_point
 from planner import SEGMENT_PAD_DEG, plan_path_ex, search_deadline, search_effort_of, _haversine_km
 from risk import LEVEL_ORDER, build_risk_profile
 from schemas import (PLANNER_REASON_VERDICT, SITE_REASON_VERDICT, VERDICT_FEASIBLE,
@@ -686,7 +685,6 @@ def _plan_for_aircraft(doc: Dict[str, Any], pack_key: str, req: SitePlanRequest,
             "straight_km": round(straight, 1), "route_km": None, "flight_time_h": None,
             "over_range": False, "level": "", "reverified": False,
             "weather": metrics.get(b["key"]) or {},
-            "description": describe_point(b["lat"], b["lon"]),
         }
         if verified >= int(settings.SITE_MAX_LEGS):
             leg["note"] = f"段数上限 {settings.SITE_MAX_LEGS} 已到，未做 A* 复验（里程按直线计）"
@@ -786,12 +784,9 @@ def plan_site_options(req: SitePlanRequest) -> Dict[str, Any]:
             "sites_total": len(doc.get("sites", [])),
             "sites_usable": sum(1 for s in doc.get("sites", []) if s.get("usable")),
             "site_stats": doc.get("stats", {}),
-            "crew_banner": CREW_BANNER if (req.mission or "cargo") == "crew" else "",
             "elapsed_s": round(time.monotonic() - t0, 2),
             "field_reads": len(io_cache),
             "wall_clock_s": float(settings.ASTAR_REQUEST_TIME_LIMIT_S),
-            "time_basis": {"user_time_label": "北京时间（UTC+8）",
-                           "data_label_is_utc": bool(settings.DATA_LABEL_IS_UTC)},
         },
     }
 

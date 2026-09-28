@@ -39,6 +39,7 @@ import geo
 REASON_NO_SAFE_SLOT = "no_safe_slot"                        # 全天 / 推演期内无安全时段
 REASON_PERMANENTLY_BLOCKED = "route_permanently_blocked"    # 航路本身被地形或 NaN 区封死
 REASON_DATA_MISSING = "data_coverage_insufficient"          # 起降点超出数据覆盖范围
+REASON_OD_TOO_CLOSE = "od_too_close"          # 起终点重合到离散不出两点，构不成航线
 
 # 扫描场 bbox 外扩（度）。取 A* 自读时的同一口径：功能二把这份场注入给规划器复用，
 # 场比 A* 自己的搜索框还小就必然触发越界回退，注入也就省不下任何一次读盘。
@@ -539,8 +540,7 @@ def assess_time_window(req, run_planner: bool = True, deadline=None) -> Dict[str
     # 1) 数据覆盖检查
     if not (data_loader.check_coverage(start[0], start[1])
             and data_loader.check_coverage(end[0], end[1])):
-        return _empty_response(req, REASON_DATA_MISSING, meta,
-                               text="起降点超出当前气象数据覆盖范围，无法进行时间窗口分析。")
+        return _empty_response(req, REASON_DATA_MISSING, meta)
 
     # 2) 几何基线：优先复用规划路径，失败退回直线离散化
     path_pts, fallback = _geometry(start, end, req, run_planner, deadline=deadline)
@@ -548,8 +548,7 @@ def assess_time_window(req, run_planner: bool = True, deadline=None) -> Dict[str
 
     raw = _to_pts(path_pts)
     if len(raw) < 2:
-        return _empty_response(req, REASON_PERMANENTLY_BLOCKED, meta,
-                               text="起降点过近，无法构成有效航线。")
+        return _empty_response(req, REASON_OD_TOO_CLOSE, meta)
 
     raw_lats = np.array([p[0] for p in raw])
     raw_lons = np.array([p[1] for p in raw])
@@ -580,8 +579,7 @@ def assess_time_window(req, run_planner: bool = True, deadline=None) -> Dict[str
     tke, edr, slab_lats, slab_lons, slab_times = _load_turbulence(
         day_start_data, total_hours, bbox)
     if tke is None:
-        return _empty_response(req, REASON_DATA_MISSING, meta,
-                               text="气象数据读取失败，或所选日期超出数据范围。")
+        return _empty_response(req, REASON_DATA_MISSING, meta)
 
     # 3b) 构造采样点
     #     规划路径 -> 直接用其网格节点（避免插值吸附到未经过的邻格，见 sample_along_path）
@@ -591,8 +589,7 @@ def assess_time_window(req, run_planner: bool = True, deadline=None) -> Dict[str
         else sample_along_path(path_pts, snap_lats=slab_lats, snap_lons=slab_lons)
     )
     if len(cum) < 2:
-        return _empty_response(req, REASON_PERMANENTLY_BLOCKED, meta,
-                               text="起降点过近，无法构成有效航线。")
+        return _empty_response(req, REASON_OD_TOO_CLOSE, meta)
 
     route_km = float(cum[-1])
     flight_time_h = route_km / speed if speed else 0.0
@@ -859,7 +856,7 @@ def _window_dict(w: Window) -> Dict[str, Any]:
     }
 
 
-def _empty_response(req, reason: str, meta: Dict[str, Any], text: str) -> Dict[str, Any]:
+def _empty_response(req, reason: str, meta: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "date": req.date,
         "has_window": False,
@@ -870,5 +867,5 @@ def _empty_response(req, reason: str, meta: Dict[str, Any], text: str) -> Dict[s
         "slot_analysis": [],
         "forecast": {"enabled": False, "days": []},
         "reason": reason,
-        "meta": {**meta, "message": text},
+        "meta": meta,
     }

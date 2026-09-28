@@ -401,6 +401,14 @@ class TestAssessTimeWindow(TWStubbed):
         self.assertEqual(res['reason'], tw.REASON_PERMANENTLY_BLOCKED)
         self.assertTrue(res['meta']['geometry_blocked'])
 
+    def test_degenerate_od_is_not_reported_as_blocked(self):
+        """起终点重合到离散不出两点 -> 输入不成立，不能说成被地形或 NaN 区封死。"""
+        self._install([SAFE_TKE] * 24 * 4)
+        tw._geometry = lambda *a, **k: ([{'lat': 29.0, 'lon': 91.0}], False)
+        res = tw.assess_time_window(self._Req())
+        self.assertFalse(res['has_window'])
+        self.assertEqual(res['reason'], tw.REASON_OD_TOO_CLOSE)
+
     def test_no_safe_slot_when_only_turbulence_exceeds(self):
         """只是湍流超标（数据存在）-> 全天无安全时段，不得报永久阻塞。"""
         self._install([UNSAFE_TKE] * 24 * 4)

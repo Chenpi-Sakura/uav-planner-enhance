@@ -253,7 +253,6 @@ export interface SiteLeg {
   over_range?: boolean;
   note?: string;
   weather?: SiteLegWeather;
-  description?: string;
   feasible?: boolean;
   reason?: string | null;
   verdict?: string;
@@ -319,13 +318,41 @@ export interface SiteCatalog {
 
 /** 规划弹窗种类：由后端 reason 映射而来，request_failed 表示请求本身没走通 */
 export type PlanNoticeReason =
-  | 'blocked' | 'over_budget' | 'no_data' | 'iteration_limit' | 'request_failed';
+  | 'blocked' | 'over_budget' | 'no_data' | 'iteration_limit' | 'request_failed'
+  | 'rejected';
 
 export interface PlanNotice {
   reason: PlanNoticeReason;
   /** 「未算出」时带上的搜索力气（"已研究 N 个路口 / 预算 M"），空串 = 后端没给 */
   effort?: string;
+  /** reason = rejected 时后端给的那句中文原因 */
+  detail?: string;
 }
+
+/** 后端以 400 拒绝：请求本身不成立，连规划都没启动 */
+export class RequestRejected extends Error {
+  readonly detail: string;
+  constructor(detail: string) {
+    super(detail);
+    this.detail = detail;
+  }
+}
+
+/** 非 2xx 的统一出口：400 的 detail 是写给人看的原因，其余只算「后端没正常响应」 */
+export async function failRequest(response: Response, fallback: string): Promise<never> {
+  if (response.status === 400) {
+    const detail = await response.json()
+      .then(b => (typeof b?.detail === 'string' ? b.detail : ''))
+      .catch(() => '');
+    if (detail) throw new RequestRejected(detail);
+  }
+  throw new Error(fallback);
+}
+
+export const noticeForError = (error: unknown): PlanNotice =>
+  error instanceof RequestRejected
+    ? { reason: 'rejected', detail: error.detail }
+    : { reason: 'request_failed' };
 
 export const store = reactive<StoreState>({
   selectingMode: null,
@@ -529,7 +556,7 @@ export async function runPlan(): Promise<void> {
       }),
     });
 
-    if (!response.ok) throw new Error('规划失败');
+    if (!response.ok) await failRequest(response, '规划失败');
 
     const result = await response.json();
     const results: FeasibilityResult[] = result.results ?? [];
@@ -555,7 +582,7 @@ export async function runPlan(): Promise<void> {
     store.chartCollapsed = false;
   } catch (error) {
     console.error('规划请求失败:', error);
-    store.planNotice = { reason: 'request_failed' };
+    store.planNotice = noticeForError(error);
   } finally {
     store.planLoading = false;
   }
@@ -679,14 +706,14 @@ export async function runSitePlan(): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!response.ok) throw new Error('site plan failed');
+    if (!response.ok) await failRequest(response, 'site plan failed');
     const result: SitePlanResult = await response.json();
     store.siteResult = result;
     const first = (result.options ?? []).find(o => o.feasible) ?? result.options?.[0];
     store.activeSiteAircraft = first ? first.aircraft : null;
   } catch (error) {
     console.error('站点规划请求失败:', error);
-    store.planNotice = { reason: 'request_failed' };
+    store.planNotice = noticeForError(error);
     store.siteResult = null;
   } finally {
     store.siteLoading = false;

@@ -78,12 +78,19 @@ const COPY: Record<PlanNoticeReason, NoticeCopy> = {
     body: '后端没有正常响应，请确认后端服务已启动。',
     actions: [],
   },
+  rejected: {
+    title: '输入不成立，请求被拒绝',
+    body: '后端拒绝了这次请求，没有给出原因。',
+    actions: ['按提示调整起降点或途经点后重新发起'],
+  },
 };
 
 const notice = computed<NoticeCopy | null>(() => {
   const n = store.planNotice;
   if (!n) return null;
   const copy = COPY[n.reason] ?? COPY.request_failed;
+  // 400 的原因是后端写的那句话，前端不重抄一遍门限数字，免得两处口径漂移
+  if (n.reason === 'rejected') return { ...copy, body: n.detail || copy.body };
   // 「没算完」得说清花了多少力气，否则它和「没路」读起来是同一句话
   if (n.reason === 'iteration_limit' && n.effort) {
     return { ...copy, body: `${copy.body}（${n.effort}）` };

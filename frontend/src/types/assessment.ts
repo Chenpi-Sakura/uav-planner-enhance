@@ -128,4 +128,5 @@ export const TIME_WINDOW_REASONS: Record<string, string> = {
   no_safe_slot: '当日及推演期内均无安全时段',
   route_permanently_blocked: '航线被地形或数据缺失区永久封死',
   data_coverage_insufficient: '起降点超出气象数据覆盖范围',
+  od_too_close: '起降点重合或过近，构不成有效航线',
 };

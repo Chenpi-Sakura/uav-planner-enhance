@@ -220,7 +220,7 @@ import {
   TrendingUp, AlertTriangle, BarChart3, CalendarDays, Navigation,
 } from 'lucide-vue-next';
 import * as echarts from 'echarts';
-import { store, RISK_COLORS, applyTimeWindowRoute, effortText } from '../store';
+import { store, RISK_COLORS, applyTimeWindowRoute, effortText, failRequest, noticeForError } from '../store';
 import { TIME_WINDOW_REASONS } from '../types/assessment';
 import type { TimeWindowRoute } from '../types/assessment';
 import { API_BASE, TURB, fmtTke, fmtEdr } from '../config';
@@ -472,14 +472,14 @@ const handleScan = async () => {
       }),
     });
 
-    if (!response.ok) throw new Error('时间窗口扫描失败');
+    if (!response.ok) await failRequest(response, '时间窗口扫描失败');
 
     store.timeWindow = await response.json();
     await nextTick();
     renderChart();
   } catch (error) {
     console.error('时间窗口扫描请求失败:', error);
-    alert('时间窗口扫描失败，请确保后端服务已启动');
+    store.planNotice = noticeForError(error);
   } finally {
     store.timeWindowLoading = false;
   }
