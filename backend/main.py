@@ -4,7 +4,7 @@ from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from schemas import (
     TimeWindowRequest, TimeWindowResponse,
-    ReportRequest,
+    ReportRequest, ChatRequest,
     ProfileRequest, ProfileResponse, ProfileDataPoint,
     PlanRequest, PlanResponse, PlanMultiResponse,
     FeasibilityRequest, FeasibilityResponse, FeasibilityMultiResponse,
@@ -265,6 +265,34 @@ async def assess_report_stream(request: ReportRequest):
 
     def event_stream():
         for event in assessor.generate_report_stream(ctx):
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # 关闭反向代理缓冲，保证逐段到达
+        },
+    )
+
+@app.post("/api/assess/chat")
+async def assess_chat_stream(request: ChatRequest):
+    """AI 助手多轮对话（流式）。
+
+    事件类型与 ``/api/assess/report`` 完全一致（meta / delta / error / done），
+    前端复用同一套 SSE 解析。可引用的事实只来源于请求体中的结构化结果，
+    LLM 未配置或调用失败时降级为复述评估结论，不假装是对话。
+    """
+    if request.task == "time_window":
+        ctx = assessor.build_time_window_context(request.payload)
+    else:
+        ctx = assessor.build_feasibility_context(request.payload)
+
+    history = [{"role": m.role, "content": m.content} for m in request.messages]
+
+    def event_stream():
+        for event in assessor.generate_chat_stream(ctx, history):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(

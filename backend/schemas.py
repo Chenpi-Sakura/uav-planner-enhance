@@ -274,6 +274,18 @@ class ReportRequest(BaseModel):
     payload: Dict[str, Any] = {}
 
 
+class ChatMessage(BaseModel):
+    role: str = 'user'          # user / assistant，其它值按 user 处理
+    content: str = ''
+
+
+class ChatRequest(BaseModel):
+    """多轮对话。上下文同样只来自前端送上的结构化结果，后端不额外取数。"""
+    task: str = 'feasibility'
+    payload: Dict[str, Any] = {}
+    messages: List[ChatMessage] = []
+
+
 class TimeWindowRequest(BaseModel):
     start: Point
     end: Point
@@ -312,13 +324,6 @@ class RecommendedWindow(BaseModel):
     level: str
     max_tke: Optional[float] = None
     max_edr: Optional[float] = None
-
-
-class TurbulenceCurve(BaseModel):
-    times: List[str] = []
-    max_tke: List[float] = []
-    max_edr: List[float] = []
-    mean_tke: List[float] = []
 
 
 class ForecastDay(BaseModel):
@@ -373,7 +378,6 @@ class TimeWindowResponse(BaseModel):
     recommended: Optional[RecommendedWindow] = None
     recommended_final: Optional[RecommendedWindow] = None
     routes: List[TimeWindowRoute] = []
-    curve: TurbulenceCurve = TurbulenceCurve()
     backup_windows: List[TimeWindowWindow] = []
     warnings: List[Dict[str, Any]] = []
     slot_analysis: List[TimeWindowSlot] = []

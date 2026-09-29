@@ -5,7 +5,7 @@
     <!-- Heatmap legends dynamically based on active overlays -->
     <div class="legend-section" v-for="layerId in activeOverlays" :key="layerId">
       <template v-if="legendConfigs[layerId]">
-        <div class="section-label">{{ legendConfigs[layerId].label }}</div>
+        <div class="section-label" v-html="legendConfigs[layerId].label"></div>
         <div class="color-scale" :style="{ background: legendConfigs[layerId].gradient }"></div>
         <div class="scale-labels">
           <span>{{ legendConfigs[layerId].min }}</span>
@@ -32,7 +32,7 @@ const legendConfigs: Record<string, any> = {
     ...turbTicks(TURB.tkeColorMax),
   },
   'edr': {
-    label: `EDR 涡动耗散率 (${TURB.edrUnit})`,
+    label: `EDR 涡动耗散率 (${TURB.edrUnitHtml})`,
     gradient: 'linear-gradient(to right, #000004, #721f81, #f1605d, #fcfdbf)', // Magma
     ...turbTicks(TURB.edrColorMax),
   },
@@ -99,6 +99,9 @@ const legendConfigs: Record<string, any> = {
   color: var(--text-primary);
   font-weight: 500;
 }
+/* v-html 注入的节点拿不到 scoped 属性，必须 :deep 才命中；
+   不让上标参与行高，EDR 这行会比其它图例高 3px。 */
+.section-label :deep(sup) { font-size: 0.78em; line-height: 0; }
 
 .color-scale {
   height: 8px;

@@ -29,23 +29,8 @@
       </div>
     </div>
 
-    <!-- 自然语言：一期只做到「解析 → 回填表单 → 我确认」，不直接触发规划 -->
-    <div class="field">
-      <label class="field-label">一句话任务</label>
-      <textarea class="capsule-input task-text" rows="2"
-                v-model="store.siteForm.text"
-                placeholder="例：从拉萨送 200 公斤兽药到昌都"></textarea>
-      <div class="parse-row">
-        <button class="capsule-btn tiny" @click="doParse" :disabled="parsing">
-          {{ parsing ? '解析中…' : '解析任务' }}
-        </button>
-        <span class="badge" v-if="store.siteForm.parseSource === 'llm'">AI 抽取</span>
-        <span class="badge muted" v-else-if="store.siteForm.parseSource === 'rule'">关键词兜底</span>
-      </div>
-    </div>
-
     <!-- 起降点与途经点在左栏顶部的共用区编辑，这里不再回显 -->
-    <p class="hint">途经点仅用于圈定走廊，「填入航线」会整批替换。</p>
+    <p class="hint">途经点仅用于圈定走廊，「填入航线」会整批替换。一句话任务在右侧 AI 助手栏。</p>
 
     <button class="capsule-btn full-width" @click="runSitePlan" :disabled="store.siteLoading"
             :class="{ 'disabled-btn': store.siteLoading }">
@@ -117,15 +102,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, watch } from 'vue';
 import { Loader, MapPin } from 'lucide-vue-next';
 import {
-  store, runSitePlan, parseSiteTask, applySiteOption, fetchSiteCatalog,
+  store, runSitePlan, applySiteOption, fetchSiteCatalog,
   runPlan, SITE_AIRCRAFT_COLORS, SITE_REASON_TEXT,
 } from '../store';
 import type { SiteCatalog, SiteOption } from '../store';
-
-const parsing = ref(false);
 
 const options = computed<SiteOption[]>(() => store.siteResult?.options ?? []);
 const aircraftList = computed(() => store.siteCatalog?.aircraft ?? []);
@@ -137,7 +120,7 @@ const reasonText = (r?: string | null) => SITE_REASON_TEXT[r ?? ''] ?? (r || '')
 type Pack = SiteCatalog['aircraft'][number];
 
 /**
- * 选中哪台 = 顺手把速度框换成该机能力口径（自然语言回填机型也走这里）。
+ * 选中哪台 = 顺手把速度框换成该机能力口径（自然语言那条走 store 的 parseSiteTask）。
  *
  * 段长本来就是「航时锚点 × 巡航速度」折出来的，框里显示的数必须就是推算用的数，
  * 否则距离按 100 说飞得完、时刻表按 60 说飞多久。多航点这一页不吃框里的值——
@@ -158,11 +141,6 @@ const verdictClass = (o: SiteOption) => ({
   warn: !o.feasible && o.verdict === 'undetermined',
   bad: !o.feasible && o.verdict !== 'undetermined',
 });
-
-const doParse = async () => {
-  parsing.value = true;
-  try { await parseSiteTask(); } finally { parsing.value = false; }
-};
 
 /** 填入航线 = 只改 waypoints/终点，不立刻重规划：让用户自己决定什么时候跑 A* */
 const fillRoute = (o: SiteOption) => {
@@ -186,47 +164,44 @@ onMounted(() => {
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field-row { display: flex; gap: 10px; }
 .field-row .field { flex: 1; }
-.field-label { font-size: 11px; color: var(--text-secondary); }
-.hint { font-size: 11px; color: var(--text-secondary); margin: 0; line-height: 1.5; }
+/* 字号与另两个页签同一档：标签/选项 14、正文 13、次要 12、角标 11 */
+.field-label { font-size: 14px; color: var(--text-secondary); }
+.hint { font-size: 13px; color: var(--text-secondary); margin: 0; line-height: 1.5; }
 .seg { display: flex; gap: 4px; }
 .seg-btn {
-  flex: 1; padding: 6px 4px; font-size: 11px; border-radius: 6px; cursor: pointer;
+  flex: 1; padding: 6px 4px; font-size: 14px; border-radius: 6px; cursor: pointer;
   border: 1px solid rgba(255,255,255,0.12); background: transparent; color: var(--text-secondary);
 }
 .seg-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.06); }
 /* 选中态用透明度与描边，不加粗 —— 字重一变整排会跳 */
 .seg-btn.on { color: var(--text-primary); background: rgba(52,152,219,0.16); border-color: rgba(52,152,219,0.5); }
-.task-text { resize: vertical; font-family: inherit; font-size: 12px; }
-.parse-row { display: flex; align-items: center; gap: 8px; }
-.badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; background: rgba(56,189,248,0.18); color: #7dd3fc; }
-.badge.muted { background: rgba(148,163,184,0.18); color: var(--text-secondary); }
-.capsule-btn.tiny { padding: 5px 10px; font-size: 11px; width: auto; }
+.capsule-btn.tiny { padding: 5px 10px; font-size: 12px; width: auto; }
 .options { display: flex; flex-direction: column; gap: 8px; }
 .opt-card {
   border: 1px solid transparent; border-radius: 8px; padding: 8px 10px;
   background: rgba(255,255,255,0.04);
 }
 .opt-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
-.opt-title { font-size: 12px; color: var(--text-primary); }
+.opt-title { font-size: 14px; color: var(--text-primary); }
 .dot-color { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.opt-line { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); }
+.opt-line { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-secondary); }
 .opt-line b { font-weight: 500; }
 .opt-line b.ok { color: #4ade80; }
 .opt-line b.warn { color: #fbbf24; }
 .opt-line b.bad { color: #f87171; }
-.opt-msg { font-size: 11px; color: #fca5a5; margin: 6px 0 0; line-height: 1.5; }
+.opt-msg { font-size: 13px; color: #fca5a5; margin: 6px 0 0; line-height: 1.5; }
 .opt-msg.muted { color: var(--text-secondary); }
 .opt-actions { display: flex; gap: 6px; margin-top: 8px; }
 .legs { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.legs li { display: grid; grid-template-columns: 18px 1fr auto; gap: 6px; align-items: center; font-size: 11px; }
+.legs li { display: grid; grid-template-columns: 18px 1fr auto; gap: 6px; align-items: center; font-size: 13px; }
 .leg-seq { color: var(--text-secondary); }
 .leg-name { color: var(--text-primary); }
 .leg-km { color: var(--text-secondary); }
-.leg-flag { font-size: 10px; color: var(--text-secondary); border: 1px solid rgba(255,255,255,0.15);
+.leg-flag { font-size: 11px; color: var(--text-secondary); border: 1px solid rgba(255,255,255,0.15);
             border-radius: 4px; padding: 1px 4px; white-space: nowrap; }
 .leg-flag.warn { color: #fbbf24; border-color: rgba(251,191,36,0.4); }
-.leg-sub { grid-column: 2 / span 2; font-size: 10px; color: var(--text-secondary); display: flex; gap: 8px; }
-.notes { margin: 8px 0 0; padding-left: 16px; font-size: 10px; color: var(--text-secondary); line-height: 1.5; }
+.leg-sub { grid-column: 2 / span 2; font-size: 12px; color: var(--text-secondary); display: flex; gap: 8px; }
+.notes { margin: 8px 0 0; padding-left: 16px; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
 .full-width { width: 100%; }
 .loading-icon { display: flex; align-items: center; gap: 8px; }
 .spin { animation: spin 1s linear infinite; }

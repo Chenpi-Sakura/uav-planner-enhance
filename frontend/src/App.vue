@@ -11,6 +11,8 @@
     <Sidebar />
     <DataChartPanel />
     <LayerSelector v-model="activeLayer" />
+    <!-- 与图层切换同为 z 1000，靠文档顺序压在它上面：右栏展开时整块盖住底图按钮 -->
+    <AiSidebar />
     <OverlayLegend />
     <NoticeDialog />
   </div>
@@ -21,6 +23,7 @@ import { ref } from 'vue';
 import { Plane } from 'lucide-vue-next';
 import MapContainer from './components/MapContainer.vue';
 import Sidebar from './components/Sidebar.vue';
+import AiSidebar from './components/AiSidebar.vue';
 import DataChartPanel from './components/DataChartPanel.vue';
 import LayerSelector from './components/LayerSelector.vue';
 import OverlayLegend from './components/OverlayLegend.vue';

@@ -27,14 +27,6 @@ export interface RecommendedWindow {
   max_edr: number | null;
 }
 
-/** 湍流强度变化曲线（起飞前 1h 至降落后 1h） */
-export interface TurbulenceCurve {
-  times: string[];
-  max_tke: number[];
-  max_edr: number[];
-  mean_tke: number[];
-}
-
 /** 单个扫描槽位的风险分析结果 */
 export interface TimeWindowSlot {
   time: string;
@@ -106,7 +98,6 @@ export interface TimeWindowResult {
   /** 细排冠军（真实航线口径）；老响应里没有时回退到 recommended */
   recommended_final?: RecommendedWindow | null;
   routes?: TimeWindowRoute[];
-  curve: TurbulenceCurve;
   backup_windows: TimeWindowWindow[];
   warnings: TimeWindowWarning[];
   slot_analysis: TimeWindowSlot[];

@@ -15,8 +15,6 @@
         </button>
       </div>
     </div>
-    <p class="hint-text small">0 = 只看当日。</p>
-
     <div class="action-row">
       <button
         class="capsule-btn full-width"
@@ -65,7 +63,7 @@
         <div class="kpi-card">
           <span class="kpi-label">沿程最大 EDR</span>
           <span class="kpi-value">
-            {{ fmtEdr(rec?.max_edr) }}<em>{{ TURB.edrUnit }}</em>
+            {{ fmtEdr(rec?.max_edr) }}<em v-html="TURB.edrUnitHtml"></em>
           </span>
         </div>
         <div class="kpi-card">
@@ -79,7 +77,6 @@
         <h4 class="sub-title"><Navigation :size="14" /> 候选起飞时刻</h4>
         <div class="slot-list">
           <div v-for="(rt, idx) in routes" :key="rt.takeoff" class="slot-item">
-            <span class="seg-dot" :style="{ backgroundColor: riskColor(routeLevel(rt)) }"></span>
             <span class="slot-time">
               {{ hhmm(rt.takeoff) }}
               <em v-if="idx === 0" class="route-flag">推荐</em>
@@ -93,16 +90,6 @@
           </div>
         </div>
         <p v-if="rankNote" class="hint-text small">{{ rankNote }}</p>
-        <p v-else class="hint-text small">
-          风险档为按各时刻真实航线判定；未越中风险下沿时四档可能同形。
-        </p>
-      </div>
-
-      <!-- 湍流强度变化曲线 -->
-      <div v-if="r.curve.times.length" class="sub-block">
-        <h4 class="sub-title"><TrendingUp :size="14" /> 湍流强度变化曲线</h4>
-        <p class="hint-text small">起飞前 1 小时至降落后 1 小时</p>
-        <div ref="chartRef" class="curve-chart"></div>
       </div>
 
       <!-- 备用时段：有候选航线列表时不再重复列一遍窗口 -->
@@ -110,7 +97,6 @@
         <h4 class="sub-title"><Clock :size="14" /> 备用时段</h4>
         <div class="slot-list">
           <div v-for="(w, idx) in r.backup_windows" :key="idx" class="slot-item">
-            <span class="seg-dot" :style="{ backgroundColor: riskColor(w.level) }"></span>
             <span class="slot-time">{{ w.start }} – {{ w.end }}</span>
             <span class="slot-level" :style="{ color: riskColor(w.level) }">{{ w.level }}</span>
             <span class="seg-meta">TKE {{ fmtTke(w.max_tke) }}</span>
@@ -118,16 +104,6 @@
         </div>
       </div>
 
-      <!-- 其他预警提示 -->
-      <div v-if="r.warnings.length" class="sub-block">
-        <h4 class="sub-title"><AlertTriangle :size="14" /> 其他预警提示</h4>
-        <div class="warn-list">
-          <div v-for="(w, idx) in r.warnings" :key="idx" class="warn-item" :class="w.level">
-            <AlertTriangle :size="13" />
-            <span>{{ w.text }}</span>
-          </div>
-        </div>
-      </div>
     </template>
 
     <!-- 无窗口：原因 + 时段风险表 + 推演结果 -->
@@ -196,35 +172,25 @@
         </p>
       </div>
     </template>
-
-    <!-- AI 评估报告（流式生成） -->
-    <ReportCard task="time_window" :payload="r" />
-
-    <!-- 数据口径只留这一句；TKE/EDR 的算法细节在下方 AI 报告里已完整给出 -->
-    <p class="hint-text small data-note">
-      数据口径：500 hPa 等压面，逐小时；时间为北京时间（UTC+8）。
-    </p>
   </section>
 
   <section v-else class="control-section">
     <p class="hint-text">
-      设置起点与终点后，点击「查找最佳窗口」获取推荐起飞时刻、湍流曲线与备用时段。
+      设置起点与终点后，点击「查找最佳窗口」获取推荐起飞时刻与备用时段。
     </p>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, nextTick, onBeforeUnmount, onMounted } from 'vue';
+import { computed, nextTick, onMounted } from 'vue';
 import {
   CalendarClock, Loader, CheckCircle2, XCircle, Clock,
-  TrendingUp, AlertTriangle, BarChart3, CalendarDays, Navigation,
+  BarChart3, CalendarDays, Navigation,
 } from 'lucide-vue-next';
-import * as echarts from 'echarts';
 import { store, RISK_COLORS, applyTimeWindowRoute, effortText, failRequest, noticeForError } from '../store';
 import { TIME_WINDOW_REASONS } from '../types/assessment';
 import type { TimeWindowRoute } from '../types/assessment';
 import { API_BASE, TURB, fmtTke, fmtEdr } from '../config';
-import ReportCard from './ReportCard.vue';
 
 const forecastOptions = [
   { value: 0, label: '仅当日' },
@@ -233,24 +199,12 @@ const forecastOptions = [
 ];
 
 const r = computed(() => store.timeWindow);
-const chartRef = ref<HTMLElement | null>(null);
-let chartInstance: echarts.ECharts | null = null;
 
 const riskColor = (level: string) => RISK_COLORS[level] ?? '#94a3b8';
 
-/** 结论卡与曲线跟着**细排冠军**（真实航线口径）；老响应里没这个字段时回退粗排。 */
+/** 结论卡跟着**细排冠军**（真实航线口径）；老响应里没这个字段时回退粗排。 */
 const rec = computed(() => r.value?.recommended_final ?? r.value?.recommended ?? null);
 const routes = computed<TimeWindowRoute[]>(() => r.value?.routes ?? []);
-
-/** HH:MM 其中取时间部分（推荐卡用） */
-const takeoffTime = computed(() => {
-  const t = rec.value?.takeoff ?? '';
-  return t.includes('T') ? t.split('T')[1] : t;
-});
-const landingTime = computed(() => {
-  const t = rec.value?.landing ?? '';
-  return t.includes('T') ? t.split('T')[1] : t;
-});
 
 /** 推荐卡的日期时刻。后端给的是完整 ISO（`2022-07-01T07:00`，北京时间），
  *  只截 `HH:MM` 会让"哪天起飞"丢失；降落跨午夜时还必须标出来，否则读成回退。 */
@@ -316,136 +270,12 @@ const barWidth = (tke: number | null | undefined) => {
   return Math.min(100, Math.max(2, (Number(tke) / TURB.tkeUnflyable) * 100));
 };
 
-const renderChart = () => {
-  if (!chartRef.value || !r.value) return;
-  if (!chartInstance) {
-    chartInstance = echarts.init(chartRef.value);
-  }
-  const c = r.value.curve;
-  const takeoff = takeoffTime.value;
-  const landing = landingTime.value;
-  /** 起飞/降落标记线需落在图表已有刻度上（曲线为 30 分钟粒度，降落时刻可能不在刻度上，吸附到最近刻度）。 */
-  const snapToTick = (hhmm: string) => {
-    if (!hhmm || !c.times.length) return null;
-    const toMin = (s: string) => {
-      const [h, m] = s.split(':').map(Number);
-      return (h || 0) * 60 + (m || 0);
-    };
-    const target = toMin(hhmm);
-    return c.times.reduce((best, t) =>
-      Math.abs(toMin(t) - target) < Math.abs(toMin(best) - target) ? t : best, c.times[0]);
-  };
-  const markLines = [takeoff, landing]
-    .map(snapToTick)
-    .filter((t, i, arr): t is string => !!t && arr.indexOf(t) === i)
-    .map((t, i) => ({ xAxis: t, name: i === 0 ? '起飞' : '降落' }));
-
-  chartInstance.setOption({
-    grid: { left: 44, right: 52, top: 44, bottom: 28 },
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: 'rgba(0, 0, 0, 0.75)',
-      borderColor: 'rgba(148, 163, 184, 0.3)',
-      className: 'panel-noise',
-      textStyle: { color: '#e2e8f0', fontSize: 11 },
-    },
-    legend: {
-      show: true,
-      top: 2,
-      textStyle: { color: '#94a3b8', fontSize: 10 },
-      itemWidth: 12,
-      itemHeight: 8,
-    },
-    xAxis: {
-      type: 'category',
-      data: c.times,
-      axisLabel: { color: '#94a3b8', fontSize: 10 },
-      axisLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.3)' } },
-    },
-    yAxis: [
-      {
-        type: 'value',
-        name: 'TKE (m²/s²)',
-        nameTextStyle: { color: '#94a3b8', fontSize: 10, padding: [0, 0, 4, 0] },
-        axisLabel: { color: '#94a3b8', fontSize: 10 },
-        splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.12)' } },
-      },
-      {
-        type: 'value',
-        name: 'EDR (m^(2/3)/s)',
-        nameTextStyle: { color: '#94a3b8', fontSize: 10, padding: [0, 0, 4, 0] },
-        axisLabel: { color: '#94a3b8', fontSize: 10, formatter: (v: number) => v.toFixed(2) },
-        splitLine: { show: false },
-      },
-    ],
-    series: [
-      {
-        name: '最大 TKE',
-        type: 'line',
-        smooth: true,
-        symbolSize: 4,
-        data: c.max_tke,
-        itemStyle: { color: '#f97316' },
-        lineStyle: { width: 2, color: '#f97316' },
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(249, 115, 22, 0.28)' },
-            { offset: 1, color: 'rgba(249, 115, 22, 0.02)' },
-          ]),
-        },
-        markLine: {
-          silent: true,
-          symbol: 'none',
-          lineStyle: { color: 'rgba(148, 163, 184, 0.6)', type: 'dashed' },
-          label: { color: '#94a3b8', fontSize: 9, formatter: (p: { name?: string }) => p.name ?? '' },
-          data: markLines,
-        },
-      },
-      {
-        name: '最大 EDR',
-        type: 'line',
-        smooth: true,
-        symbolSize: 4,
-        yAxisIndex: 1,
-        data: c.max_edr.map(v => Number(Number(v).toFixed(4))),
-        itemStyle: { color: '#38bdf8' },
-        lineStyle: { width: 2, color: '#38bdf8' },
-      },
-    ],
-  }, true);
-  chartInstance.resize();
-};
-
-watch(
-  () => r.value?.curve,
-  async () => {
-    await nextTick();
-    renderChart();
-  },
-  { deep: true },
-);
-
-watch(
-  () => store.sidebarTab,
-  async () => {
-    if (store.sidebarTab === 'timeWindow') {
-      await nextTick();
-      renderChart();
-    }
-  },
-);
-
 // 从功能一「查看替代时段」跳转过来时自动执行一次扫描
 onMounted(() => {
   if (store.pendingTimeWindowScan) {
     store.pendingTimeWindowScan = false;
     nextTick(() => { void handleScan(); });
   }
-});
-
-onBeforeUnmount(() => {
-  chartInstance?.dispose();
-  chartInstance = null;
 });
 
 const handleScan = async () => {
@@ -475,8 +305,6 @@ const handleScan = async () => {
     if (!response.ok) await failRequest(response, '时间窗口扫描失败');
 
     store.timeWindow = await response.json();
-    await nextTick();
-    renderChart();
   } catch (error) {
     console.error('时间窗口扫描请求失败:', error);
     store.planNotice = noticeForError(error);
@@ -494,18 +322,12 @@ const handleScan = async () => {
   margin-bottom: 16px;
 }
 .hint-text {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-secondary);
   line-height: 1.6;
   margin: 0 0 12px 0;
 }
-.hint-text.small { font-size: 11px; opacity: 0.75; }
-.data-note {
-  margin: 14px 0 0 0;
-  padding-top: 12px;
-  border-top: 1px solid var(--panel-border);
-  line-height: 1.7;
-}
+.hint-text.small { font-size: 13px; opacity: 0.75; }
 
 .btn-inner {
   display: flex;
@@ -520,7 +342,7 @@ const handleScan = async () => {
   margin-bottom: 8px;
 }
 .field-label {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-secondary);
 }
 .stepper-group {
@@ -533,7 +355,7 @@ const handleScan = async () => {
   border: 1px solid var(--panel-border);
   border-radius: 10px;
   padding: 8px 6px;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-primary);
   cursor: pointer;
   transition: all 0.2s;
@@ -545,6 +367,8 @@ const handleScan = async () => {
 }
 
 .action-row { margin-top: 16px; }
+/* 主操作按钮：与路径规划页的「开始规划」同一字号，不吃 <button> 的默认 13.33px */
+.action-row .capsule-btn { font-size: 15px; }
 .loading-icon { display: flex; align-items: center; gap: 8px; justify-content: center; }
 .spin { animation: spin 1.5s linear infinite; }
 @keyframes spin { 100% { transform: rotate(360deg); } }
@@ -568,8 +392,8 @@ const handleScan = async () => {
   border-color: rgba(239, 68, 68, 0.45);
   color: #f87171;
 }
-.verdict-title { font-size: 18px; font-weight: 700; }
-.verdict-sub { font-size: 11px; color: var(--text-secondary); margin-top: 2px; line-height: 1.6; }
+.verdict-title { font-size: 21px; font-weight: 700; }
+.verdict-sub { font-size: 13px; color: var(--text-secondary); margin-top: 2px; line-height: 1.6; }
 
 .kpi-grid {
   display: grid;
@@ -586,9 +410,11 @@ const handleScan = async () => {
   flex-direction: column;
   gap: 3px;
 }
-.kpi-label { font-size: 10px; color: var(--text-secondary); }
-.kpi-value { font-size: 16px; font-weight: 700; }
-.kpi-value em { font-size: 10px; font-weight: 400; font-style: normal; opacity: 0.7; margin-left: 2px; }
+.kpi-label { font-size: 12px; color: var(--text-secondary); }
+.kpi-value { font-size: 19px; font-weight: 700; }
+.kpi-value em { font-size: 12px; font-weight: 400; font-style: normal; opacity: 0.7; margin-left: 2px; }
+/* 同上：v-html 的上标要用 :deep 才命中，且不参与行高 */
+.kpi-value em :deep(sup) { font-size: 0.78em; line-height: 0; }
 
 .sub-block {
   margin-bottom: 16px;
@@ -596,7 +422,7 @@ const handleScan = async () => {
   border-top: 1px solid var(--panel-border);
 }
 .sub-title {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-secondary);
   margin: 0 0 8px 0;
   display: flex;
@@ -606,27 +432,24 @@ const handleScan = async () => {
   letter-spacing: 0.4px;
 }
 
-.curve-chart {
-  width: 100%;
-  height: 200px;
-  margin-top: 4px;
-}
-
 .slot-list { display: flex; flex-direction: column; gap: 6px; }
+/* 三列网格：时刻 + 风险档占第一行，里程与绕行另起一行，按钮竖跨两行钉在右侧。
+   13px 字号下五段塞不进一行，硬挤会把「低风险」拆成两行、把里程截成省略号。 */
 .slot-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 8px;
+  column-gap: 8px;
+  row-gap: 2px;
   padding: 7px 9px;
   background: rgba(0,0,0,0.18);
   border: 1px solid transparent;
   border-radius: 8px;
-  font-size: 11px;
+  font-size: 13px;
 }
-.slot-time { flex: 1; }
-.slot-level { font-weight: 700; }
-.seg-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.seg-meta { font-size: 10px; color: var(--text-secondary); }
+.slot-time { grid-column: 1; grid-row: 1; white-space: nowrap; }
+.slot-level { grid-column: 2; grid-row: 1; justify-self: start; font-weight: 700; white-space: nowrap; }
+.seg-meta { grid-column: 1 / span 2; grid-row: 2; font-size: 12px; color: var(--text-secondary); }
 
 /* 候选行：时刻后面挂「推荐」小标，行尾一个把该时刻送进功能一的按钮 */
 .route-flag {
@@ -635,17 +458,18 @@ const handleScan = async () => {
   border-radius: 4px;
   background: rgba(56, 189, 248, 0.18);
   color: #38bdf8;
-  font-size: 9px;
+  font-size: 11px;
   font-style: normal;
 }
 .route-btn {
-  flex-shrink: 0;
+  grid-column: 3;
+  grid-row: 1 / span 2;
   padding: 3px 7px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-primary);
-  font-size: 10px;
+  font-size: 12px;
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -659,7 +483,7 @@ const handleScan = async () => {
   gap: 8px;
   padding: 5px 8px;
   border-radius: 6px;
-  font-size: 11px;
+  font-size: 13px;
   background: rgba(0,0,0,0.14);
 }
 .slot-row.unsafe { background: rgba(239, 68, 68, 0.1); }
@@ -683,31 +507,11 @@ const handleScan = async () => {
   padding: 7px 9px;
   background: rgba(0,0,0,0.18);
   border-radius: 8px;
-  font-size: 11px;
+  font-size: 13px;
 }
 .forecast-item.ok { background: rgba(34, 197, 94, 0.1); }
 .fc-date { flex: 0 0 78px; }
 .fc-window { flex: 1; }
 .fc-window.muted { color: var(--text-secondary); }
 .fc-level { font-weight: 700; }
-
-.warn-list { display: flex; flex-direction: column; gap: 6px; }
-.warn-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  padding: 7px 9px;
-  border-radius: 8px;
-  font-size: 11px;
-  line-height: 1.6;
-  background: rgba(234, 179, 8, 0.1);
-  border: 1px solid rgba(234, 179, 8, 0.3);
-  color: #fde047;
-}
-.warn-item.critical {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.35);
-  color: #fca5a5;
-}
-.warn-item svg { flex-shrink: 0; margin-top: 2px; }
 </style>

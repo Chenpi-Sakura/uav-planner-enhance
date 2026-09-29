@@ -177,8 +177,10 @@ class Settings(BaseModel):
     # 规划一条真实航线再重排推荐（backlog B10）。取 4 = 推荐 1 + 备用 3，
     # 正好覆盖现有全部候选，不会出现「某条备用时段配不到航线」。
     TW_TOP_K_ROUTES: int = 4
-    TW_CURVE_STEP_MINUTES: int = 30    # 湍流曲线采样步长
-    TW_CURVE_PAD_HOURS: int = 1        # 曲线评估域相对飞行时段的外扩小时数
+    # 时间轴相对飞行时段的外扩小时数：slab 必须盖到最后一个采样点的到达时刻，
+    # 否则末段会被最近邻吸附到边界时刻（见 time_window 里的 total_hours 注释）。
+    # 名字里的 CURVE 是历史包袱——湍流曲线已下架，这里只服务 slab 取窗。
+    TW_CURVE_PAD_HOURS: int = 1
     # slab LRU 的条目上限。6 曾经够用，但剖面改「逐点到达时刻取数」后
     # 一次 get_meteorology_at_points 就要占 6 个键（u/v/w/tc/rh/qvapor），
     # 起终点两次校验需要 12 个 —— 上限 6 等于第二次校验必然把第一次全逐出，

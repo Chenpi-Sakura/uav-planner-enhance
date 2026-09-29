@@ -81,7 +81,6 @@ def run():
                 "takeoff": rec.get("takeoff"), "level": rec.get("level"),
                 "backup_windows": len(tw.get("backup_windows") or []),
                 "warnings": len(tw.get("warnings") or []),
-                "curve_points": len((tw.get("curve") or {}).get("times") or []),
                 "forecast_days": len(((tw.get("forecast") or {}).get("days") or [])),
                 "t_feasibility_s": round(t1, 2), "t_time_window_s": round(t2, 2),
                 "checks": checks, "pass": all(checks.values()),

@@ -216,29 +216,6 @@ class TestWindowAggregation(unittest.TestCase):
             settings.DATA_LABEL_IS_UTC = saved
 
 
-class TestCurve(unittest.TestCase):
-    """湍流曲线构建。"""
-
-    def test_curve_shape_and_labels(self):
-        tke, edr, lats, lons, times = _synth_slab([SAFE_TKE] * 24)
-        slats, slons, _ = _samples(n=4)
-        curve = tw.build_curve(tke, edr, times, slats, slons, lats, lons,
-                              np.datetime64('2022-07-01T00:00'),
-                              np.datetime64('2022-07-01T02:00'), 30)
-        # 00:00–02:00 每 30 分钟 -> 5 个点
-        self.assertEqual(len(curve['times']), 5)
-        self.assertEqual(len(curve['max_tke']), 5)
-        self.assertEqual(curve['times'][0], '08:00')
-        self.assertAlmostEqual(curve['max_tke'][0], SAFE_TKE, places=3)
-
-    def test_empty_on_no_data(self):
-        curve = tw.build_curve(np.array([]), np.array([]), np.array([]),
-                              np.array([]), np.array([]), np.array([]), np.array([]),
-                              np.datetime64('2022-07-01T00:00'),
-                              np.datetime64('2022-07-01T01:00'), 30)
-        self.assertEqual(curve['times'], [])
-
-
 class TestGeometryBlocked(unittest.TestCase):
     """几何永久阻塞判定（直接检查几何，而非从槽位结果反推）。"""
 
@@ -370,7 +347,6 @@ class TestAssessTimeWindow(TWStubbed):
         self.assertIsNotNone(res['recommended'])
         self.assertEqual(res['reason'], None)
         self.assertTrue(len(res['slot_analysis']) == 24)
-        self.assertTrue(len(res['curve']['times']) > 0)
 
     def test_no_window_then_forecast(self):
         # 当日与次日全天危险，第三天安全 -> 最佳备选日期应落在第三天
@@ -578,12 +554,6 @@ class TestTopKRoutes(TWStubbed):
         self.assertEqual(res['recommended_final']['level'], LEVEL_LOW)
         self.assertEqual(res['recommended']['takeoff'], '2022-07-01T00:00',
                          "粗排结果原样保留，供前端展示「走廊级 vs 真实航线」的差异")
-
-    def test_curve_follows_the_final_recommendation(self):
-        res = self._assess(tke_values=[MODERATE_TKE, SAFE_TKE, MODERATE_TKE],
-                           distances=[200.0, 250.0, 300.0])
-        # 曲线从细排冠军起飞前 1 h 起算；若仍跟着粗排冠军走，起点会是 00:00
-        self.assertEqual(res['curve']['times'][0], '03:00')
 
     def test_one_big_window_still_fills_k_candidates(self):
         """全天安全会合并成一个窗口，Top-K 只剩 1 条 —— 必须在窗口内补点凑满。

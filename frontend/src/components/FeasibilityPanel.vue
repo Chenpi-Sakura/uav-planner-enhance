@@ -2,7 +2,7 @@
   <!-- ============ 结果区（当前选中档位）============ -->
   <!-- 输入区已并入「路径规划」：一次「开始规划」同时出三档，档位切换在 RouteTierCards 里 -->
   <section v-if="r" class="control-section">
-    <!-- 结论卡：四态各有颜色与图标，只有「不可飞」才是红 -->
+    <!-- 结论卡：四态各有颜色与图标，只有「不可飞」才是红。全程风险档与指标并进来一起报 -->
     <div class="verdict-card" :class="tone">
       <div class="verdict-icon">
         <CheckCircle2 v-if="tone === 'ok'" :size="22" />
@@ -11,8 +11,19 @@
         <XCircle v-else :size="22" />
       </div>
       <div class="verdict-body">
-        <div class="verdict-title">{{ r.conclusion }}</div>
-        <div class="verdict-sub">{{ verdictSub }}</div>
+        <div class="verdict-line">
+          <span class="verdict-title">{{ r.conclusion }}</span>
+          <span v-if="r.risk" class="risk-tag" :style="{ backgroundColor: riskColor(r.risk.overall) }">
+            {{ r.risk.overall }}
+          </span>
+        </div>
+        <div v-if="r.risk" class="risk-metrics">
+          <span>最大 TKE <b>{{ fmtTke(r.risk.stats.max_tke) }}</b></span>
+          <span>最大 EDR <b>{{ fmtEdr(r.risk.stats.max_edr) }}</b></span>
+          <span>中度以上占比 <b>{{ (r.risk.stats.moderate_ratio * 100).toFixed(1) }}%</b></span>
+        </div>
+        <!-- 「可飞」那条废话已被指标行取代；不可飞时这里仍要说清是哪一条原因 -->
+        <div v-if="!r.feasible" class="verdict-sub">{{ verdictSub }}</div>
       </div>
     </div>
 
@@ -22,16 +33,12 @@
       <span>{{ unsafeEndpointText }}</span>
     </div>
 
-    <!-- KPI（未规划出航线时，除直线距离外均为「不适用」） -->
+    <!-- KPI（未规划出航线时均为「不适用」） -->
     <div class="kpi-grid">
       <div class="kpi-card">
         <span class="kpi-label">航线总距离</span>
         <span v-if="r.distance.applicable" class="kpi-value">{{ r.distance.route_km }}<em>km</em></span>
         <span v-else class="kpi-value na">不适用</span>
-      </div>
-      <div class="kpi-card">
-        <span class="kpi-label">直线距离</span>
-        <span class="kpi-value">{{ r.distance.straight_km }}<em>km</em></span>
       </div>
       <div class="kpi-card">
         <span class="kpi-label">预计飞行时间</span>
@@ -51,21 +58,9 @@
       </div>
     </div>
 
-    <!-- 全程风险等级 -->
-    <div v-if="r.risk" class="risk-banner" :style="{ borderColor: riskColor(r.risk.overall) }">
-      <span class="risk-tag" :style="{ backgroundColor: riskColor(r.risk.overall) }">
-        {{ r.risk.overall }}
-      </span>
-      <div class="risk-metrics">
-        <span>最大 TKE <b>{{ fmtTke(r.risk.stats.max_tke) }}</b></span>
-        <span>最大 EDR <b>{{ fmtEdr(r.risk.stats.max_edr) }}</b></span>
-        <span>中度以上占比 <b>{{ (r.risk.stats.moderate_ratio * 100).toFixed(1) }}%</b></span>
-      </div>
-    </div>
-
     <!-- 分段风险 -->
     <div v-if="r.risk && r.risk.segments.length" class="sub-block">
-      <h4 class="sub-title"><Route :size="14" /> 区域飞行等级（以途经城市为间隔）</h4>
+      <h4 class="sub-title"><Route :size="14" /> 区域飞行等级</h4>
       <div class="segment-list">
         <div
           v-for="(seg, idx) in r.risk.segments"
@@ -86,7 +81,7 @@
 
     <!-- 绕行成本分析 -->
     <div class="sub-block">
-      <h4 class="sub-title"><Timer :size="14" /> 绕行成本分析（时间口径）</h4>
+      <h4 class="sub-title"><Timer :size="14" /> 绕行成本分析</h4>
       <template v-if="r.distance.time_cost_h.applicable">
         <div class="cost-row">
           <span>额外耗时</span>
@@ -143,33 +138,9 @@
       </button>
     </div>
 
-    <!-- 建议措施 -->
-    <div class="sub-block">
-      <h4 class="sub-title"><Lightbulb :size="14" /> 建议措施</h4>
-      <p class="suggestion-text">{{ r.suggestions.text }}</p>
-
-      <button class="ghost-btn full-width goto-window" @click="gotoTimeWindow">
-        <CalendarClock :size="14" /> 查看替代时段
-      </button>
-
-      <div v-if="r.suggestions.alt_bases.length" class="alt-bases">
-        <div class="alt-title">可用替代起降点：</div>
-        <div
-          v-for="(alt, idx) in r.suggestions.alt_bases"
-          :key="idx"
-          class="alt-item"
-          @click="applyAltBase(alt)"
-        >
-          <span class="seg-dot" :style="{ backgroundColor: riskColor(alt.level) }"></span>
-          <span class="alt-role">{{ alt.role_label || (alt.role === 'start' ? '替代起点' : '替代终点') }}</span>
-          <span class="alt-desc">{{ alt.description }}</span>
-          <span class="alt-meta">{{ alt.level }} · {{ alt.distance_km }}km</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- AI 评估报告（流式生成） -->
-    <ReportCard task="feasibility" :payload="r" />
+    <button class="ghost-btn full-width goto-window" @click="gotoTimeWindow">
+      <CalendarClock :size="14" /> 查看替代时段
+    </button>
   </section>
 
   <section v-else class="control-section">
@@ -183,12 +154,11 @@
 import { computed } from 'vue';
 import {
   CheckCircle2, XCircle, Route, Timer,
-  AlertTriangle, Lightbulb, MapPin, CalendarClock, HelpCircle,
+  AlertTriangle, MapPin, CalendarClock, HelpCircle,
 } from 'lucide-vue-next';
 import { store, RISK_COLORS, PRIORITY_LABELS, FEAS_REASON_TEXT, effortText, verdictTone } from '../store';
 import type { FeasibilityResult } from '../store';
 import { TURB, fmtTke, fmtEdr } from '../config';
-import ReportCard from './ReportCard.vue';
 
 const r = computed<FeasibilityResult | null>(() => store.feasibility);
 
@@ -239,7 +209,7 @@ const toggleSegment = (idx: number) => {
   store.selectedSegmentIndex = store.selectedSegmentIndex === idx ? null : idx;
 };
 
-/** 跳转到时间窗口标签页并自动执行一次扫描（用于「更换飞行时间」建议）。 */
+/** 跳转到时间窗口标签页并自动执行一次扫描。 */
 const gotoTimeWindow = () => {
   store.sidebarTab = 'timeWindow';
   store.pendingTimeWindowScan = true;
@@ -253,13 +223,6 @@ const focusBlocking = () => {
     }
   }
 };
-
-const applyAltBase = (alt: { role?: string; end: { lat: number; lon: number } }) => {
-  // 替代点可能是起点也可能是终点，按 role 写回对应输入框
-  const target = alt.role === 'start' ? store.start : store.end;
-  target.lat = String(alt.end.lat);
-  target.lng = String(alt.end.lon);
-};
 </script>
 
 <style scoped>
@@ -270,15 +233,15 @@ const applyAltBase = (alt: { role?: string; end: { lat: number; lon: number } })
   margin-bottom: 16px;
 }
 .hint-text {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-secondary);
   line-height: 1.6;
   margin: 0 0 10px 0;
 }
-.hint-text.small { font-size: 11px; opacity: 0.75; }
+.hint-text.small { font-size: 13px; opacity: 0.75; }
 
 .kpi-value.na {
-  font-size: 13px;
+  font-size: 15px;
   color: var(--text-secondary);
   font-weight: 500;
 }
@@ -294,20 +257,10 @@ const applyAltBase = (alt: { role?: string; end: { lat: number; lon: number } })
   background: rgba(239, 68, 68, 0.12);
   border: 1px solid rgba(239, 68, 68, 0.45);
   color: #fca5a5;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
 }
 .endpoint-alert svg { flex-shrink: 0; margin-top: 2px; }
-
-/* 替代起降点角色标签 */
-.alt-role {
-  flex-shrink: 0;
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: rgba(148, 163, 184, 0.18);
-  color: var(--text-secondary);
-}
 
 .priority-group {
   display: grid;
@@ -335,8 +288,8 @@ const applyAltBase = (alt: { role?: string; end: { lat: number; lon: number } })
   background: rgba(52, 152, 219, 0.22);
   border-color: var(--accent-color);
 }
-.priority-name { font-size: 13px; font-weight: 600; }
-.priority-limit { font-size: 10px; color: var(--text-secondary); }
+.priority-name { font-size: 15px; font-weight: 600; }
+.priority-limit { font-size: 12px; color: var(--text-secondary); }
 
 .verdict-card {
   display: flex;
@@ -368,12 +321,16 @@ const applyAltBase = (alt: { role?: string; end: { lat: number; lon: number } })
   border-color: rgba(148, 163, 184, 0.4);
   color: #cbd5e1;
 }
-.verdict-title { font-size: 18px; font-weight: 700; }
-.verdict-sub { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+.verdict-body { flex: 1; min-width: 0; }
+.verdict-line { display: flex; align-items: center; gap: 8px; }
+.verdict-title { font-size: 21px; font-weight: 700; }
+/* 风险档贴右边缘：结论在左、档位在最右，一行读完 */
+.verdict-line .risk-tag { margin-left: auto; }
+.verdict-sub { font-size: 13px; color: var(--text-secondary); margin-top: 6px; }
 
 .kpi-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   margin-bottom: 14px;
 }
@@ -386,33 +343,24 @@ const applyAltBase = (alt: { role?: string; end: { lat: number; lon: number } })
   flex-direction: column;
   gap: 3px;
 }
-.kpi-label { font-size: 10px; color: var(--text-secondary); }
-.kpi-value { font-size: 16px; font-weight: 700; }
-.kpi-value em { font-size: 10px; font-weight: 400; font-style: normal; opacity: 0.7; margin-left: 2px; }
+.kpi-label { font-size: 12px; color: var(--text-secondary); }
+.kpi-value { font-size: 19px; font-weight: 700; }
+.kpi-value em { font-size: 12px; font-weight: 400; font-style: normal; opacity: 0.7; margin-left: 2px; }
 .kpi-value.warn { color: #f97316; }
 
-.risk-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px;
-  border-radius: 10px;
-  border-left: 4px solid;
-  background: rgba(0,0,0,0.2);
-  margin-bottom: 14px;
-  flex-wrap: wrap;
-}
 .risk-tag {
   padding: 2px 10px;
   border-radius: 9999px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   color: #0b1220;
+  flex-shrink: 0;
 }
 .risk-metrics {
   display: flex;
-  gap: 12px;
-  font-size: 11px;
+  gap: 3px 12px;
+  margin-top: 6px;
+  font-size: 13px;
   color: var(--text-secondary);
   flex-wrap: wrap;
 }
@@ -424,7 +372,7 @@ const applyAltBase = (alt: { role?: string; end: { lat: number; lon: number } })
   border-top: 1px solid var(--panel-border);
 }
 .sub-title {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-secondary);
   margin: 0 0 8px 0;
   display: flex;
@@ -435,26 +383,30 @@ const applyAltBase = (alt: { role?: string; end: { lat: number; lon: number } })
 }
 
 .segment-list { display: flex; flex-direction: column; gap: 6px; }
+/* 三列网格：圆点 | 城市对 | 风险档 占第一行，里程与 TKE 另起一行。
+   字号提上来以后一行塞不下，硬挤只会把城市名截成省略号。 */
 .segment-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 8px;
+  column-gap: 8px;
+  row-gap: 2px;
   padding: 7px 9px;
   background: rgba(0,0,0,0.18);
   border: 1px solid transparent;
   border-radius: 8px;
-  font-size: 11px;
+  font-size: 13px;
   cursor: pointer;
   transition: all 0.15s;
 }
 .segment-item:hover { background: rgba(255,255,255,0.07); }
 .segment-item.selected { border-color: var(--accent-color); background: rgba(52,152,219,0.15); }
 .seg-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.seg-names { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seg-names { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .seg-level { font-weight: 700; }
-.seg-meta { font-size: 10px; color: var(--text-secondary); }
+.seg-meta { grid-column: 2 / span 2; font-size: 12px; color: var(--text-secondary); }
 
-.cost-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; }
+.cost-row { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 6px; }
 .cost-row b.warn { color: #f97316; }
 .cost-bar {
   height: 6px;
@@ -479,9 +431,9 @@ const applyAltBase = (alt: { role?: string; end: { lat: number; lon: number } })
   padding: 8px 10px;
 }
 .blocking-head { display: flex; justify-content: space-between; margin-bottom: 4px; }
-.blocking-shape { font-size: 12px; font-weight: 700; color: #f87171; }
-.blocking-area { font-size: 11px; color: var(--text-secondary); }
-.blocking-meta { font-size: 10px; color: var(--text-secondary); line-height: 1.55; }
+.blocking-shape { font-size: 14px; font-weight: 700; color: #f87171; }
+.blocking-area { font-size: 13px; color: var(--text-secondary); }
+.blocking-meta { font-size: 12px; color: var(--text-secondary); line-height: 1.55; }
 .blocking-meta b { color: var(--text-primary); }
 
 .ghost-btn {
@@ -490,7 +442,7 @@ const applyAltBase = (alt: { role?: string; end: { lat: number; lon: number } })
   color: var(--text-secondary);
   border-radius: 9999px;
   padding: 7px 18px;
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -500,33 +452,6 @@ const applyAltBase = (alt: { role?: string; end: { lat: number; lon: number } })
 }
 .ghost-btn:hover { border-color: var(--accent-color); color: var(--accent-color); }
 .goto-window { margin-top: 16px; margin-bottom: 10px; }
-
-.suggestion-text {
-  font-size: 12px;
-  line-height: 1.75;
-  color: var(--text-primary);
-  background: rgba(0,0,0,0.18);
-  border-radius: 8px;
-  padding: 10px;
-  margin: 0 0 10px 0;
-}
-
-.alt-bases { display: flex; flex-direction: column; gap: 6px; }
-.alt-title { font-size: 11px; color: var(--text-secondary); margin-bottom: 2px; }
-.alt-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 9px;
-  background: rgba(0,0,0,0.18);
-  border-radius: 8px;
-  font-size: 11px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.alt-item:hover { background: rgba(52,152,219,0.15); }
-.alt-desc { flex: 1; }
-.alt-meta { font-size: 10px; color: var(--text-secondary); }
 
 .action-row { margin-top: 16px; }
 .loading-icon { display: flex; align-items: center; gap: 8px; justify-content: center; }

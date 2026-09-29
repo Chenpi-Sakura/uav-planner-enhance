@@ -531,20 +531,17 @@ def _iter_sse_content(resp) -> Iterator[str]:
             yield tail
 
 
-def build_request_body(ctx: Dict[str, Any]) -> Dict[str, Any]:
-    """组装 /chat/completions 请求体（单独成函数便于测试）。
+def chat_request_body(messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    """组装 /chat/completions 请求体（报告与对话共用）。
 
     关键是显式关闭推理型模型的「思考输出」：MiniMax-M3 这类模型默认会把
-    思考过程一并写进返回，前端就会把推理独白当成报告正文展示。
+    思考过程一并写进返回，前端就会把推理独白当成正文展示。
     ``AI_THINKING`` 为空或取值不认识时不发送该字段，以兼容不支持它的网关
     （Ollama、vLLM 等），此时改由响应侧的 ThinkTagFilter 兜底。
     """
     body: Dict[str, Any] = {
         "model": settings.AI_MODEL,
-        "messages": [
-            {"role": "system", "content": settings.AI_SYSTEM_PROMPT},
-            {"role": "user", "content": build_prompt(ctx)},
-        ],
+        "messages": messages,
         "temperature": settings.AI_TEMPERATURE,
         "max_tokens": settings.AI_MAX_TOKENS,
         "stream": True,
@@ -553,6 +550,19 @@ def build_request_body(ctx: Dict[str, Any]) -> Dict[str, Any]:
     if thinking in ("disabled", "adaptive"):
         body["thinking"] = {"type": thinking}
     return body
+
+
+def report_messages(ctx: Dict[str, Any]) -> List[Dict[str, str]]:
+    """报告的单轮消息：系统口径 + 一段喂进去的结构化 JSON。"""
+    return [
+        {"role": "system", "content": settings.AI_SYSTEM_PROMPT},
+        {"role": "user", "content": build_prompt(ctx)},
+    ]
+
+
+def build_request_body(ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """报告的单轮请求体（单独成函数便于测试）。"""
+    return chat_request_body(report_messages(ctx))
 
 
 def _open_stream(body: Dict[str, Any]) -> Any:
@@ -572,24 +582,32 @@ def _open_stream(body: Dict[str, Any]) -> Any:
     return urllib.request.urlopen(req, timeout=settings.AI_TIMEOUT_S)
 
 
-def stream_llm_report(ctx: Dict[str, Any]) -> Iterator[str]:
-    """以流式方式调用 OpenAI 兼容的 /chat/completions，逐段产出文本。
+def _open_llm_stream(body: Dict[str, Any]) -> Any:
+    """发起流式请求并返回响应对象（调用方负责关闭）。"""
+    try:
+        return _open_stream(body)
+    except urllib.error.HTTPError as exc:
+        # 个别网关不认识 thinking 参数会直接 4xx：去掉该字段重试一次，
+        # 思考内容交给响应侧过滤器兜底，避免整个请求退化成规则版。
+        if "thinking" not in body or exc.code not in (400, 404, 422):
+            raise
+        body.pop("thinking", None)
+        return _open_stream(body)
+
+
+def stream_llm_messages(messages: List[Dict[str, str]]) -> Iterator[str]:
+    """以流式方式调用 OpenAI 兼容的 /chat/completions，逐段产出正文增量。
 
     使用标准库 urllib（项目便携 Python 未安装 httpx/requests），
     因此这里以 ``readline`` 方式逐行消费响应，实现真实的流式输出。
     """
-    body = build_request_body(ctx)
-    try:
-        resp = _open_stream(body)
-    except urllib.error.HTTPError as exc:
-        # 个别网关不认识 thinking 参数会直接 4xx：去掉该字段重试一次，
-        # 思考内容交给响应侧过滤器兜底，避免整个报告退化成规则版。
-        if "thinking" not in body or exc.code not in (400, 404, 422):
-            raise
-        body.pop("thinking", None)
-        resp = _open_stream(body)
-    with resp:
+    with _open_llm_stream(chat_request_body(messages)) as resp:
         yield from _iter_sse_content(resp)
+
+
+def stream_llm_report(ctx: Dict[str, Any]) -> Iterator[str]:
+    """报告口径的流式正文（等价于 ``stream_llm_messages(report_messages(ctx))``）。"""
+    return stream_llm_messages(report_messages(ctx))
 
 
 def generate_report_stream(ctx: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
@@ -649,3 +667,108 @@ def report_available() -> Dict[str, Any]:
         "model": settings.AI_MODEL if settings.AI_ENABLED else None,
         "base_url_configured": bool(settings.AI_BASE_URL),
     }
+
+
+# ---------------------------------------------------------------- 多轮对话
+
+# 这个端点在公网无鉴权（见 AGENTS.md），所以历史条数与单条字数都要封顶：
+# 不设上限时，一次请求就能把上下文灌到网关的 token 上限，既慢又贵。
+CHAT_MAX_MESSAGES = 12
+CHAT_MAX_CHARS = 1500
+
+CHAT_SYSTEM_PROMPT = (
+    '你是无人机气象航线决策助手。用户会就下方 JSON 里的评估结果追问，'
+    '只允许引用 JSON 中出现的数值与地名，禁止编造任何气象事实；'
+    '不确定时使用「数据显示」措辞。JSON 中的时间已是北京时间（UTC+8），'
+    '照抄即可，禁止再做时区换算或标注 UTC。'
+    '用简洁中文作答，可用 Markdown 列表，控制在 300 字以内；'
+    '不要输出思考过程、草稿或自我说明，不要复述输入原文。'
+)
+
+
+def build_chat_messages(ctx: Dict[str, Any], history: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """系统口径 + 当前评估结果 + 最近若干轮对话。
+
+    上下文只来源于前端送上来的结构化结果（与报告同一防幻觉口径），
+    后端不额外取数。历史超出 ``CHAT_MAX_MESSAGES`` 时保留最新的尾部。
+    """
+    system = (
+        f"{CHAT_SYSTEM_PROMPT}\n\n"
+        f"【当前评估结果】\n```json\n{json.dumps(ctx, ensure_ascii=False)}\n```"
+    )
+    messages: List[Dict[str, str]] = [{"role": "system", "content": system}]
+    for msg in (history or [])[-CHAT_MAX_MESSAGES:]:
+        content = str(msg.get("content") or "").strip()
+        if not content:
+            continue
+        role = msg.get("role")
+        messages.append({
+            "role": role if role in ("user", "assistant") else "user",
+            "content": content[:CHAT_MAX_CHARS],
+        })
+    return messages
+
+
+def render_rule_chat_answer(ctx: Dict[str, Any]) -> str:
+    """未启用模型时的兜底答复：照实复述结构化结论，不假装是对话。"""
+    if ctx.get("task") == "time_window":
+        rec = ctx.get("recommended") or {}
+        window = rec.get("window") or []
+        span = f"（窗口 {window[0]}–{window[1]}）" if len(window) >= 2 else ""
+        lines = [
+            "当前未启用对话模型，我只能复述这次扫描的结果：",
+            f"- 推荐起飞：{rec.get('takeoff') or '未给出'}{span}",
+            f"- 该时段风险等级：{rec.get('level') or '—'}",
+            f"- 安全时段：{ctx.get('safe_slot_count', 0)} 个",
+        ]
+        return "\n".join(lines)
+
+    risk = ctx.get("risk") or {}
+    distance = ctx.get("distance") or {}
+    lines = [
+        "当前未启用对话模型，我只能复述这次评估的结果：",
+        f"- 结论：{ctx.get('conclusion') or '—'}",
+        f"- 全程风险：{risk.get('overall') or '—'}，最大 TKE {risk.get('max_tke') if risk.get('max_tke') is not None else '—'}",
+        f"- 航线里程：{distance.get('route_km') if distance.get('route_km') is not None else '—'} km，"
+        f"绕行比 {distance.get('detour_ratio') if distance.get('detour_ratio') is not None else '—'}×",
+    ]
+    return "\n".join(lines)
+
+
+def generate_chat_stream(ctx: Dict[str, Any], history: List[Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
+    """对话的统一入口，事件类型与 ``generate_report_stream`` 完全一致。
+
+    来源声明同样要晚于「确认真拿到了内容」：先 ``meta`` 再失败会让前端的
+    来源标签闪一下再跳变。已吐出正文后不能再降级，否则兜底文案会和残稿叠在一起。
+    """
+    if llm_available():
+        announced = False
+        try:
+            for piece in stream_llm_messages(build_chat_messages(ctx, history)):
+                if not announced:
+                    yield {"type": "meta", "source": "llm"}
+                    announced = True
+                yield {"type": "delta", "text": piece}
+            if announced:
+                yield {"type": "done"}
+                return
+            yield {
+                "type": "error",
+                "message": "模型未返回任何内容，已改为复述评估结论。",
+            }
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
+            if announced:
+                yield {
+                    "type": "error",
+                    "message": f"模型输出中断（{type(exc).__name__}），以上为已生成的部分内容。",
+                }
+                yield {"type": "done"}
+                return
+            yield {
+                "type": "error",
+                "message": f"模型调用失败（{type(exc).__name__}），已改为复述评估结论。",
+            }
+
+    yield {"type": "meta", "source": "rule"}
+    yield {"type": "delta", "text": render_rule_chat_answer(ctx)}
+    yield {"type": "done"}

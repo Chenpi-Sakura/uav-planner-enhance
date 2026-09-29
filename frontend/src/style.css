@@ -9,6 +9,10 @@
   --accent-glow: rgba(52, 152, 219, 0.5);
   --danger-color: #e74c3c;
   --success-color: #2ecc71;
+  /* 左右两条悬浮栏共用的边距、栏宽与顶栏占位高度（改一处两栏同步） */
+  --rail-gap: 20px;
+  --rail-top-h: 52px;
+  --rail-w: 380px;
   /* 面板的颗粒纹理。地图上的标签胶囊要复用同一份，否则两处质感对不上 */
   --panel-noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.5' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.12 0' /%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
 }

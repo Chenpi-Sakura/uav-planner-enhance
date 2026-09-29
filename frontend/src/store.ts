@@ -153,10 +153,15 @@ export interface RouteOptions {
 }
 
 /** 档位 -> 地图上的对比线颜色（选中线用风险色，不用这套） */
+/**
+ * 档位色 = 侧栏胶囊底色 = 地图上该档候选线的线色，只有一个来源。
+ * 未选中档在地图上按 30~50% 透明虚线画，所以这里的色相要能在卫星图/地形图上
+ * 与风险四档色序（绿→黄→橙→红）分得开。
+ */
 export const TIER_COLORS: Record<string, string> = {
-  urgent: '#38bdf8',
-  normal: '#a78bfa',
-  economy: '#34d399',
+  urgent: '#f07167',
+  normal: '#0081a7',
+  economy: '#6a994e',
 };
 
 export interface StoreState {
@@ -172,6 +177,8 @@ export interface StoreState {
   uavSpeed: number;
   sidebarCollapsed: boolean;
   chartCollapsed: boolean;
+  /** 右栏（AI 助手）的收起状态。与左栏各自独立：两块内容互不依赖，不该一起藏起来 */
+  aiSidebarCollapsed: boolean;
   isSimulating: boolean;
   simulationSpeed: number;
   simulationIndex: number;
@@ -362,6 +369,7 @@ export const store = reactive<StoreState>({
   uavSpeed: 60,
   sidebarCollapsed: false,
   chartCollapsed: true,
+  aiSidebarCollapsed: false,
   isSimulating: false,
   simulationSpeed: 500,
   simulationIndex: 0,
@@ -659,6 +667,10 @@ export async function parseSiteTask(): Promise<void> {
     const e = byName(f.end_name);
     if (s) { store.start.lat = s.lat; store.start.lng = s.lng; }
     if (e) { store.end.lat = e.lat; store.end.lng = e.lng; }
+    // 速度框跟着机型换：段长是「航时锚点 × 巡航速度」折出来的，两个数必须同一把尺。
+    // 这个同步原先住在 SitePanel 的 watch 里，而解析入口现在常驻右栏、那页可能根本没挂载。
+    const pack = store.siteCatalog?.aircraft.find(a => a.key === store.siteForm.aircraft);
+    if (pack) store.uavSpeed = pack.cruise_kmh;
     store.siteForm.parseSource = result.source === 'llm' ? 'llm' : 'rule';
   } catch (error) {
     console.error('任务解析请求失败:', error);

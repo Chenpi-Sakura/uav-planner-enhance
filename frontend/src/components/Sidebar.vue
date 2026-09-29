@@ -343,7 +343,7 @@ const handleBaseClick = (base: BaseStation) => {
 }
 
 .sidebar-content {
-  width: 380px; 
+  width: var(--rail-w);
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -595,6 +595,10 @@ const handleBaseClick = (base: BaseStation) => {
 
 .action-row {
   margin-bottom: 14px;
+}
+/* 「开始规划」是这一页的主操作，字号此前一直吃浏览器对 <button> 的默认 13.33px */
+.action-row .capsule-btn {
+  font-size: 15px;
 }
 
 /* Custom Checkbox Grid */

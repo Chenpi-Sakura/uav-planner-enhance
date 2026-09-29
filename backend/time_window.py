@@ -338,51 +338,6 @@ def rank_backup_windows(windows: List[Window], exclude: Optional[Window],
     return rest[:limit]
 
 
-def build_curve(tke: np.ndarray, edr: np.ndarray, times: np.ndarray,
-                sample_lats: np.ndarray, sample_lons: np.ndarray,
-                slab_lats: np.ndarray, slab_lons: np.ndarray,
-                start_data: np.datetime64, end_data: np.datetime64,
-                step_minutes: int) -> Dict[str, List[Any]]:
-    """构建湍流强度变化曲线（每个时刻取沿路径的 max / mean）。
-
-    口径说明：曲线是「同一时刻、沿整条路径」的瞬时分布，
-    与 scan_slots 的「沿路径推进时刻」口径不同，二者用途不同。
-    返回的 times 为北京时间字符串。
-    """
-    empty = {"times": [], "max_tke": [], "max_edr": [], "mean_tke": []}
-    if tke is None or np.asarray(tke).size == 0 or len(sample_lats) == 0:
-        return empty
-
-    tke = np.asarray(tke)
-    edr = np.asarray(edr)
-    times = np.asarray(times)
-
-    idx_lat = np.abs(slab_lats[:, None] - sample_lats[None, :]).argmin(axis=0)
-    idx_lon = np.abs(slab_lons[:, None] - sample_lons[None, :]).argmin(axis=0)
-
-    step = np.timedelta64(int(max(1, step_minutes)), 'm')
-    stamps: List[np.datetime64] = []
-    t = np.datetime64(start_data)
-    end = np.datetime64(end_data)
-    while t <= end:
-        stamps.append(t)
-        t = t + step
-    if not stamps:
-        return empty
-
-    t_arr = np.array(stamps, dtype='datetime64[ns]')
-    idx_t = nearest_time_index(times, t_arr)
-    tke_vals = tke[idx_t][:, idx_lat, idx_lon]
-    edr_vals = edr[idx_t][:, idx_lat, idx_lon]
-
-    return {
-        "times": [_fmt_hhmm(s) for s in stamps],
-        "max_tke": [round(float(np.max(v)), 4) for v in tke_vals],
-        "max_edr": [round(float(np.max(v)), 4) for v in edr_vals],
-        "mean_tke": [round(float(np.mean(v)), 4) for v in tke_vals],
-    }
-
-
 # ==================== 编排层 ====================
 
 def _user_pair(data_time) -> Tuple[str, str]:
@@ -636,13 +591,6 @@ def assess_time_window(req, run_planner: bool = True, deadline=None) -> Dict[str
         best_flight_h = float(best.get("flight_time_h") or flight_time_h)
         landing_data = best_takeoff + np.timedelta64(int(round(best_flight_h * 3600)), 's')
 
-        pad = np.timedelta64(int(settings.TW_CURVE_PAD_HOURS), 'h')
-        curve = build_curve(
-            tke, edr, slab_times, lats, lons, slab_lats, slab_lons,
-            max(best_takeoff - pad, np.datetime64(slab_times[0])),
-            min(landing_data + pad, np.datetime64(slab_times[-1])),
-            int(settings.TW_CURVE_STEP_MINUTES),
-        )
         warnings = _warnings(lats, lons, best_takeoff, landing_data, bbox)
 
         return {
@@ -666,7 +614,6 @@ def assess_time_window(req, run_planner: bool = True, deadline=None) -> Dict[str
                 "max_edr": best.get("max_edr"),
             },
             "routes": [_route_dict(r) for r in routes],
-            "curve": curve,
             "backup_windows": [_window_dict(w) for w in backups],
             "warnings": warnings,
             "slot_analysis": slot_analysis,
@@ -703,7 +650,6 @@ def assess_time_window(req, run_planner: bool = True, deadline=None) -> Dict[str
         "date": req.date,
         "has_window": False,
         "recommended": None,
-        "curve": {"times": [], "max_tke": [], "max_edr": [], "mean_tke": []},
         "backup_windows": [],
         "warnings": [],
         "slot_analysis": slot_analysis,
@@ -861,7 +807,6 @@ def _empty_response(req, reason: str, meta: Dict[str, Any]) -> Dict[str, Any]:
         "date": req.date,
         "has_window": False,
         "recommended": None,
-        "curve": {"times": [], "max_tke": [], "max_edr": [], "mean_tke": []},
         "backup_windows": [],
         "warnings": [],
         "slot_analysis": [],
