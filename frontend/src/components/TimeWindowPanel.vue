@@ -3,11 +3,11 @@
   <section class="control-section">
     <div class="field-row">
       <label class="field-label">推演天数</label>
-      <div class="stepper-group">
+      <div class="choice-row">
         <button
           v-for="opt in forecastOptions"
           :key="opt.value"
-          class="chip-btn"
+          class="choice-btn"
           :class="{ active: store.forecastDays === opt.value }"
           @click="store.forecastDays = opt.value"
         >
@@ -345,27 +345,6 @@ const handleScan = async () => {
   font-size: 14px;
   color: var(--text-secondary);
 }
-.stepper-group {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-}
-.chip-btn {
-  background: rgba(255,255,255,0.05);
-  border: 1px solid var(--panel-border);
-  border-radius: 10px;
-  padding: 8px 6px;
-  font-size: 14px;
-  color: var(--text-primary);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.chip-btn:hover { background: rgba(255,255,255,0.12); }
-.chip-btn.active {
-  background: rgba(52, 152, 219, 0.22);
-  border-color: var(--accent-color);
-}
-
 .action-row { margin-top: 16px; }
 /* 主操作按钮：与路径规划页的「开始规划」同一字号，不吃 <button> 的默认 13.33px */
 .action-row .capsule-btn { font-size: 15px; }

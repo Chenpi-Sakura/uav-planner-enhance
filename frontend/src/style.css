@@ -81,6 +81,30 @@ body {
   width: 100%;
 }
 
+/* 互斥选项按钮（推演天数 / 机型 / 任务类型）。三个页签共用一份，
+   数值只在这里改——分散到各组件的 scoped 样式里就会各写一套。 */
+.choice-row {
+  display: flex;
+  gap: 8px;
+}
+.choice-btn {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 8px 6px;
+  font-size: 14px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.choice-btn:hover { background: rgba(255, 255, 255, 0.12); }
+/* 选中态只改底色与描边，不加粗、不改字号 —— 字重一变整排会跳 */
+.choice-btn.active {
+  background: rgba(52, 152, 219, 0.22);
+  border-color: var(--accent-color);
+}
+
 /* Scrollbar styling for dark mode */
 ::-webkit-scrollbar {
   width: 6px;

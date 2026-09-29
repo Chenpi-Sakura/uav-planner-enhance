@@ -3,14 +3,11 @@
     <!-- 机型：一次只算一台（双机对照已于 2026-09-28 撤销）。不预选 = 后端按默认那台出 -->
     <div class="field">
       <label class="field-label">机型</label>
-      <div class="seg">
-        <button class="seg-btn" v-for="a in aircraftList" :key="a.key"
-                :class="{ on: store.siteForm.aircraft === a.key }"
+      <div class="choice-row">
+        <button class="choice-btn" v-for="a in aircraftList" :key="a.key"
+                :class="{ active: store.siteForm.aircraft === a.key }"
                 @click="store.siteForm.aircraft = a.key">{{ shortName(a) }}</button>
       </div>
-      <p class="hint" v-if="aircraftList.length" :title="speedNotes">
-        时间轴按所选机型的巡航速度推算（{{ speedSummary }} km/h，*为换算值），上方速度框只作用于另外两页。
-      </p>
     </div>
 
     <div class="field-row">
@@ -20,10 +17,10 @@
       </div>
       <div class="field">
         <label class="field-label">任务类型</label>
-        <div class="seg">
-          <button class="seg-btn" :class="{ on: store.siteForm.mission === 'cargo' }"
+        <div class="choice-row">
+          <button class="choice-btn" :class="{ active: store.siteForm.mission === 'cargo' }"
                   @click="store.siteForm.mission = 'cargo'">货运</button>
-          <button class="seg-btn" :class="{ on: store.siteForm.mission === 'crew' }"
+          <button class="choice-btn" :class="{ active: store.siteForm.mission === 'crew' }"
                   @click="store.siteForm.mission = 'crew'">载人</button>
         </div>
       </div>
@@ -108,7 +105,7 @@ import {
   store, runSitePlan, applySiteOption, fetchSiteCatalog,
   runPlan, SITE_AIRCRAFT_COLORS, SITE_REASON_TEXT,
 } from '../store';
-import type { SiteCatalog, SiteOption } from '../store';
+import type { SiteOption } from '../store';
 
 const options = computed<SiteOption[]>(() => store.siteResult?.options ?? []);
 const aircraftList = computed(() => store.siteCatalog?.aircraft ?? []);
@@ -116,8 +113,6 @@ const aircraftList = computed(() => store.siteCatalog?.aircraft ?? []);
 const colorOf = (key: string) => SITE_AIRCRAFT_COLORS[key] ?? '#94a3b8';
 const shortName = (a: { label: string }) => a.label.split(' ')[0];
 const reasonText = (r?: string | null) => SITE_REASON_TEXT[r ?? ''] ?? (r || '');
-
-type Pack = SiteCatalog['aircraft'][number];
 
 /**
  * 选中哪台 = 顺手把速度框换成该机能力口径（自然语言那条走 store 的 parseSiteTask）。
@@ -131,11 +126,6 @@ watch([() => store.siteForm.aircraft, aircraftList], ([key]) => {
   if (a) store.uavSpeed = a.cruise_kmh;
 });
 
-const isDerived = (a: Pack) => a.cruise_note.startsWith('换算值');
-const speedSummary = computed(() => aircraftList.value
-  .map(a => `${shortName(a)} ${a.cruise_kmh}${isDerived(a) ? '*' : ''}`).join(' / '));
-const speedNotes = computed(() => aircraftList.value
-  .map(a => `${shortName(a)} ${a.cruise_kmh} km/h：${a.cruise_note}`).join('；'));
 const verdictClass = (o: SiteOption) => ({
   ok: o.feasible,
   warn: !o.feasible && o.verdict === 'undetermined',
@@ -164,17 +154,12 @@ onMounted(() => {
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field-row { display: flex; gap: 10px; }
 .field-row .field { flex: 1; }
+/* 同一行里输入框要和选项按钮等高：列宽已由 flex:1 拉平，让输入框吃掉
+   列内剩余高度，就不必给两边写死同一个 px（字号一改就对不上）。 */
+.field-row .field > .capsule-input { flex: 1; }
 /* 字号与另两个页签同一档：标签/选项 14、正文 13、次要 12、角标 11 */
 .field-label { font-size: 14px; color: var(--text-secondary); }
 .hint { font-size: 13px; color: var(--text-secondary); margin: 0; line-height: 1.5; }
-.seg { display: flex; gap: 4px; }
-.seg-btn {
-  flex: 1; padding: 6px 4px; font-size: 14px; border-radius: 6px; cursor: pointer;
-  border: 1px solid rgba(255,255,255,0.12); background: transparent; color: var(--text-secondary);
-}
-.seg-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.06); }
-/* 选中态用透明度与描边，不加粗 —— 字重一变整排会跳 */
-.seg-btn.on { color: var(--text-primary); background: rgba(52,152,219,0.16); border-color: rgba(52,152,219,0.5); }
 .capsule-btn.tiny { padding: 5px 10px; font-size: 12px; width: auto; }
 .options { display: flex; flex-direction: column; gap: 8px; }
 .opt-card {
