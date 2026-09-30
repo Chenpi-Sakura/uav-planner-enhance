@@ -1,12 +1,17 @@
 <template>
-  <div class="ai-sidebar-container" :class="{ 'collapsed': store.aiSidebarCollapsed }">
+  <div class="ai-sidebar-container" :class="{ 'collapsed': store.aiSidebarCollapsed, resizing }">
     <!-- 把手挂在左缘：折叠后整栏往右滑出屏幕，把手是唯一的入口 -->
     <button class="toggle-btn" @click="store.aiSidebarCollapsed = !store.aiSidebarCollapsed">
       <ChevronRight v-if="!store.aiSidebarCollapsed" :size="20" />
       <ChevronLeft v-else :size="20" />
     </button>
 
-    <div class="ai-content glass-panel">
+    <!-- 调宽把手：往左拖即变宽。和折叠把手上下错开，两者不会互相误触 -->
+    <div class="resize-handle" role="separator" aria-orientation="vertical"
+         :aria-valuenow="Math.round(panelWidth)" :aria-valuemin="MIN_W" :aria-valuemax="MAX_W"
+         @pointerdown="startResize" @dblclick="resetWidth" title="左右拖动调宽，双击恢复默认"></div>
+
+    <div class="ai-content glass-panel" :style="{ width: panelWidth + 'px' }">
       <div class="ai-head">
         <span class="ai-title"><Sparkles :size="16" /> 云枢Agent</span>
         <button v-if="turns.length" class="head-btn" :disabled="busy" @click="reset">
@@ -72,6 +77,13 @@
                 <div class="preamble-body md" v-html="renderMarkdown(p.text || '')"></div>
               </div>
             </template>
+            </div>
+
+            <!-- 首 token 还没来：气泡是空的，转个圈告诉用户「它收到了，正在想」。
+                 一旦吐出任何文字或出现任何一批操作就让位 —— 再转圈就成了假的忙碌。 -->
+            <div v-if="isPending(i, t)" class="waiting">
+              <span class="spinner" aria-hidden="true"></span>
+              <span class="waiting-text">正在处理…</span>
             </div>
 
             <!-- 正式回答：这轮唯一不折叠的内容。上面确实摊着过程时才画分隔线 -->
@@ -150,7 +162,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Component } from 'vue';
 import {
   ChevronLeft, ChevronRight, Sparkles,
@@ -306,6 +318,22 @@ const clockOf = (ms?: number): string => {
  * 看不到它一边说一边做。所以只有最后一条且仍在忙时才摊开。
  */
 const isLive = (i: number) => busy.value && i === turns.value.length - 1;
+
+/**
+ * 正在回答，而且**一个字都还没吐出来**。
+ *
+ * 这段窗口不长但很关键：气泡先建好，首 token 要等一两秒。这期间气泡是条空壳，
+ * 用户只看到自己那条提问孤零零地泡在下面，分不清「它没收到」还是「它正在想」。
+ * 所以这里补一个转圈。
+ *
+ * 一旦有任何内容出现就撤掉：文字或操作任一有，都说明它已经在动了，
+ * 这时候再转圈就是假的忙碌，反而像卡住了。
+ */
+const isPending = (i: number, t: Turn): boolean => {
+  if (!isLive(i)) return false;
+  if (t.text.trim()) return false;
+  return !(t.parts ?? []).some(p => (p.text || '').trim() || (p.steps ?? []).length);
+};
 
 /**
  * 过程区里的每一块，在**原位**独立折叠 —— 铺垫和操作本来就是交错发生的，
@@ -818,6 +846,74 @@ watch(
 onMounted(() => {
   if (!store.siteCatalog) void fetchSiteCatalog();
 });
+
+// ---------------- 横向调宽 ----------------
+// 报告要放结论、地图要并排看时，380px 那个默认宽度偏窄；但宽度是个人偏好，
+// 刷新后回到旧值等于每次都要重拖一遍，所以落盘。
+const W_KEY = 'aiSidebarWidth';
+const MIN_W = 320;
+// 上限跟着视口走：比两侧栏加起来还宽的话，地图就没法看了。
+const MAX_W = Math.min(720, Math.round(window.innerWidth * 0.45));
+
+const DEFAULT_W = 380;
+const panelWidth = ref(readStoredWidth());
+const resizing = ref(false);
+
+function readStoredWidth(): number {
+  const raw = Number(localStorage.getItem(W_KEY));
+  // 存的值可能来自更宽/更窄的屏幕（比如换过显示器），一律重新夹一遍再用
+  return Number.isFinite(raw) && raw > 0 ? Math.min(MAX_W, Math.max(MIN_W, raw)) : DEFAULT_W;
+}
+
+/** 宽度是内联样式，容差给 0.5px：拖拽时会出现 379.5 这类小数，存进 localStorage 太难看 */
+const commitWidth = () => localStorage.setItem(W_KEY, String(Math.round(panelWidth.value)));
+
+const resetWidth = () => {
+  panelWidth.value = DEFAULT_W;
+  commitWidth();
+};
+
+let dragStartX = 0;
+let dragStartW = 0;
+
+const startResize = (ev: PointerEvent) => {
+  // 只认左键：右键/中键在某些环境会弹出别的菜单，接管了反而添乱
+  if (ev.button !== 0) return;
+  ev.preventDefault();
+  dragStartX = ev.clientX;
+  dragStartW = panelWidth.value;
+  resizing.value = true;
+  window.addEventListener('pointermove', onResizeMove);
+  window.addEventListener('pointerup', endResize);
+  window.addEventListener('pointercancel', endResize);
+};
+
+const onResizeMove = (ev: PointerEvent) => {
+  // 往左拖（X 变小）就是变宽，所以要反过来减
+  const next = dragStartW - (ev.clientX - dragStartX);
+  panelWidth.value = Math.min(MAX_W, Math.max(MIN_W, next));
+};
+
+const endResize = () => {
+  if (!resizing.value) return;
+  resizing.value = false;
+  window.removeEventListener('pointermove', onResizeMove);
+  window.removeEventListener('pointerup', endResize);
+  window.removeEventListener('pointercancel', endResize);
+  commitWidth();
+};
+
+// 拖拽期间别让浏览器选中正文（否则一拖整篇报告变蓝），也顺手禁掉拖图
+watch(resizing, on => {
+  document.body.style.userSelect = on ? 'none' : '';
+  document.body.style.cursor = on ? 'ew-resize' : '';
+});
+
+onBeforeUnmount(() => {
+  endResize();
+  document.body.style.userSelect = '';
+  document.body.style.cursor = '';
+});
 </script>
 
 <style scoped>
@@ -832,6 +928,9 @@ onMounted(() => {
   max-height: 900px;
   transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
+
+/* 拖拽时把过渡关掉：0.4s 的 transform 过渡会让宽度看起来「追不上」鼠标 */
+.ai-sidebar-container.resizing { transition: none; }
 
 .ai-sidebar-container.collapsed {
   transform: translate(calc(100% + var(--rail-gap)), -50%);
@@ -870,6 +969,36 @@ onMounted(() => {
 }
 
 .toggle-btn:hover { color: var(--text-primary); }
+
+/* 调宽把手：贴在左缘的一条细热区。默认只留 6px 视觉宽度、实际热区 10px，
+   悬停时才显出那条竖线 —— 常驻一条线会让面板左缘看着像多了个控件。 */
+.resize-handle {
+  position: absolute;
+  left: -5px;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: ew-resize;
+  z-index: 1;
+  touch-action: none;   /* 否则触屏上拖动会被当成滚动页面 */
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 40px;
+  border-radius: 1px;
+  background: var(--text-secondary);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.resize-handle:hover::after { opacity: 0.7; }
+.resizing .resize-handle::after { opacity: 1; }
 
 .ai-head {
   display: flex;
@@ -1035,6 +1164,43 @@ onMounted(() => {
 .md :deep(a) { color: var(--accent-color); }
 
 .msg-meta { font-size: 11px; color: var(--text-secondary); }
+
+/* ---- 等待首 token ---- */
+.waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.waiting-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* 缺口朝右的圆环，1s 转一圈。纯 CSS 画的，不为一个加载图标进图标库 */
+.spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--text-secondary);
+  border-top-color: transparent;
+  opacity: 0.7;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 有人对转圈敏感（前庭功能失调），转成进度条式呼吸 */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+    border-top-color: var(--text-secondary);
+    opacity: 0.4;
+  }
+}
 
 /* ---- 过程摘要行 ----
    答完之后，「它干了什么」压成这一行。它是这一轮**唯一**的过程入口：
