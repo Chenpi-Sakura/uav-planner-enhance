@@ -80,10 +80,11 @@
             </div>
 
             <!-- 首 token 还没来：气泡是空的，转个圈告诉用户「它收到了，正在想」。
-                 一旦吐出任何文字或出现任何一批操作就让位 —— 再转圈就成了假的忙碌。 -->
+                 复用工具执行中那套 Loader + .spin，不再另画一个 —— 同一个面板里
+                 同时存在两种「正在转」会让人以为是两回事。
+                 一旦吐出任何文字或出现任何一批操作就让位：再转圈就成了假的忙碌。 -->
             <div v-if="isPending(i, t)" class="waiting">
-              <span class="spinner" aria-hidden="true"></span>
-              <span class="waiting-text">正在处理…</span>
+              <Loader :size="14" class="spin" /> 正在处理…
             </div>
 
             <!-- 正式回答：这轮唯一不折叠的内容。上面确实摊着过程时才画分隔线 -->
@@ -1166,40 +1167,17 @@ onBeforeUnmount(() => {
 .msg-meta { font-size: 11px; color: var(--text-secondary); }
 
 /* ---- 等待首 token ---- */
+/* 单行状态：沿用正文 1.7 的行高会让这一行上下各空出小半行，看着空，收紧到 1.4。
+   下边距比 CSS 上的值再多补 3px：中文没有下伸部，字形全贴在基线上，
+   同样的行高 + 同样的 padding，上边看着宽、下边看着窄。补一点才视觉对齐。 */
 .waiting {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 0;
-}
-
-.waiting-text {
+  padding: 0 0 3px;
   font-size: 13px;
+  line-height: 1.4;
   color: var(--text-secondary);
-}
-
-/* 缺口朝右的圆环，1s 转一圈。纯 CSS 画的，不为一个加载图标进图标库 */
-.spinner {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid var(--text-secondary);
-  border-top-color: transparent;
-  opacity: 0.7;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* 有人对转圈敏感（前庭功能失调），转成进度条式呼吸 */
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation: none;
-    border-top-color: var(--text-secondary);
-    opacity: 0.4;
-  }
 }
 
 /* ---- 过程摘要行 ----
@@ -1382,8 +1360,6 @@ onBeforeUnmount(() => {
 
 /* 没有 title 提示的场合（截断时也不该让鼠标停在死字上） */
 .trace-detail:hover { color: var(--text-primary); }
-
-.spin { animation: spin 1s linear infinite; }
 
 .msg-error {
   display: flex;
@@ -1575,6 +1551,10 @@ onBeforeUnmount(() => {
   opacity: 0.8;
 }
 
+/* 面板里所有「正在转」共用这一处：工具执行中、胶囊占位、发送键、等待首 token。
+   同一面板里出现两种转法会让人以为是两回事，所以只保留这一条定义。
+   刻意不加 prefers-reduced-motion 降级：降级成静止的圈看着就像卡住了，
+   而这里每一处转圈都在表示「还没结束」，停掉反而传达了错误的状态。 */
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>
