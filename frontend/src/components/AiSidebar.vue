@@ -62,10 +62,16 @@
       </div>
 
       <div class="composer">
-        <!-- 胶囊：简略 label 常显，完整问句靠悬浮/长按展开（触屏没有 hover） -->
-        <div v-if="chips.length" class="chips" role="list">
+        <!-- 胶囊：简略 label 常显，完整问句靠悬浮/长按展开（触屏没有 hover）。
+             生成期间是占位且不可点，但输入框不受影响 —— 建议入口不该锁住打字。 -->
+        <div v-if="chips.length || chipsPending" class="chips" role="list">
+          <template v-if="chipsPending">
+            <span v-for="i in 3" :key="'pending' + i" class="chip pending">
+              <Loader :size="11" class="spin" /> 正在想下一步…
+            </span>
+          </template>
           <button
-            v-for="(c, i) in chips" :key="i" class="chip" :disabled="busy"
+            v-for="(c, i) in chipsPending ? [] : chips" :key="i" class="chip" :disabled="busy"
             :title="c.prompt"
             :aria-label="c.prompt"
             @click="useChip(c)"
@@ -148,6 +154,10 @@ const turns = ref<Turn[]>([]);
 const draft = ref('');
 const logEl = ref<HTMLElement | null>(null);
 const chips = ref<SuggestChip[]>(STARTER_CHIPS);
+/** 胶囊正在后台生成：期间显示占位且不可点，但**不锁输入框** */
+const chipsPending = ref(false);
+/** 胶囊请求的序号：只有最新一次的结果算数，早到的旧结果直接丢弃 */
+let suggestSeq = 0;
 const expanded = ref('');
 /** 每条助手消息的轨迹折叠与否。按下标存；undefined = 默认展开。
  *  用 `!== false` 判定而不是 truthy，是为了让「默认展开」和「用户手动折叠」能区分开。 */
@@ -318,32 +328,45 @@ const send = async (raw: string) => {
       reply.text = '（没有可执行的操作，也没有可回答的内容）';
       reply.parts = [{ kind: 'text', text: reply.text }];
     }
-
-    // 胶囊只在拿到回答后刷，避免在工具执行途中就把建议摆出来
-    const last = reply.text;
-    const recent = turns.value.filter(t => t.role === 'user' && t.text).map(t => t.text).slice(-3);
-    const got = await suggestChips({
-      task: store.timeWindow && store.sidebarTab === 'timeWindow' ? 'time_window' : 'feasibility',
-      payload: (store.timeWindow && store.sidebarTab === 'timeWindow'
-        ? store.timeWindow : store.feasibility) as any,
-      last_assistant: last,
-      recent,
-      state: {
-        sidebar_tab: store.sidebarTab,
-        has_result: !!(store.feasibility || store.timeWindow || store.siteResult),
-        verdict: store.feasibility?.verdict,
-        level: store.feasibility?.risk?.overall,
-      },
-    });
-    chips.value = got.chips?.length ? got.chips : STARTER_CHIPS;
   } catch (error) {
     console.error('Agent 循环失败:', error);
     const failed = turns.value[turns.value.length - 1];
     const msg = '没能完成这次操作。可以换个说法，或者直接在左栏手动操作。';
     if (failed?.role === 'assistant') { failed.text = msg; failed.source = 'rule'; }
   } finally {
+    // 输入框在这里就解锁 —— 答案已经出来了，用户可以立刻发下一条。
+    // 胶囊慢两秒无所谓，它只是个建议入口，不该把整个输入区锁住。
     busy.value = false;
   }
+
+  // 胶囊**不等**：在后台自己跑，跑完再替换。期间显示为「生成中」且不可点。
+  // 用 seq 挡住竞态：用户在这两秒里又发了一条的话，上一轮的胶囊回来就是过期的，
+  // 直接丢弃，不能覆盖新一轮的建议。
+  const seq = ++suggestSeq;
+  chipsPending.value = true;
+  const lastAssistant = turns.value[turns.value.length - 1]?.text ?? '';
+  const recentUser = turns.value.filter(t => t.role === 'user' && t.text).map(t => t.text).slice(-3);
+  void suggestChips({
+    task: store.timeWindow && store.sidebarTab === 'timeWindow' ? 'time_window' : 'feasibility',
+    payload: (store.timeWindow && store.sidebarTab === 'timeWindow'
+      ? store.timeWindow : store.feasibility) as any,
+    last_assistant: lastAssistant,
+    recent: recentUser,
+    state: {
+      sidebar_tab: store.sidebarTab,
+      has_result: !!(store.feasibility || store.timeWindow || store.siteResult),
+      verdict: store.feasibility?.verdict,
+      level: store.feasibility?.risk?.overall,
+    },
+  }).then(got => {
+    if (seq !== suggestSeq) return;          // 已有更新的一轮，丢弃这份过期结果
+    chips.value = got.chips?.length ? got.chips : STARTER_CHIPS;
+    chipsPending.value = false;
+  }).catch(() => {
+    if (seq !== suggestSeq) return;
+    chips.value = STARTER_CHIPS;
+    chipsPending.value = false;
+  });
 };
 
 /**
@@ -420,6 +443,8 @@ const expand = (chip: SuggestChip, _i: number) => {
 const reset = () => {
   turns.value = [];
   chips.value = STARTER_CHIPS;
+  chipsPending.value = false;
+  suggestSeq++;              // 作废还在路上的那次请求，否则它回来会把占位换回旧胶囊
   expanded.value = '';
   traceOpen.value = {};
 };
@@ -785,6 +810,17 @@ onMounted(() => {
 }
 .chip:hover:not(:disabled) { border-color: var(--accent-color); background: rgba(56, 189, 248, 0.18); }
 .chip:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* 生成中的占位：不可点、不可聚焦，只是告诉用户「建议还在来」 */
+.chip.pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+  background: transparent;
+  border-style: dashed;
+  cursor: progress;
+}
 
 /* 触屏没有 hover，长按/右键后把完整问句摊在这里 */
 .chip-full {
