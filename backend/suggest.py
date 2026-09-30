@@ -13,6 +13,7 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
+import tools
 from assessor import llm_available
 from config import settings
 
@@ -30,7 +31,12 @@ _SUGGEST_SYSTEM = (
     f"3. prompt 是一句完整的自然语言问句，不超过 {MAX_PROMPT} 个字，能直接发送\n"
     "4. 必须用中文口语，像用户真的会打出来的话，不要写成指令或系统提示\n"
     "5. 只能围绕下方给出的数据与地名提问，禁止编造数值、航段名、地名\n"
-    "6. 不要出现「JSON」「数据」「上下文」这类词"
+    "6. 不要出现「JSON」「数据」「上下文」这类词\n"
+    "7. **每一条都必须落在系统现有能力之内**（边界见下）。"
+    "系统没有的能力一个字都不要提 —— 胶囊是用户点一下就会问出口的问题，"
+    "凭空造一个「电池够不够飞完」「能耗剖面」之类，"
+    "等于主动把用户领到一个回答不了的地方。\n"
+    "8. 想不出第三条怎么办：**宁可给三条角度不同但都在能力内的，也不要凑一条能力外的**。"
 )
 
 _STATE_HINT = {
@@ -97,7 +103,24 @@ def _clean(raw: Any) -> List[Dict[str, str]]:
         out.append({"label": label, "prompt": prompt})
         if len(out) >= MAX_CHIPS:
             break
-    return out
+    # 提示词已经约束过一遍，这里是输出侧的兜底：宁可少给一条，
+    # 也不把「点了就会问出口、而系统答不了」的问题摆到用户面前。
+    return [c for c in out if not _out_of_scope(c["prompt"])]
+
+
+# 明显超出系统能力的主题词。**只拦「用户一看就知道系统没有」的**，
+# 不做语义判断 —— 宁可漏拦（顶多少一条胶囊），不可误拦（把好问题删了）。
+_OUT_OF_SCOPE = (
+    "电池", "能耗", "能量消耗", "续航", "电量", "充电", "油量", "燃油量",
+    "载荷余量", "载货剩余", "货物重量", "配平", "重心", "续航里程",
+    "噪声", "噪音", "分贝", "空域申请", "空域批复", "飞行许可", "报批",
+    "气象预报", "未来天气", "历史天气", "实测数据", "外场",
+)
+
+
+def _out_of_scope(prompt: str) -> bool:
+    low = (prompt or "").lower()
+    return any(w in low for w in _OUT_OF_SCOPE)
 
 
 def _llm_chips(task: str, state: Dict[str, Any], last: str,
@@ -117,7 +140,8 @@ def _llm_chips(task: str, state: Dict[str, Any], last: str,
 
     user = (
         _SUGGEST_SYSTEM
-        + f"\n\n【对话对象】{task}\n"
+        + f"\n\n{tools.SYSTEM_BOUNDARY}\n"
+        + f"【对话对象】{task}\n"
         + f"【当前状态】{state_line}\n"
         + f"【上一轮助手回复】\n{(last or '（无）')[:600]}\n"
         + f"【用户最近问过】\n{'；'.join(recent[-3:]) or '（无）'}\n"

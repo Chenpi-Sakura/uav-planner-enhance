@@ -18,35 +18,39 @@
       <div class="ai-scroll" ref="logEl">
         <p v-if="!turns.length" class="chat-empty">{{ emptyHint }}</p>
         <div v-for="(t, i) in turns" :key="i" class="msg" :class="t.role">
-          <!-- 助手气泡：动作轨迹在正文**上方**，且与正文同处一个框里。
-               分成两个框会让人以为轨迹是「另一件事的旁白」，其实它就是这次回答的
-               依据 —— 执行记录在前，结论在后。 -->
+          <!-- 助手气泡：正文与动作轨迹**按发生顺序**排在同一个框里。
+               模型常常先说一句「我来查一下」再调工具，那句话必须留在轨迹**上面**；
+               调完工具接着说的话则排在轨迹**下面**。所以这里按 parts 顺序渲染，
+               而不是「轨迹永远在最上方、正文永远在最下方」——
+               那样会把先说的话挤到它发生之后的位置，读起来像时空倒流。 -->
           <div v-if="t.role === 'assistant'" class="bubble assistant-bubble">
-            <!-- 默认展开：轨迹是这次回答的依据，藏起来等于让人看不到它凭什么这么说。
-                 用户主动折叠后就不再自动展开。 -->
-            <div v-if="t.steps?.length" class="trace" :class="{ open: traceOpen[i] !== false }">
-              <button class="trace-head" @click="toggleTrace(i)">
-                <ChevronRight :size="12" class="trace-caret" />
-                <span class="trace-title">已执行 {{ t.steps.length }} 个操作</span>
-              </button>
-              <ul v-if="traceOpen[i] !== false" class="trace-list">
-                <li v-for="(s, j) in t.steps" :key="j" :class="s.status">
-                  <!-- 状态优先：出错/进行中盖过工具类别，否则一条「正在规划」和
-                       一条「规划失败」看起来是同一类操作 -->
-                  <component
-                    :is="stepIcon(s)"
-                    :size="12"
-                    class="trace-icon"
-                    :class="{ spin: s.status === 'run' }"
-                  />
-                  <span class="trace-text" :title="s.label">{{ s.label }}</span>
-                  <!-- detail 可能很长（时间戳、路径、整句结论），不截断会把左边的
-                       操作名挤成多行。硬截断 + 尾部渐隐表示「还有」，完整内容靠 title -->
-                  <span v-if="s.detail" class="trace-detail" :title="s.detail">{{ s.detail }}</span>
-                </li>
-              </ul>
-            </div>
-            <div class="md" v-html="renderMarkdown(t.text)"></div>
+            <template v-for="(p, pi) in t.parts" :key="pi">
+              <!-- 默认展开：轨迹是这次回答的依据，藏起来等于让人看不到它凭什么这么说。
+                   用户主动折叠后就不再自动展开。 -->
+              <div v-if="p.kind === 'steps'" class="trace" :class="{ open: traceOpen[i] !== false }">
+                <button class="trace-head" @click="toggleTrace(i)">
+                  <ChevronRight :size="12" class="trace-caret" />
+                  <span class="trace-title">已执行 {{ p.steps?.length ?? 0 }} 个操作</span>
+                </button>
+                <ul v-if="traceOpen[i] !== false && p.steps?.length" class="trace-list">
+                  <li v-for="(s, j) in p.steps" :key="j" :class="s.status">
+                    <!-- 状态优先：出错/进行中盖过工具类别，否则一条「正在规划」和
+                         一条「规划失败」看起来是同一类操作 -->
+                    <component
+                      :is="stepIcon(s)"
+                      :size="12"
+                      class="trace-icon"
+                      :class="{ spin: s.status === 'run' }"
+                    />
+                    <span class="trace-text" :title="s.label">{{ s.label }}</span>
+                    <!-- detail 可能很长（时间戳、路径、整句结论），不截断会把左边的
+                         操作名挤成多行。硬截断 + 尾部渐隐表示「还有」，完整内容靠 title -->
+                    <span v-if="s.detail" class="trace-detail" :title="s.detail">{{ s.detail }}</span>
+                  </li>
+                </ul>
+              </div>
+              <div v-else class="md" v-html="renderMarkdown(p.text || '')"></div>
+            </template>
           </div>
           <div v-else class="bubble">{{ t.text }}</div>
 
@@ -110,13 +114,25 @@ interface TraceStep {
   status: 'ok' | 'error' | 'run';
 }
 
+/**
+ * 一条助手消息由若干「块」按**发生顺序**组成。
+ *
+ * 为什么不是「一个 text + 一个 steps」：模型常常先说一句「我来查一下」再调工具，
+ * 调完工具接着再说话。文字与操作必须按时间排 —— 统一把轨迹堆在最上方或最下方，
+ * 都会让先说的话出现在它发生之后，读起来像时空倒流。
+ */
+interface TurnPart {
+  kind: 'text' | 'steps';
+  text?: string;
+  steps?: TraceStep[];
+}
+
 interface Turn {
   role: 'user' | 'assistant';
+  /** 用户消息用这一条；助手消息用 parts（按顺序） */
   text: string;
-  /** 正文来源：只有 AI 那一侧会有；rule = 后端降级，界面必须如实标出来 */
   source?: 'llm' | 'rule';
-  /** 本轮真实发生过的工具调用，供轨迹区渲染。这是「Agent 在干嘛」的唯一真相 */
-  steps?: TraceStep[];
+  parts?: TurnPart[];
   error?: string;
 }
 
@@ -189,10 +205,33 @@ const draftPlaceholder = computed(() =>
   busy.value ? '正在处理…' : '说出你的任务，Enter 发送'
 );
 
-/** 推一条空的助手消息并返回它：整轮的正文都写进这一条，不另起新气泡 */
+/** 推一条空的助手消息并返回它：整轮的正文与操作都写进这一条，不另起新气泡 */
 const pushAssistant = () => {
-  turns.value.push({ role: 'assistant', text: '' });
+  turns.value.push({ role: 'assistant', text: '', parts: [] });
   return turns.value[turns.value.length - 1];
+};
+
+/**
+ * 追加一段正文。**接着上一段正文继续追加**，不新开一块 ——
+ * 否则同一轮里模型分两次说的话之间会插进一段轨迹，读起来像两段独立发言。
+ */
+const appendText = (reply: Turn, s: string) => {
+  const last = reply.parts![reply.parts!.length - 1];
+  if (last && last.kind === 'text') { last.text = (last.text || '') + s; return; }
+  reply.parts!.push({ kind: 'text', text: s });
+  reply.text = reply.parts!.map(p => p.text ?? '').join('\n\n');
+};
+
+/** 追加一批操作记录。永远是新的一块 —— 操作与操作之间也按批次分开。 */
+const appendSteps = (reply: Turn, steps: TraceStep[]) => {
+  reply.parts!.push({ kind: 'steps', steps });
+  reply.text = reply.parts!.map(p => p.text ?? '').join('\n\n');
+};
+
+/** 当前这段对话里最后一批操作的引用（就地改它，不要新建，否则会重复列出同一条） */
+const lastSteps = (reply: Turn): TraceStep[] | null => {
+  const last = reply.parts![reply.parts!.length - 1];
+  return last && last.kind === 'steps' ? last.steps! : null;
 };
 
 /**
@@ -219,15 +258,12 @@ const send = async (raw: string) => {
   try {
     turns.value.push({ role: 'user', text });
     const reply = pushAssistant();
-    reply.steps = [];
     reply.source = 'llm';
 
     let toolResults: Record<string, any>[] = [];
     // 前端与后端各有一道轮数闸（这里 6、agent.py 里 MAX_STEPS=5）。两边都留一道是
     // 有意的：任何一边单独失效都还收得住，不至于让模型无限兜圈。
     for (let round = 0; round < 6; round++) {
-      // 只有最后一轮（不再要工具）才让正文占住气泡：前几轮正文是空的，
-      // 气泡里显示的是轨迹。用户看到的是「一步步在动 → 得出结论」。
       const step = await callAgent(history, text, toolResults, round, reply);
       if (step.error) {
         reply.error = step.error;
@@ -251,7 +287,13 @@ const send = async (raw: string) => {
         const slow = SLOW_TOOLS.has(tool);
         // 慢工具先落一条「正在…」再原地改写：一次三档 A* 要十几秒，
         // 中间没有动静的话用户会以为卡死了。快工具不必多这一次闪烁。
-        reply.steps!.push({
+        //
+        // 「正在…」只存在于这里，**不再往正文里写一份占位**：两份状态同源时，
+        // 清占位就会连带清掉模型这一轮真说出来的句子（表现为字吐出来又消失）。
+        // 轨迹里那行转圈本身就是状态指示，正文里再写是重复。
+        let steps = lastSteps(reply);
+        if (!steps) { steps = []; appendSteps(reply, steps); }
+        steps.push({
           tool,
           label: slow ? `正在${SLOW_VERBS[tool] ?? '处理'}…` : `${TOOL_VERBS[tool] ?? '处理'}中…`,
           status: 'run',
@@ -259,7 +301,7 @@ const send = async (raw: string) => {
         // 取**响应式数组里那一项**再改，而不是改 push 进去的原始对象：
         // Vue 的数组存的是代理，改原始对象不触发重渲染（之前看着能动是搭了
         // 别的更新的便车，这里改成不依赖巧合）。
-        const row = reply.steps![reply.steps!.length - 1];
+        const row = steps[steps.length - 1];
 
         const r = await invokeTool(tool, call.args || {});
         row.label = r.label;
@@ -274,6 +316,7 @@ const send = async (raw: string) => {
 
     if (!reply.text && !reply.error) {
       reply.text = '（没有可执行的操作，也没有可回答的内容）';
+      reply.parts = [{ kind: 'text', text: reply.text }];
     }
 
     // 胶囊只在拿到回答后刷，避免在工具执行途中就把建议摆出来
@@ -334,10 +377,6 @@ const callAgent = async (
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    // 工具轮里气泡上写的是「正在规划…」这类中间态；正文轮第一个 delta 到达时
-    // 必须把它清掉，否则最终回答会接在中间态后面，变成
-    // 「正在规划…这是结论」。delta 只会在正文轮出现，所以清一次就够。
-    let clearedPlaceholder = false;
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -351,8 +390,11 @@ const callAgent = async (
         try { event = JSON.parse(line.slice(5).trim()); } catch { continue; }
         if (event.type === 'tool_calls') out.calls = event.calls ?? [];
         else if (event.type === 'delta' && event.text) {
-          if (!clearedPlaceholder) { reply.text = ''; clearedPlaceholder = true; }
-          reply.text += event.text;
+          // 纯追加。这里曾经有一段「首个 delta 先清空正文」的逻辑，用来清掉
+          // 「正在规划…」占位 —— 但模型常常先说一句「我来查一下」再调工具，
+          // 那句话是真流式给用户看了的，下一轮却被清掉，表现为**字吐出来又消失**。
+          // 占位已改由轨迹里的转圈行承担，正文不再需要清空。
+          appendText(reply, event.text);
         }
         else if (event.type === 'error') out.error = event.message ?? '生成失败';
       }
