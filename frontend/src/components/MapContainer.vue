@@ -797,6 +797,17 @@ watch(() => props.activeLayer, (newLayer) => {
   }
 });
 
+/**
+ * AI 说「定位到曲松县」时 store.mapFocus 被写入，这里把视野挪过去。
+ *
+ * 走 watch 而不是暴露 map 实例给外部：按钮路径本来也在组件内，两边都只改
+ * 同一个 store 字段，就不会出现「AI 那条路自己挪一次、点按钮又挪一次」。
+ */
+watch(() => store.mapFocus, (f) => {
+  if (!f || !map) return;
+  map.flyTo([f.lat, f.lng], f.zoom ?? 9, { duration: 0.8 });
+});
+
 watch(() => [store.start, store.end, store.waypoints], () => {
   renderMarkers();
 }, { deep: true });

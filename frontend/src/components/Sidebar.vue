@@ -154,8 +154,9 @@
       <div class="scroll-area">
         <template v-if="store.sidebarTab === 'plan'">
           <div class="action-row">
-            <button class="capsule-btn full-width" @click="runPlan" :disabled="store.planLoading" :class="{'disabled-btn': store.planLoading}">
+            <button class="capsule-btn full-width" @click="runPlan" :disabled="store.planLoading || store.aiBusy" :class="{'disabled-btn': store.planLoading || store.aiBusy}">
               <span v-if="store.planLoading" class="loading-icon"><Loader :size="16" class="spin"/> 正在规划并评估三条航线...</span>
+              <span v-else-if="store.aiBusy" class="loading-icon"><Loader :size="16" class="spin"/> AI 正在处理…</span>
               <span v-else style="display:flex; align-items:center; gap:8px;"><Send :size="16" /> 开始规划</span>
             </button>
           </div>
@@ -195,7 +196,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { ChevronLeft, ChevronRight, ChevronDown, Clock, Navigation, Layers, Send, Plus, X, Crosshair, Loader, MapPin, CalendarClock, Route } from 'lucide-vue-next';
 import { store, runPlan } from '../store';
 import type { BaseStation } from '../store';
@@ -208,6 +209,21 @@ import SitePanel from './SitePanel.vue';
 const timeOpen = ref(true);
 const routeOpen = ref(true);
 const overlayOpen = ref(true);
+
+/**
+ * AI 规划时把这三块全收起来，**算完也不展开**。
+ *
+ * 收起来的理由不是省空间：这三块是**输入**，而 AI 正在替用户改它们（改起终点、
+ * 改载重、开关图层）。输入框在眼前一行行被改写，用户既看不清改成了什么，
+ * 规划一次十几秒也没地方看结果。算完之后输入已经定型了，正好让出位置给结果区。
+ *
+ * 只看 `store.aiBusy` —— 用户手点「开始规划」走的是 `runPlan()`，它只动
+ * `planLoading`，不会碰 `aiBusy`，所以手动那条路完全不会被这里折叠。
+ */
+watch(() => store.aiBusy, (busy) => {
+  if (!busy) return;
+  timeOpen.value = routeOpen.value = overlayOpen.value = false;
+});
 
 const FOLD_TRANSITION = 'height 200ms ease';
 

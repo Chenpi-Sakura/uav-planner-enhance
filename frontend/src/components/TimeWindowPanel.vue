@@ -19,11 +19,14 @@
       <button
         class="capsule-btn full-width"
         @click="handleScan"
-        :disabled="store.timeWindowLoading"
-        :class="{ 'disabled-btn': store.timeWindowLoading }"
+        :disabled="store.timeWindowLoading || store.aiBusy"
+        :class="{ 'disabled-btn': store.timeWindowLoading || store.aiBusy }"
       >
         <span v-if="store.timeWindowLoading" class="loading-icon">
           <Loader :size="16" class="spin" /> 正在扫描时间窗口...
+        </span>
+        <span v-else-if="store.aiBusy" class="loading-icon">
+          <Loader :size="16" class="spin" /> AI 正在处理...
         </span>
         <span v-else class="btn-inner">
           <CalendarClock :size="16" /> 查找最佳窗口
@@ -187,10 +190,10 @@ import {
   CalendarClock, Loader, CheckCircle2, XCircle, Clock,
   BarChart3, CalendarDays, Navigation,
 } from 'lucide-vue-next';
-import { store, RISK_COLORS, applyTimeWindowRoute, effortText, failRequest, noticeForError } from '../store';
+import { store, RISK_COLORS, applyTimeWindowRoute, effortText, runTimeWindowScan } from '../store';
 import { TIME_WINDOW_REASONS } from '../types/assessment';
 import type { TimeWindowRoute } from '../types/assessment';
-import { API_BASE, TURB, fmtTke, fmtEdr } from '../config';
+import { TURB, fmtTke, fmtEdr } from '../config';
 
 const forecastOptions = [
   { value: 0, label: '仅当日' },
@@ -279,38 +282,7 @@ onMounted(() => {
 });
 
 const handleScan = async () => {
-  if (!store.start.lat || !store.start.lng || !store.end.lat || !store.end.lng) {
-    alert('请先设置起点和终点！');
-    return;
-  }
-
-  store.timeWindowLoading = true;
-  try {
-    const response = await fetch(`${API_BASE}/api/assess/time-window`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        start: { lat: Number(store.start.lat), lon: Number(store.start.lng) },
-        end: { lat: Number(store.end.lat), lon: Number(store.end.lng) },
-        waypoints: store.waypoints
-          .filter(wp => wp.lat !== '' && wp.lng !== '')
-          .map(wp => ({ lat: Number(wp.lat), lon: Number(wp.lng) })),
-        date: store.targetDate,
-        start_time: store.targetTime,
-        speed: Number(store.uavSpeed),
-        forecast_days: store.forecastDays,
-      }),
-    });
-
-    if (!response.ok) await failRequest(response, '时间窗口扫描失败');
-
-    store.timeWindow = await response.json();
-  } catch (error) {
-    console.error('时间窗口扫描请求失败:', error);
-    store.planNotice = noticeForError(error);
-  } finally {
-    store.timeWindowLoading = false;
-  }
+  await runTimeWindowScan();
 };
 </script>
 

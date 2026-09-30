@@ -222,6 +222,29 @@ export interface StoreState {
   siteCatalog: SiteCatalog | null;        // 站表与机型能力包（进程内取一次）
   hoveredSiteLegIndex: number | null;     // 地图联动：悬停的中继航段
   siteForm: SiteForm;
+  /**
+   * AI 正在驱动一次联动（识别意图 + 规划 + 取数，整段约十几秒）。
+   *
+   * 左栏那些「开始规划」「规划中继站点」「扫描时间窗口」必须看它：
+   * 一次多航点联动内部会连着跑站点复验与三档 A*，期间用户从左栏再点一次，
+   * 后到的响应会覆盖 store，而 AI 已经按先到的结果组织回答了 ——
+   * 表现就是「AI 讲的和面板上显示的不是同一份」。并发写同一份结果谁都拦不住，
+   * 只能从入口禁掉第二条路径。
+   */
+  aiBusy: boolean;
+  /**
+   * 地图视野请求。AI 说「定位到曲松县」时写这里，MapContainer watch 到就移动。
+   *
+   * 走「命令 + nonce」而不是直接调 map 的方法：map 实例是 MapContainer 的局部变量，
+   * AI 那侧拿不到。而按钮路径本来也在组件内部，两边都 watch 同一个 store 字段，
+   * 就不会出现「AI 那条路自己画一遍线」。
+   */
+  mapFocus: { lat: number; lng: number; zoom?: number; nonce: number } | null;
+  /**
+   * 推演控制命令。同上：播放/暂停/前进/重置的实现在 DataChartPanel 里（它持有
+   * 那个 setTimeout 循环），由它 watch 这个字段去调自己的函数，AI 不重复实现一遍。
+   */
+  simCommand: { action: 'play' | 'pause' | 'toggle' | 'step' | 'reset' | 'stop'; nonce: number } | null;
 }
 
 /** 功能三的参数：载重是**自变量**，站点数是它的输出，所以这里不给"站点数量"这种反因果的输入 */
@@ -421,6 +444,9 @@ export const store = reactive<StoreState>({
   siteCatalog: null,
   hoveredSiteLegIndex: null,
   siteForm: { aircraft: '', payload_kg: 200, mission: 'cargo', text: '', parseSource: '' },
+  aiBusy: false,
+  mapFocus: null,
+  simCommand: null,
 });
 
 /** 风险等级 -> 展示色 */
@@ -768,4 +794,293 @@ export function applySiteOption(opt: SiteOption): void {
   store.waypoints = relays.map(e => ({
     lat: String(e.lat), lng: String(e.lon), alt: '',
   }));
+}
+
+// ==================== 对话层：意图识别 -> 左侧联动 ====================
+
+/** 后端 intent 的取值，与 backend/intent.py 的 INTENTS 一一对应 */
+export type Intent =
+  | 'plan' | 'time_window' | 'site' | 'weather' | 'chat';
+
+export interface IntentFields {
+  start_name?: string | null;
+  end_name?: string | null;
+  place_names?: string[];
+  payload_kg?: number | null;
+  aircraft?: string | null;
+  mission?: string | null;
+  date?: string | null;
+  time?: string | null;
+  priority?: string | null;
+  forecast_days?: number | null;
+}
+
+export interface IntentResult {
+  intent: Intent;
+  fields: IntentFields;
+  /** 缺的关键实体。非空时**不要**硬规划，先按 clarify 反问用户。 */
+  missing: string[];
+  clarify: string | null;
+  source: 'llm' | 'rule';
+  /** false = LLM 不可用、只走了窄兜底，界面上要如实说明 */
+  available: boolean;
+}
+
+/** 一次规划产出的对话上下文：task 决定后端用哪个上下文构建器 */
+export interface ChatTarget {
+  task: 'feasibility' | 'time_window' | 'weather';
+  payload: Record<string, any> | null;
+  /** 这一轮是为了回答什么（用于胶囊预测与界面提示） */
+  note?: string;
+}
+
+export interface WeatherResult {
+  available: boolean;
+  reason?: string | null;
+  query_time?: string | null;
+  timezone?: string | null;
+  level_hpa?: number | null;
+  level_note?: string | null;
+  points: Record<string, any>[];
+  thresholds?: Record<string, any> | null;
+}
+
+export interface SuggestChip {
+  label: string;
+  prompt: string;
+}
+
+/** 一句话 -> 模式 + 实体。裁判在模型，规则只在模型不可用时兜一层窄判断。 */
+export async function detectIntent(text: string): Promise<IntentResult> {
+  const response = await fetch(`${API_BASE}/api/assess/intent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text,
+      context: {
+        sidebar_tab: store.sidebarTab,
+        has_result: !!(store.feasibility || store.timeWindow || store.siteResult),
+        date: store.targetDate,
+        time: store.targetTime,
+      },
+    }),
+  });
+  if (!response.ok) throw new Error(`intent ${response.status}`);
+  return await response.json();
+}
+
+/**
+ * 地名 -> 坐标。
+ *
+ * 之前只认 store.bases 那 4 个城市，于是「曲松县」「加查县」这类站表里明明有的
+ * 地点认不出来。这里把 220 个站点一起建索引；长名优先（「林芝米林机场」要先于
+ * 「林芝」被吃掉，否则短名会把长名切断）。
+ */
+export function resolvePlace(name?: string | null): { lat: number; lng: number } | null {
+  if (!name) return null;
+  const target = String(name).trim();
+  if (!target) return null;
+
+  const candidates: { name: string; lat: number; lng: number }[] = [
+    ...store.bases.map(b => ({ name: b.name, lat: Number(b.lat), lng: Number(b.lng) })),
+    ...(store.siteCatalog?.sites ?? [])
+      .filter(s => s.lat != null && s.lon != null)
+      .map(s => ({ name: s.name, lat: Number(s.lat), lng: Number(s.lon) })),
+  ];
+  if (!candidates.length) return null;
+
+  // 精确优先；再退到「输入里包含站点名」（用户常只说「米林」而不说「米林县」）
+  const exact = candidates.find(c => c.name === target);
+  if (exact) return { lat: exact.lat, lng: exact.lng };
+  const partial = candidates.find(c => c.name.includes(target) || target.includes(c.name));
+  return partial ? { lat: partial.lat, lng: partial.lng } : null;
+}
+
+/** 按地点与时刻取真实气象实况（TKE / EDR / 风温湿） */
+export async function queryWeather(
+  points: { name: string; lat: number; lng: number }[],
+  date = store.targetDate,
+  time = store.targetTime,
+): Promise<WeatherResult> {
+  // 全站经度字段有 lng / lon 两种写法：store 的 Point 用 lng，后端 WeatherPoint 用 lon。
+  // 这里必须显式改名 —— 后端 pydantic 会把多余的 lng 静静丢掉，lon 留 null，
+  // 于是所有点都被过滤掉，接口回 available:false，看起来像「没数据」而不是「字段错了」。
+  const body = points.map(p => ({ name: p.name, lat: p.lat, lon: p.lng }));
+  const response = await fetch(`${API_BASE}/api/weather/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ points: body, date, time }),
+  });
+  if (!response.ok) throw new Error(`weather ${response.status}`);
+  return await response.json();
+}
+
+/** 后续建议胶囊：站在用户视角预测下一步 */
+export async function suggestChips(body: {
+  task: string;
+  payload: Record<string, any> | null;
+  last_assistant: string;
+  recent: string[];
+  state: Record<string, any>;
+}): Promise<{ chips: SuggestChip[]; source: 'llm' | 'rule' }> {
+  const response = await fetch(`${API_BASE}/api/assess/suggest`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) return { chips: [], source: 'rule' };
+  return await response.json();
+}
+
+/**
+ * 一次「扫描时间窗口」。从 TimeWindowPanel 搬进 store：
+ * AI 联动要 await 到结果才能据此作答，而面板里的局部函数外部拿不到。
+ * 口径与搬之前逐字一致（同一份请求体、同一套错误处理）。
+ */
+export async function runTimeWindowScan(): Promise<void> {
+  if (!store.start.lat || !store.start.lng || !store.end.lat || !store.end.lng) {
+    alert('请先设置起点和终点！');
+    return;
+  }
+  store.timeWindowLoading = true;
+  try {
+    const response = await fetch(`${API_BASE}/api/assess/time-window`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        start: { lat: Number(store.start.lat), lon: Number(store.start.lng) },
+        end: { lat: Number(store.end.lat), lon: Number(store.end.lng) },
+        waypoints: store.waypoints
+          .filter(wp => wp.lat !== '' && wp.lng !== '')
+          .map(wp => ({ lat: Number(wp.lat), lon: Number(wp.lng) })),
+        date: store.targetDate,
+        start_time: store.targetTime,
+        speed: Number(store.uavSpeed),
+        forecast_days: store.forecastDays,
+      }),
+    });
+    if (!response.ok) await failRequest(response, '时间窗口扫描失败');
+    store.timeWindow = await response.json();
+  } catch (error) {
+    console.error('时间窗口扫描请求失败:', error);
+    store.planNotice = noticeForError(error);
+  } finally {
+    store.timeWindowLoading = false;
+  }
+}
+
+/** 把实体写进左侧表单。只写用户明确说过的字段，没说的绝不覆盖现值。 */
+function fillFromFields(fields: IntentFields): { ok: boolean; unknown: string[] } {
+  const unknown: string[] = [];
+
+  const s = resolvePlace(fields.start_name);
+  if (s) { store.start.lat = String(s.lat); store.start.lng = String(s.lng); }
+  else if (fields.start_name) unknown.push(fields.start_name);
+
+  const e = resolvePlace(fields.end_name);
+  if (e) { store.end.lat = String(e.lat); store.end.lng = String(e.lng); }
+  else if (fields.end_name) unknown.push(fields.end_name);
+
+  if (fields.date) store.targetDate = fields.date;
+  if (fields.time) store.targetTime = fields.time;
+  if (fields.priority && ['urgent', 'normal', 'economy'].includes(fields.priority)) {
+    store.priority = fields.priority as StoreState['priority'];
+  }
+  if (fields.forecast_days != null) store.forecastDays = fields.forecast_days;
+
+  if (fields.payload_kg != null) store.siteForm.payload_kg = Number(fields.payload_kg);
+  if (fields.mission === 'cargo' || fields.mission === 'crew') {
+    store.siteForm.mission = fields.mission;
+  }
+  if (fields.aircraft) {
+    store.siteForm.aircraft = fields.aircraft;
+    // 速度框跟着机型换：段长与时间轴必须同一把尺，否则距离按 100 说飞得完、
+    // 时刻表按 60 说飞多久。
+    const pack = store.siteCatalog?.aircraft.find(a => a.key === fields.aircraft);
+    if (pack) store.uavSpeed = pack.cruise_kmh;
+  }
+  // 解析来源如实标出，界面上要让用户看见这句话是模型认的还是兜底猜的
+  store.siteForm.parseSource = 'llm';
+
+  // 途经点：多目的地时先按识别到的中间地名填上（无坐标的先跳过）
+  if (fields.place_names?.length) {
+    const wps = fields.place_names
+      .map(n => resolvePlace(n))
+      .filter((p): p is { lat: number; lng: number } => !!p)
+      .map(p => ({ lat: String(p.lat), lng: String(p.lng), alt: '' }));
+    if (wps.length) store.waypoints = wps;
+  }
+  return { ok: true, unknown };
+}
+
+/**
+ * **对话联动的唯一入口。**
+ *
+ * AI 路径与面板上的手��按钮都收敛到这里：切页签、回填表单、发起规划只此一处。
+ * 以前对话与面板各写一遍联动，两边迟早长出行为差异（换端点、切档、途经点写入
+ * 这些细节只要漏一处就表现为「AI 说填好了、面板上是另一个」）。
+ *
+ * 规划是真发出去的（不做二次确认）：所以本函数 await 到结果，把**新**结果
+ * 作为本轮问答的上下文返回 —— 否则 AI 会对着上一次的结果说话。
+ */
+export async function applyIntent(result: IntentResult): Promise<ChatTarget> {
+  const { intent, fields } = result;
+
+  if (intent === 'chat') {
+    // 就当前结果追问：原样用当前页的结果，不动任何输入
+    if (store.sidebarTab === 'timeWindow' && store.timeWindow) {
+      return { task: 'time_window', payload: store.timeWindow as any };
+    }
+    return { task: 'feasibility', payload: store.feasibility as any };
+  }
+
+  if (intent === 'weather') {
+    // 气象问答不切页签。要问的地点：place_names -> 起终点 -> 都没有就取当前起点
+    const names = [
+      ...(fields.place_names ?? []),
+      ...(fields.start_name ? [fields.start_name] : []),
+    ];
+    let points = names
+      .map(n => ({ name: n, ...(resolvePlace(n) ?? {}) }))
+      .filter(p => p.lat != null && p.lng != null) as { name: string; lat: number; lng: number }[];
+
+    if (!points.length && store.start.lat && store.start.lng) {
+      points = [{
+        name: store.bases.find(b => b.name === fields.start_name)?.name ?? '起点',
+        lat: Number(store.start.lat),
+        lng: Number(store.start.lng),
+      }];
+    }
+    if (!points.length) return { task: 'weather', payload: null };
+    const payload = await queryWeather(points, store.targetDate, store.targetTime);
+    return { task: 'weather', payload: payload as any };
+  }
+
+  // 以下三个都会改规划输入并真的发一次计算
+  fillFromFields(fields);
+
+  if (intent === 'time_window') {
+    store.sidebarTab = 'timeWindow';
+    store.pendingTimeWindowScan = false;   // 自己扫，不等面板挂载后再扫一遍
+    await runTimeWindowScan();
+    return { task: 'time_window', payload: store.timeWindow as any };
+  }
+
+  if (intent === 'site') {
+    store.sidebarTab = 'site';
+    await runSitePlan();
+    // 规划出中继链后自动走完「按此起飞重新规划」那一步：填入途经点再跑三档 A*。
+    // 拿不到可用方案时停在这里 —— 硬把没算出来的链写进航线等于编一条线。
+    const opt = (store.siteResult?.options ?? []).find(o => o.feasible)
+      ?? store.siteResult?.options?.[0];
+    if (!opt) return { task: 'feasibility', payload: store.feasibility as any };
+    applySiteOption(opt);
+    store.sidebarTab = 'plan';
+    await runPlan();
+    return { task: 'feasibility', payload: store.feasibility as any };
+  }
+
+  store.sidebarTab = 'plan';
+  await runPlan();
+  return { task: 'feasibility', payload: store.feasibility as any };
 }

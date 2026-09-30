@@ -9,6 +9,9 @@ from schemas import (
     PlanRequest, PlanResponse, PlanMultiResponse,
     FeasibilityRequest, FeasibilityResponse, FeasibilityMultiResponse,
     SitePlanRequest, SitePlanResponse, TaskParseRequest, TaskParseResponse,
+    IntentRequest, IntentResponse,
+    WeatherQueryRequest, WeatherQueryResponse,
+    SuggestRequest, SuggestResponse, AgentRequest,
 )
 from data_loader import data_loader
 from planner import compute_path_turbulence, plan_path_ex, _haversine_km
@@ -18,6 +21,11 @@ from time_window import assess_time_window
 import sites
 import assessor
 import geo
+import agent
+import intent
+import suggest
+import tools
+import weather_query
 from config import ROOT_DIR, settings
 from timebase import to_data_time_str
 import numpy as np
@@ -26,6 +34,19 @@ import json
 import asyncio
 
 app = FastAPI(title="UAV Planner Backend")
+
+
+def _build_context(task: str, payload):
+    """把任务类型分派到对应的上下文构建器。
+
+    报告与对话两个端点共用这一处：以前各写一遍 if/else，加第三种任务时
+    漏掉一个就会让「能生成报告但不能对话」这种不对称出现。
+    """
+    if task == "time_window":
+        return assessor.build_time_window_context(payload)
+    if task == "weather":
+        return assessor.build_weather_context(payload)
+    return assessor.build_feasibility_context(payload)
 
 
 async def _run_assess(func, request):
@@ -259,10 +280,7 @@ async def assess_report_stream(request: ReportRequest):
     报告内容只来源于请求体中的结构化结果（不额外取数），LLM 未配置或
     调用失败时自动降级为离线规则模板版，保证演示可用。
     """
-    if request.task == "time_window":
-        ctx = assessor.build_time_window_context(request.payload)
-    else:
-        ctx = assessor.build_feasibility_context(request.payload)
+    ctx = _build_context(request.task, request.payload)
 
     def event_stream():
         for event in assessor.generate_report_stream(ctx):
@@ -285,10 +303,7 @@ async def assess_chat_stream(request: ChatRequest):
     前端复用同一套 SSE 解析。可引用的事实只来源于请求体中的结构化结果，
     LLM 未配置或调用失败时降级为复述评估结论，不假装是对话。
     """
-    if request.task == "time_window":
-        ctx = assessor.build_time_window_context(request.payload)
-    else:
-        ctx = assessor.build_feasibility_context(request.payload)
+    ctx = _build_context(request.task, request.payload)
 
     history = [{"role": m.role, "content": m.content} for m in request.messages]
 
@@ -344,6 +359,89 @@ async def parse_site_task(request: TaskParseRequest):
     **要用户点确认**才发起规划。LLM 不可用时降级到关键词规则，并在 `source` 里如实标出来。
     """
     return TaskParseResponse(**sites.parse_task(request))
+
+
+# ==================== 对话层：意图 / 实况 / 胶囊 ====================
+
+@app.post("/api/assess/intent", response_model=IntentResponse)
+async def detect_intent_endpoint(request: IntentRequest):
+    """一句话 -> 模式 + 实体。对话是全站唯一入口，前端据此联动左侧页签。
+
+    裁判是模型（带 few-shot 的提示词），``sites`` 的规则解析只作离线兜底：
+    关键词表在这里必然自相矛盾（「沿途」既是多航点信号又是"问当前结果"信号），
+    加词永远补不完。兜底层只做高辨识度的窄判断，拿不准就归 ``chat`` ——
+    判错模式会静默切错页签、发错请求，比不联动更糟。
+    """
+    return IntentResponse(**intent.detect_intent(
+        request.text, request.context.date or None))
+
+
+# 端点在公网无鉴权：一次请求打 200 个点就是一次全 slab 读盘。
+# 对话场景实际也就一两个地点，20 足够，超出直接截断而不是报错打断对话。
+WEATHER_MAX_POINTS = 20
+
+
+@app.post("/api/weather/query", response_model=WeatherQueryResponse)
+async def query_weather_endpoint(request: WeatherQueryRequest):
+    """按地点与时刻取真实的气象实况（TKE / EDR / 风温湿）。
+
+    对话里问「拉萨现在 TKE 是多少」需要真数可引 —— 评估结果里没有原始读数，
+    模型硬答就是编。这里真的去气象场取，取到什么给什么。
+
+    缺测一律报「无数据」：``data_loader`` 在文件缺失时会退回 tke/edr=0 的占位值，
+    那会让「没数据」显示成「风平浪静」，所以取数前先查数据是否真的加载好了。
+    """
+    pts = [p.model_dump() for p in request.points[:WEATHER_MAX_POINTS]]
+    loop = asyncio.get_event_loop()
+    return WeatherQueryResponse(**await loop.run_in_executor(
+        None, weather_query.query_weather, pts, request.date, request.time))
+
+
+@app.post("/api/assess/suggest", response_model=SuggestResponse)
+async def suggest_chips_endpoint(request: SuggestRequest):
+    """后续建议胶囊：站在用户视角预测下一步最可能问什么。
+
+    只吃前端送来的结构化结果（与对话同一防幻觉口径），不额外取数。
+    端点公网无鉴权，条数与长度在 ``suggest`` 模块内封顶。
+    """
+    return SuggestResponse(**suggest.suggest_chips(
+        task=request.task,
+        payload=request.payload,
+        last=request.last_assistant,
+        recent=request.recent,
+        state=request.state,
+    ))
+
+
+@app.post("/api/assess/agent")
+async def agent_endpoint(request: AgentRequest):
+    """Agent 循环的一步（流式 SSE）。
+
+    事件类型：
+      - ``{"type":"tool_calls","calls":[...]}``  这一步要调工具，等前端回结果
+      - ``{"type":"delta","text":"..."}``         正文增量
+      - ``{"type":"error","message":"..."}``      模型不可用
+      - ``{"type":"done"}``                       结束
+
+    一次只走一步是有意的：SSE 是单向的，真正的循环靠前端带 ``tool_results``
+    重新 POST 实现（见 agent 模块的说明）。这样模型能看到上一步的执行结果 ——
+    「查了没有备降点」它才不会编一个 —— 且每步独立可重试，不需要维持长连接。
+    """
+    history = [{"role": m.role, "content": m.content} for m in request.messages]
+
+    def event_stream():
+        for event in agent.run_agent(request.state, history, request.tool_results,
+                                     request.round_index):
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/api/site/plan", response_model=SitePlanResponse)

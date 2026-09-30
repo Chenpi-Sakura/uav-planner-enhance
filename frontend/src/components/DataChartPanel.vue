@@ -407,6 +407,32 @@ const stopSimulation = () => {
   updateChartMarkLine(-1);
 };
 
+/**
+ * AI 的推演控制命令落到这里。
+ *
+ * 推演循环（那个 setTimeout）在本组件里，外面拿不到，所以不把实现搬去 store ——
+ * 搬了就得重写这一整套。让 AI 写一个 command 字段、这里 watch 到之后调**上面这些
+ * 同一个函数**，按钮路径与 AI 路径就是同一份代码。
+ */
+watch(() => store.simCommand, (cmd) => {
+  if (!cmd) return;
+  switch (cmd.action) {
+    case 'play': startSimulation(); break;
+    case 'pause': pauseSimulation(); break;
+    case 'toggle': toggleSimulation(); break;
+    case 'stop': stopSimulation(); break;
+    case 'reset': stopSimulation(); startSimulation(); break;
+    case 'step':
+      pauseSimulation();
+      if (store.simulationIndex < store.plannedPath.length - 1) {
+        store.simulationIndex += 1;
+        updateTimeForIndex(store.simulationIndex);
+        updateChartMarkLine(store.simulationIndex);
+      }
+      break;
+  }
+});
+
 const updateChartMarkLine = (index: number) => {
   if (!chartInstance.value) return;
   if (index < 0) {

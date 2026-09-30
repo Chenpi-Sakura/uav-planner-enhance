@@ -33,9 +33,10 @@
     </div>
 
     <div class="action-row">
-      <button class="capsule-btn full-width" @click="runSitePlan" :disabled="store.siteLoading"
-              :class="{ 'disabled-btn': store.siteLoading }">
+      <button class="capsule-btn full-width" @click="runSitePlan" :disabled="store.siteLoading || store.aiBusy"
+              :class="{ 'disabled-btn': store.siteLoading || store.aiBusy }">
         <span v-if="store.siteLoading" class="loading-icon"><Loader :size="16" class="spin" /> 正在选站点并逐段复验…</span>
+        <span v-else-if="store.aiBusy" class="loading-icon"><Loader :size="16" class="spin" /> AI 正在处理…</span>
         <span v-else class="btn-inner"><MapPin :size="16" /> 规划中继站点</span>
       </button>
     </div>

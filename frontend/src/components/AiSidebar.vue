@@ -9,50 +9,72 @@
     <div class="ai-content glass-panel">
       <div class="ai-head">
         <span class="ai-title"><Sparkles :size="16" /> AI 助手</span>
-        <button v-if="turns.length" class="head-btn" :disabled="streaming" @click="turns = []">
+        <button v-if="turns.length" class="head-btn" :disabled="busy" @click="reset">
           <Eraser :size="12" /> 清空
         </button>
       </div>
 
+      <!-- 唯一的对话流：AI 靠左、用户靠右，正文按 Markdown 渲染 -->
       <div class="ai-scroll" ref="logEl">
-        <!-- 自然语言任务：一期只做到「解析 → 回填表单 → 我确认」，不直接触发规划 -->
-        <section class="ai-block">
-          <h4 class="block-title"><MessageSquareText :size="14" /> 一句话任务</h4>
-          <textarea class="capsule-input task-text" rows="2"
-                    v-model="store.siteForm.text"
-                    placeholder="例：从拉萨送 200 公斤兽药到昌都"></textarea>
-          <div class="parse-row">
-            <button class="capsule-btn tiny" @click="doParse" :disabled="parsing">
-              <Loader v-if="parsing" :size="13" class="spin" />
-              {{ parsing ? '解析中…' : '解析任务' }}
-            </button>
-            <span class="badge" v-if="store.siteForm.parseSource === 'llm'">AI 抽取</span>
-            <span class="badge muted" v-else-if="store.siteForm.parseSource === 'rule'">关键词兜底</span>
+        <p v-if="!turns.length" class="chat-empty">{{ emptyHint }}</p>
+        <div v-for="(t, i) in turns" :key="i" class="msg" :class="t.role">
+          <!-- 助手气泡：动作轨迹在正文**上方**，且与正文同处一个框里。
+               分成两个框会让人以为轨迹是「另一件事的旁白」，其实它就是这次回答的
+               依据 —— 执行记录在前，结论在后。 -->
+          <div v-if="t.role === 'assistant'" class="bubble assistant-bubble">
+            <!-- 默认展开：轨迹是这次回答的依据，藏起来等于让人看不到它凭什么这么说。
+                 用户主动折叠后就不再自动展开。 -->
+            <div v-if="t.steps?.length" class="trace" :class="{ open: traceOpen[i] !== false }">
+              <button class="trace-head" @click="toggleTrace(i)">
+                <ChevronRight :size="12" class="trace-caret" />
+                <span class="trace-title">已执行 {{ t.steps.length }} 个操作</span>
+              </button>
+              <ul v-if="traceOpen[i] !== false" class="trace-list">
+                <li v-for="(s, j) in t.steps" :key="j" :class="s.status">
+                  <!-- 状态优先：出错/进行中盖过工具类别，否则一条「正在规划」和
+                       一条「规划失败」看起来是同一类操作 -->
+                  <component
+                    :is="stepIcon(s)"
+                    :size="12"
+                    class="trace-icon"
+                    :class="{ spin: s.status === 'run' }"
+                  />
+                  <span class="trace-text">{{ s.label }}</span>
+                  <span v-if="s.detail" class="trace-detail">{{ s.detail }}</span>
+                </li>
+              </ul>
+            </div>
+            <div class="md" v-html="renderMarkdown(t.text)"></div>
           </div>
-        </section>
+          <div v-else class="bubble">{{ t.text }}</div>
 
-        <!-- 对话流：AI 靠左、用户靠右，正文按 Markdown 渲染 -->
-        <section class="chat">
-          <p v-if="!turns.length" class="chat-empty">{{ emptyHint }}</p>
-          <div v-for="(t, i) in turns" :key="i" class="msg" :class="t.role">
-            <div v-if="t.role === 'assistant'" class="bubble md" v-html="renderMarkdown(t.text)"></div>
-            <div v-else class="bubble">{{ t.text }}</div>
-            <span v-if="t.source" class="msg-meta">{{ t.source === 'llm' ? 'LLM 生成' : '规则兜底' }}</span>
-            <p v-if="t.error" class="msg-error"><AlertTriangle :size="12" /> {{ t.error }}</p>
-          </div>
-        </section>
+          <span v-if="t.source" class="msg-meta">
+            {{ t.source === 'llm' ? 'LLM 生成' : '规则兜底' }}
+          </span>
+          <p v-if="t.error" class="msg-error"><AlertTriangle :size="12" /> {{ t.error }}</p>
+        </div>
       </div>
 
-      <!-- 输入区钉在栏底，不随消息流滚走 -->
       <div class="composer">
-        <button class="chip-btn" :disabled="!canSend || streaming" @click="askReport">
-          <FileText :size="13" /> 生成飞行建议报告
-        </button>
+        <!-- 胶囊：简略 label 常显，完整问句靠悬浮/长按展开（触屏没有 hover） -->
+        <div v-if="chips.length" class="chips" role="list">
+          <button
+            v-for="(c, i) in chips" :key="i" class="chip" :disabled="busy"
+            :title="c.prompt"
+            :aria-label="c.prompt"
+            @click="useChip(c)"
+            @contextmenu.prevent="expand(c, i)"
+          >
+            {{ c.label }}
+          </button>
+        </div>
+        <p v-if="expanded" class="chip-full">{{ expanded }}</p>
+
         <div class="composer-row">
-          <textarea v-model="draft" rows="2" :disabled="!canSend" :placeholder="draftPlaceholder"
+          <textarea v-model="draft" rows="2" :disabled="busy" :placeholder="draftPlaceholder"
                     @keydown.enter.exact.prevent="send(draft)"></textarea>
-          <button class="send-btn" :disabled="!canSend || streaming || !draft.trim()" @click="send(draft)">
-            <Loader v-if="streaming" :size="15" class="spin" />
+          <button class="send-btn" :disabled="busy || !draft.trim()" @click="send(draft)">
+            <Loader v-if="busy" :size="15" class="spin" />
             <Send v-else :size="15" />
           </button>
         </div>
@@ -63,66 +85,238 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import type { Component } from 'vue';
 import {
-  ChevronLeft, ChevronRight, Sparkles, MessageSquareText, FileText,
+  ChevronLeft, ChevronRight, Sparkles,
   Send, Loader, Eraser, AlertTriangle,
+  Wrench, MapPin, Calculator, AlertCircle, Crosshair, Layers, PanelLeft,
+  ChartLine, Play, SlidersHorizontal, Clock, Package, Plane, Users, Gauge,
+  CalendarDays, Trash2, Thermometer, Search,
 } from 'lucide-vue-next';
-import { store, parseSiteTask, fetchSiteCatalog } from '../store';
+import {
+  store, suggestChips, fetchSiteCatalog,
+} from '../store';
+import type { SuggestChip } from '../store';
+import { invokeTool, buildAgentState } from '../agentTools';
 import { API_BASE } from '../config';
 import { renderMarkdown } from '../utils/markdown';
+
+interface TraceStep {
+  tool: string;
+  label: string;
+  detail?: string;
+  status: 'ok' | 'error' | 'run';
+}
 
 interface Turn {
   role: 'user' | 'assistant';
   text: string;
   /** 正文来源：只有 AI 那一侧会有；rule = 后端降级，界面必须如实标出来 */
   source?: 'llm' | 'rule';
+  /** 本轮真实发生过的工具调用，供轨迹区渲染。这是「Agent 在干嘛」的唯一真相 */
+  steps?: TraceStep[];
   error?: string;
 }
 
+/** 空状态下的引导胶囊。刻意挑了**能体现多步能力**的句子，
+ *  而不是「规划一条航线」这种一个工具就完事的 —— 用户第一眼就该知道这助手会动手。 */
+const STARTER_CHIPS: SuggestChip[] = [
+  { label: '拉萨送药到昌都', prompt: '从拉萨送 200 公斤兽药到昌都，请规划航线并评估风险' },
+  { label: '开图层看曲松县', prompt: '打开 TKE 和 EDR 图层，把地图定位到曲松县，看看那边现在什么情况' },
+  { label: '明天下午飞林芝', prompt: '评估明天下午拉萨到林芝的飞行风险' },
+];
+
 const turns = ref<Turn[]>([]);
 const draft = ref('');
-const parsing = ref(false);
-const streaming = ref(false);
 const logEl = ref<HTMLElement | null>(null);
+const chips = ref<SuggestChip[]>(STARTER_CHIPS);
+const expanded = ref('');
+/** 每条助手消息的轨迹折叠与否。按下标存；undefined = 默认展开。
+ *  用 `!== false` 判定而不是 truthy，是为了让「默认展开」和「用户手动折叠」能区分开。 */
+const traceOpen = ref<Record<number, boolean>>({});
+const toggleTrace = (i: number) => { traceOpen.value[i] = traceOpen.value[i] === false; };
 
-const doParse = async () => {
-  parsing.value = true;
-  try { await parseSiteTask(); } finally { parsing.value = false; }
+/** 轨迹图标按工具类别分，让用户一眼看出这条是"动了界面"还是"算了数据"。 */
+const TOOL_ICONS: Record<string, Component> = {
+  add_waypoint: MapPin, update_waypoint: MapPin, remove_waypoint: MapPin,
+  set_endpoints: MapPin, focus_region: Crosshair,
+  run_plan: Calculator, run_site_plan: Calculator, run_time_window: Calculator,
+  query_weather: Thermometer, search_sites: Search,
+  toggle_overlay: Layers, switch_tab: PanelLeft, toggle_chart: ChartLine,
+  play_simulation: Play, set_priority: SlidersHorizontal, set_time: Clock,
+  set_payload_kg: Package, set_aircraft: Plane, set_mission: Users,
+  set_speed: Gauge, set_forecast_days: CalendarDays, clear_route: Trash2,
+};
+const TOOL_VERBS: Record<string, string> = {
+  toggle_overlay: '切换图层', focus_region: '移动地图', switch_tab: '切换页签',
+  set_time: '修改时间', set_priority: '切换档位', set_payload_kg: '修改载重',
+  set_aircraft: '切换机型', set_mission: '修改任务类型', set_speed: '修改速度',
+  set_forecast_days: '修改推演天数', toggle_chart: '切换剖面图',
+  add_waypoint: '添加途经点', update_waypoint: '修改途经点',
+  remove_waypoint: '删除途经点', set_endpoints: '修改端点',
+  clear_route: '清空航线',
+};
+/** 慢工具（要读气象场的）：先显示「正在…」，跑完再原地改写成结论 */
+const SLOW_TOOLS = new Set(['run_plan', 'run_site_plan', 'run_time_window', 'query_weather']);
+const SLOW_VERBS: Record<string, string> = {
+  run_plan: '规划航线并评估三条候选',
+  run_site_plan: '选站点并逐段复验',
+  run_time_window: '扫描各时段气象条件',
+  query_weather: '取各地点实况数据',
+};
+
+/** 状态盖过类别：出错与进行中用固定的告警/转圈图标，其余按工具类别取。 */
+const stepIcon = (s: TraceStep) => {
+  if (s.status === 'error') return AlertCircle;
+  if (s.status === 'run') return Loader;
+  return TOOL_ICONS[s.tool] ?? Wrench;
+};
+
+// busy 放在 store 上：左栏的规划按钮也要禁用，否则用户能在 AI 联动期间
+// 从左边再点一次「开始规划」，两份结果互相覆盖，AI 讲的和面板显示的对不上。
+const busy = computed({
+  get: () => store.aiBusy,
+  set: (v: boolean) => { store.aiBusy = v; },
+});
+
+const emptyHint = computed(() =>
+  '直接说要做什么，例如「从拉萨送 200 公斤兽药到昌都」。我会自动切到对应模式、填好参数并把结果算出来。'
+);
+
+const draftPlaceholder = computed(() =>
+  busy.value ? '正在处理…' : '说出你的任务，Enter 发送'
+);
+
+/** 推一条空的助手消息并返回它：整轮的正文都写进这一条，不另起新气泡 */
+const pushAssistant = () => {
+  turns.value.push({ role: 'assistant', text: '' });
+  return turns.value[turns.value.length - 1];
 };
 
 /**
- * 对话的对象跟随左栏当前那一页：报告与问答都只引用这一页的结构化结果，
- * 后端不额外取数（与旧版 AI 报告同一防幻觉口径）。
+ * 一轮对话 = **Agent 循环**。
+ *
+ * 流程：问后端「该调哪些工具」→ 逐个真的执行（每一步都渲染进轨迹）→ 带着执行
+ * 结果再问后端 → 直到它不再要工具，吐出最终正文。
+ *
+ * 为什么要做成「后端吐一批、前端执行、再回灌」的往返，而不是后端一口气出答案：
+ * 模型必须**看到工具结果**才能接着判断。「查了 50 km 内没有备降点」它才知道该
+ * 如实说没有；「定位曲松县」失败了它才知道要换名字。一步到位就等于让它闭眼编。
+ *
+ * 往返也带来一个附带好处：每一步都是独立请求，断在哪都能从那一步重试。
  */
-const chatTarget = computed<{ task: string; payload: Record<string, any> | null }>(() => {
-  if (store.sidebarTab === 'timeWindow') return { task: 'time_window', payload: store.timeWindow as any };
-  if (store.sidebarTab === 'site') return { task: '', payload: null };
-  return { task: 'feasibility', payload: store.feasibility as any };
-});
-
-const canSend = computed(() => !!chatTarget.value.payload);
-
-const emptyHint = computed(() => {
-  if (!canSend.value) {
-    return store.sidebarTab === 'site'
-      ? '多航点模式暂无可对话的结果。切到「路径规划」或「时间窗口」页后再来问。'
-      : '先在左栏跑一次计算，这里才有可对话的评估结果。';
-  }
-  return '可以问这条航线的任何细节，例如「为什么建议这个起飞时刻」「哪一段最危险」。';
-});
-
-const draftPlaceholder = computed(() =>
-  canSend.value ? '就当前结果提问，Enter 发送' : '暂无可对话的评估结果'
-);
-
-/** 消费 SSE：事件类型与后端 generate_report_stream / generate_chat_stream 一致 */
-const readStream = async (url: string, body: unknown, reply: Turn) => {
-  streaming.value = true;
+const send = async (raw: string) => {
+  const text = raw.trim();
+  if (!text || busy.value) return;
+  draft.value = '';
+  expanded.value = '';
+  busy.value = true;
+  // 本轮之前的历史快照：工具回灌时要带上，但不能把本轮的占位气泡算进去
+  const history = turns.value.filter(t => t.text)
+    .map(t => ({ role: t.role, content: t.text }));
   try {
-    const response = await fetch(`${API_BASE}${url}`, {
+    turns.value.push({ role: 'user', text });
+    const reply = pushAssistant();
+    reply.steps = [];
+    reply.source = 'llm';
+
+    let toolResults: Record<string, any>[] = [];
+    // 前端与后端各有一道轮数闸（这里 6、agent.py 里 MAX_STEPS=5）。两边都留一道是
+    // 有意的：任何一边单独失效都还收得住，不至于让模型无限兜圈。
+    for (let round = 0; round < 6; round++) {
+      const step = await callAgent(history, text, toolResults, round);
+      if (step.error) {
+        reply.error = step.error;
+        break;
+      }
+      if (!step.calls.length) {
+        reply.text = step.text;
+        break;
+      }
+
+      // 同一批里完全相同的调用只执行一次。模型偶尔会把 run_plan 连写两遍
+      // （用户切档时尤其容易），两次都真跑就是白烧两轮 A* 拿回一样的数字。
+      const seen = new Set<string>();
+      const batch = step.calls.filter(c => {
+        const key = `${c.tool}:${JSON.stringify(c.args ?? {})}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      // 这一批要真的执行。每调完一个就把结果记进轨迹，用户能看着它一步步动。
+      for (const call of batch) {
+        const tool = call.tool;
+        const slow = SLOW_TOOLS.has(tool);
+        // 慢工具先落一条「正在…」再原地改写：一次三档 A* 要十几秒，
+        // 中间没有动静的话用户会以为卡死了。快工具不必多这一次闪烁。
+        const row: TraceStep = {
+          tool,
+          label: slow ? `正在${SLOW_VERBS[tool] ?? '处理'}…` : `${TOOL_VERBS[tool] ?? '处理'}中…`,
+          status: 'run',
+        };
+        reply.steps!.push(row);
+
+        const r = await invokeTool(tool, call.args || {});
+        row.label = r.label;
+        row.detail = r.detail;
+        row.status = r.ok ? 'ok' : 'error';
+        // data 只放工具真拿到的结果；模型只能引用它，所以失败时这里是空的
+        toolResults.push({ tool, ok: r.ok, label: r.label, data: r.data ?? null });
+      }
+      // 下一步要按**工具改完之后的界面状态**来判断，所以每轮都重新取快照
+      if (!toolResults.length) break;
+    }
+
+    if (!reply.text && !reply.error) {
+      reply.text = '（没有可执行的操作，也没有可回答的内容）';
+    }
+
+    // 胶囊只在拿到回答后刷，避免在工具执行途中就把建议摆出来
+    const last = reply.text;
+    const recent = turns.value.filter(t => t.role === 'user' && t.text).map(t => t.text).slice(-3);
+    const got = await suggestChips({
+      task: store.timeWindow && store.sidebarTab === 'timeWindow' ? 'time_window' : 'feasibility',
+      payload: (store.timeWindow && store.sidebarTab === 'timeWindow'
+        ? store.timeWindow : store.feasibility) as any,
+      last_assistant: last,
+      recent,
+      state: {
+        sidebar_tab: store.sidebarTab,
+        has_result: !!(store.feasibility || store.timeWindow || store.siteResult),
+        verdict: store.feasibility?.verdict,
+        level: store.feasibility?.risk?.overall,
+      },
+    });
+    chips.value = got.chips?.length ? got.chips : STARTER_CHIPS;
+  } catch (error) {
+    console.error('Agent 循环失败:', error);
+    const failed = turns.value[turns.value.length - 1];
+    const msg = '没能完成这次操作。可以换个说法，或者直接在左栏手动操作。';
+    if (failed?.role === 'assistant') { failed.text = msg; failed.source = 'rule'; }
+  } finally {
+    busy.value = false;
+  }
+};
+
+/** 问后端一步。返回要么是要调的工具，要么是最终正文，不会两者都有。 */
+const callAgent = async (
+  history: { role: string; content: string }[],
+  text: string,
+  toolResults: Record<string, any>[],
+  roundIndex: number,
+): Promise<{ calls: any[]; text: string; error?: string }> => {
+  const out: { calls: any[]; text: string; error?: string } = { calls: [], text: '' };
+  try {
+    const response = await fetch(`${API_BASE}/api/assess/agent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        messages: [...history, { role: 'user', content: text }],
+        state: buildAgentState(),
+        tool_results: toolResults,
+        round_index: roundIndex,
+      }),
     });
     if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
 
@@ -133,60 +327,42 @@ const readStream = async (url: string, body: unknown, reply: Turn) => {
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      // 事件以空行分隔；末尾不完整的一段留在 buffer 里等下一块
       const parts = buffer.split('\n\n');
       buffer = parts.pop() ?? '';
       for (const part of parts) {
         const line = part.split('\n').find(l => l.startsWith('data:'));
         if (!line) continue;
-        let event: { type: string; source?: string; text?: string; message?: string };
-        try {
-          event = JSON.parse(line.slice(5).trim());
-        } catch {
-          continue;
-        }
-        if (event.type === 'meta' && event.source) reply.source = event.source as 'llm' | 'rule';
-        else if (event.type === 'delta' && event.text) reply.text += event.text;
-        else if (event.type === 'error') reply.error = event.message ?? '生成失败';
+        let event: any;
+        try { event = JSON.parse(line.slice(5).trim()); } catch { continue; }
+        if (event.type === 'tool_calls') out.calls = event.calls ?? [];
+        else if (event.type === 'delta') out.text += event.text ?? '';
+        else if (event.type === 'error') out.error = event.message ?? '生成失败';
       }
     }
   } catch (error) {
-    console.error('AI 请求失败:', error);
-    reply.error = 'AI 服务不可用，请确认后端已启动。';
-  } finally {
-    streaming.value = false;
+    console.error('Agent 请求失败:', error);
+    out.error = 'AI 服务不可用，请确认后端已启动。';
   }
+  return out;
 };
 
-/**
- * 追加一轮对话并流式写入答复。
- *
- * 拿的是 push 之后数组里的**代理对象**：直接改推进去的那个原始字面量不会触发重渲染。
- */
-const ask = async (question: string, preset: { url: string; body: unknown }) => {
-  if (streaming.value || !canSend.value) return;
-  const history = turns.value.map(t => ({ role: t.role, content: t.text }));
-  turns.value.push({ role: 'user', text: question });
-  turns.value.push({ role: 'assistant', text: '' });
-  const reply = turns.value[turns.value.length - 1];
-  const { task, payload } = chatTarget.value;
-  const body = preset.body ?? { task, payload, messages: [...history, { role: 'user', content: question }] };
-  await readStream(preset.url, body, reply);
+/** 点胶囊 = 填入完整问句并直接发出，保持「对话即操作」的连贯感 */
+const useChip = (chip: SuggestChip) => {
+  if (busy.value) return;
+  void send(chip.prompt);
 };
 
-const send = async (raw: string) => {
-  const text = raw.trim();
-  if (!text) return;
-  draft.value = '';
-  await ask(text, { url: '/api/assess/chat', body: null });
+/** 触屏没有 hover：长按/右键把完整问句显示出来，否则用户看不到自己将发出什么 */
+const expand = (chip: SuggestChip, _i: number) => {
+  expanded.value = expanded.value === chip.prompt ? '' : chip.prompt;
 };
 
-/** 一键报告仍走 /api/assess/report：它不需要历史，产出的是成篇的建议书 */
-const askReport = () =>
-  ask('请针对当前评估结果生成完整的飞行建议报告。', {
-    url: '/api/assess/report',
-    body: { task: chatTarget.value.task, payload: chatTarget.value.payload },
-  });
+const reset = () => {
+  turns.value = [];
+  chips.value = STARTER_CHIPS;
+  expanded.value = '';
+  traceOpen.value = {};
+};
 
 // 新消息与流式增量都要把日志拉到底部
 watch(
@@ -198,8 +374,8 @@ watch(
   }
 );
 
-// 解析入口常驻右栏，而机型能力包原本由多航点页自己拉；不补齐的话，
-// 解析回填机型后速度框会停在旧值。store 里已按 null 判空，重复调用没有代价。
+// 意图识别要用站表把「曲松县」这类地名解成坐标，站表没取过就先取一次。
+// 重复调用没有代价（store 里已按 null 判空）。
 onMounted(() => {
   if (!store.siteCatalog) void fetchSiteCatalog();
 });
@@ -304,38 +480,10 @@ onMounted(() => {
   gap: 14px;
 }
 
-.ai-block { display: flex; flex-direction: column; gap: 8px; }
-
-.block-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.block-title svg { color: var(--accent-color); }
-
-.task-text { resize: vertical; font-family: inherit; font-size: 12px; }
-.parse-row { display: flex; align-items: center; gap: 8px; }
-.capsule-btn.tiny { padding: 5px 10px; font-size: 11px; width: auto; }
-.badge {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: rgba(56, 189, 248, 0.18);
-  color: #7dd3fc;
-}
-.badge.muted { background: rgba(148, 163, 184, 0.18); color: var(--text-secondary); }
-
-.chat { display: flex; flex-direction: column; gap: 10px; }
-
 .chat-empty {
   margin: 0;
   font-size: 11px;
-  line-height: 1.6;
+  line-height: 1.7;
   color: var(--text-secondary);
 }
 
@@ -358,6 +506,16 @@ onMounted(() => {
   color: var(--text-primary);
 }
 
+/* 助手气泡里塞了轨迹，宽度要放开 —— 轨迹里的地名/数字比正文的长 */
+.assistant-bubble {
+  max-width: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+}
+
 .msg.user .bubble {
   background: rgba(52, 152, 219, 0.18);
   border: 1px solid rgba(52, 152, 219, 0.42);
@@ -372,11 +530,127 @@ onMounted(() => {
 .md :deep(ul), .md :deep(ol) { margin: 0 0 6px; padding-left: 18px; }
 .md :deep(li) { margin: 0 0 2px; }
 .md :deep(code) { font-size: 11px; background: rgba(0, 0, 0, 0.3); padding: 1px 4px; border-radius: 4px; }
-.md :deep(table) { border-collapse: collapse; font-size: 11px; }
-.md :deep(th), .md :deep(td) { border: 1px solid var(--panel-border); padding: 2px 6px; }
+
+/* 表格：撑满气泡 + 圆角 + 按内容分配列宽 + 双向居中。
+   - 圆角必须用 `border-collapse: separate`：collapse 会把圆角和裁剪一起吃掉，
+     单元格的底色会从圆角处溢出去。
+   - 列宽比例交给 `table-layout: auto`（默认行为）：浏览器按各列**内容宽度**分配，
+     再把富余宽度按同样比例摊回去。所以不能给某列加 nowrap —— 那会把它钉死成
+     一个宽度，比例分配就失效了。
+   - 居中用 th/td 的 text-align + vertical-align：Markdown 表格没有对齐语义，
+     交给模型写对齐符号不如统一居中好看。 */
+.md :deep(table) {
+  width: 100%;
+  table-layout: auto;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.55;
+  margin: 6px 0 8px;
+}
+
+.md :deep(th) {
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-align: center;
+  vertical-align: middle;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.md :deep(td) {
+  text-align: center;
+  vertical-align: middle;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--panel-border);
+  word-break: break-word;   /* 长地名/长结论换行，而不是把整张表顶出气泡 */
+}
+
+.md :deep(tr:last-child td) { border-bottom: none; }
+.md :deep(td:first-child) { color: var(--text-secondary); }
+.md :deep(td + td) { color: var(--text-primary); }
+
 .md :deep(a) { color: var(--accent-color); }
 
 .msg-meta { font-size: 10px; color: var(--text-secondary); }
+
+/* ---- 动作轨迹 ----
+   这是「让 Agent 的思考可见」的落点：每一条都对应一次真实的工具调用。
+   它是**助手气泡的一部分**（在正文上方），不是外挂的旁白框 —— 执行记录在前、
+   结论在后，同一个框里读完。 */
+.trace {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.trace-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 5px 9px;
+  font-size: 10px;
+  font-family: inherit;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+.trace-head:hover { color: var(--text-primary); }
+
+.trace-caret { transition: transform 0.2s; flex-shrink: 0; }
+.trace.open .trace-caret { transform: rotate(90deg); }
+
+.trace-title { font-weight: 600; letter-spacing: 0.3px; }
+
+.trace-list {
+  margin: 0;
+  padding: 1px 9px 7px 9px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px dashed rgba(148, 163, 184, 0.18);
+  padding-top: 6px;
+}
+
+.trace-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.trace-icon {
+  flex-shrink: 0;
+  align-self: center;
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+.trace-list li.error .trace-icon { color: #fca5a5; }
+.trace-list li.error .trace-text { color: #fca5a5; }
+.trace-list li.run .trace-text { color: var(--text-secondary); }
+
+.trace-text { flex: 1; min-width: 0; word-break: break-word; }
+
+.trace-detail {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+
+.spin { animation: spin 1s linear infinite; }
 
 .msg-error {
   display: flex;
@@ -397,23 +671,42 @@ onMounted(() => {
   background: rgba(0, 0, 0, 0.15);
 }
 
-.chip-btn {
+/* 胶囊横排可换行：窄栏里三条一行放不下，挤成两行比横向滚动好点得多 */
+.chips {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  align-self: flex-start;
-  padding: 5px 11px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  padding: 5px 10px;
   font-size: 11px;
+  font-family: inherit;
   border-radius: 9999px;
   border: 1px solid var(--panel-border);
-  background: transparent;
-  color: var(--text-secondary);
+  background: rgba(56, 189, 248, 0.10);
+  color: var(--text-primary);
   cursor: pointer;
-  transition: color 0.2s, border-color 0.2s;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color 0.2s, background 0.2s;
 }
-.chip-btn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent-color); }
-.chip-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.chip:hover:not(:disabled) { border-color: var(--accent-color); background: rgba(56, 189, 248, 0.18); }
+.chip:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* 触屏没有 hover，长按/右键后把完整问句摊在这里 */
+.chip-full {
+  margin: 0;
+  padding: 7px 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  border-radius: 8px;
+  border: 1px dashed var(--panel-border);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text-primary);
+}
 
 .composer-row { display: flex; align-items: flex-end; gap: 8px; }
 

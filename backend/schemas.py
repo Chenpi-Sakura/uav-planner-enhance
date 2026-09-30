@@ -476,4 +476,101 @@ class TaskParseResponse(BaseModel):
     rule_fields: Dict[str, Any] = {}
     # llm = 模型抽取；rule = 关键词兜底。界面必须显示这个来源，
     # 否则用户会把"规则猜的"当成"AI 理解的"。
-    source: str = "rule"
+    source: str = 'rule'
+
+
+# ==================== 对话层：意图识别 / 气象实况 / 后续胶囊 ====================
+#
+# 这三组是「对话即操作」的地基：前端拿到 intent 后统一调 store.applyIntent()，
+# 拿不到实况就没法回答 TKE/EDR 类的追问，对话结束也没有胶囊可推。
+
+class IntentContext(BaseModel):
+    """当前界面状态。只用于提示词里的少量上下文，不参与任何计算。"""
+    sidebar_tab: str = 'plan'
+    has_result: bool = False
+    # 相对日期（「明天下午」）的换算基准。必须由前端传：
+    # 数据集是 2022-07 的历史场，后端读服务器当天会得到一个场里不存在的日期。
+    date: str = ''
+    time: str = '08:00'
+
+
+class IntentRequest(BaseModel):
+    text: str
+    context: IntentContext = IntentContext()
+
+
+class IntentResponse(BaseModel):
+    intent: str = 'chat'
+    fields: Dict[str, Any] = {}
+    # 缺失的关键实体（如 site 缺 payload_kg）。非空时前端应当先反问，不要硬规划。
+    missing: List[str] = []
+    clarify: Optional[str] = None
+    # llm = 模型裁判；rule = 窄兜底。界面上要如实标出来。
+    source: str = 'rule'
+    # False = LLM 不可用，只走了兜底判断（此时不该让用户以为模型真听懂了）
+    available: bool = False
+    matched: List[str] = []
+
+
+class WeatherPoint(BaseModel):
+    name: str = ''
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+
+
+class WeatherQueryRequest(BaseModel):
+    points: List[WeatherPoint] = []
+    date: str = '2022-07-01'
+    time: str = '08:00'
+
+
+class WeatherQueryResponse(BaseModel):
+    available: bool = False
+    reason: Optional[str] = None
+    query_time: Optional[str] = None
+    timezone: Optional[str] = None
+    # 数据所在高度层。不透出的话，温度会被当成地面气温（详见 weather_query 里的说明）
+    level_hpa: Optional[int] = None
+    level_note: Optional[str] = None
+    points: List[Dict[str, Any]] = []
+    thresholds: Optional[Dict[str, Any]] = None
+
+
+class SuggestRequest(BaseModel):
+    task: str = 'feasibility'
+    payload: Optional[Dict[str, Any]] = None
+    last_assistant: str = ''
+    recent: List[str] = []
+    state: Dict[str, Any] = {}
+
+
+class SuggestResponse(BaseModel):
+    chips: List[Dict[str, str]] = []
+    source: str = 'rule'
+
+
+# ==================== Agent 循环（工具调用） ====================
+
+class AgentRequest(BaseModel):
+    """一轮 Agent。
+
+    ``tool_results`` 非空 = 这是同一句用户输入的第 2 步及以后（带着上一步的执行结果）。
+    整段对话的状态由前端保存：SSE 是单向的，真正的循环靠「后端吐一批调用 →
+    前端执行 → 带着结果重新 POST」实现，后端因此保持无状态，每一步都能原地重试。
+    """
+    messages: List[ChatMessage] = []
+    # 只传工具决策真正需要的界面状态。**不要把整份 store 塞进来**：
+    # 那里面有几十 KB 的评估结果，既慢又会诱导模型去数它算不出的东西。
+    state: Dict[str, Any] = {}
+    tool_results: List[Dict[str, Any]] = []
+    # 第几轮，从 0 起。由前端数着传 —— 后端拿「工具结果条数」当代数是错的：
+    # 一轮里可能返回 6 个工具调用，那样第二个还没开始就被判成调满了。
+    round_index: int = 0
+
+
+class AgentEvent(BaseModel):
+    """SSE 事件体。type 取 tool_calls / delta / error / done。"""
+    type: str
+    calls: List[Dict[str, Any]] = []
+    text: str = ''
+    message: str = ''

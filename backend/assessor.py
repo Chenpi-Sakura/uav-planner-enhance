@@ -177,6 +177,66 @@ def build_time_window_context(result: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def build_weather_context(result: Dict[str, Any]) -> Dict[str, Any]:
+    """把气象实况取数结果（``weather_query.query_weather``）包成对话上下文。
+
+    存在的意义是给「现在那边 TKE 是多少」这类问题一个**真数**可引。
+    既有两条上下文里只有评估结论，模型手里没有原始读数，只能拿「数据显示」搪塞。
+
+    ``available=False`` 的点原样带过去并标明原因：让模型如实说查不到，
+    而不是去别处编一个数 —— 防幻觉纪律在这里最容易破，因为它看起来只是「回答问题」。
+    """
+    points = []
+    for p in (result.get("points") or []):
+        row = {
+            "name": p.get("name"),
+            "available": bool(p.get("available")),
+        }
+        if p.get("available"):
+            row.update({
+                "tke": p.get("tke"),
+                "edr": p.get("edr"),
+                "level": p.get("level"),
+                "wind_speed_ms": p.get("wind_speed_ms"),
+                "temp_c": p.get("temp_c"),
+                "humidity_pct": p.get("rh_pct"),
+            })
+        else:
+            row["reason"] = p.get("note")
+        points.append(row)
+
+    return {
+        "task": "weather",
+        "available": bool(result.get("available")),
+        # 顶层失败的原因必须透传：只给 available=false 而不给原因，模型只能
+        # 答一句「查不到」，用户分不清是没这个地点、数据没加载还是那一刻缺测。
+        "reason": result.get("reason"),
+        "query_time": result.get("query_time"),
+        "timezone": result.get("timezone"),
+        "level_hpa": result.get("level_hpa"),
+        "level_note": result.get("level_note"),
+        "points": points,
+        "thresholds": result.get("thresholds"),
+        # 用户很可能接着问「TKE 是什么」，把口径一并给出去，省得模型自己编解释。
+        # 公式里的系数取自 settings，改阈值时不会与这里说的口径脱钩。
+        "field_glossary": {
+            "tke": "湍流动能，数值越大说明该处大气扰动越强，单位 m²/s²",
+            "edr": "等效顺变率（阵风强度），反映湍流对飞行器结构载荷的等效强度。"
+                    f"由 TKE 经外尺度换算：EDR = ε^(1/3)，其中 ε = {settings.TURB_EDR_C_EPS}·k^1.5/L，"
+                    "故单位为 m^(2/3)/s（不是无量纲）；数值越大对结构载荷越不利",
+            "wind_speed_ms": "水平风速模长 |V| = sqrt(u² + v²)，单位 m/s",
+            "temp_c": "气温。注意这是数据所在高度层（见 level_note，约 5 km）的温度，"
+                       "**不是地面气温**，回答时必须说清高度层，不要说成当地地面温度",
+            "humidity_pct": "相对湿度，单位 %",
+            "level": "按 TKE 与 EDR 取较高的一档：低风险 / 中风险 / 高风险 / 不可飞",
+            "unavailable": "available 为 false 的点表示那一刻没有数据（未读到或缺测），"
+                           "绝不能当成 0 或「风平浪静」来回答",
+        },
+        "turbulence_calibration": TURB_NOTE,
+        "time_base": TIME_BASE_NOTE,
+    }
+
+
 # ---------------------------------------------------------------- 规则模板版
 
 
@@ -711,6 +771,25 @@ def build_chat_messages(ctx: Dict[str, Any], history: List[Dict[str, Any]]) -> L
 
 def render_rule_chat_answer(ctx: Dict[str, Any]) -> str:
     """未启用模型时的兜底答复：照实复述结构化结论，不假装是对话。"""
+    if ctx.get("task") == "weather":
+        if not ctx.get("available"):
+            return (f"当前未启用对话模型，且{ctx.get('reason') or '气象数据暂不可用'}，"
+                    "无法给出实况。")
+        lines = ["当前未启用对话模型，以下是取到的实况："]
+        for p in (ctx.get("points") or []):
+            if not p.get("available"):
+                lines.append(f"- {p.get('name')}：{p.get('reason') or '缺测'}")
+                continue
+            temp = f"，{p['temp_c']}℃" if p.get("temp_c") is not None else ""
+            wind = f"，风速 {p['wind_speed_ms']} m/s" if p.get("wind_speed_ms") is not None else ""
+            lines.append(
+                f"- {p.get('name')}：TKE {p.get('tke')}，EDR {p.get('edr')}，"
+                f"等级 {p.get('level')}{wind}{temp}"
+            )
+        lines.append(f"（取数时刻 {ctx.get('query_time') or '—'} {ctx.get('timezone') or ''}，"
+                     f"高度层 {ctx.get('level_note') or '—'}）")
+        return "\n".join(lines)
+
     if ctx.get("task") == "time_window":
         rec = ctx.get("recommended") or {}
         window = rec.get("window") or []
