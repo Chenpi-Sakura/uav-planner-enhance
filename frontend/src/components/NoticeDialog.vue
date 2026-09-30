@@ -78,6 +78,14 @@ const COPY: Record<PlanNoticeReason, NoticeCopy> = {
     body: '后端没有正常响应，请确认后端服务已启动。',
     actions: [],
   },
+  assess_timeout: {
+    title: '评估超时',
+    body: '后端未返回原因。',
+    actions: [
+      '重试同一请求：首次读取的气象场留在进程内缓存，后续请求明显加快',
+      '减小「推演天数」或缩短起降点距离，降低单次读取的数据量',
+    ],
+  },
   rejected: {
     title: '输入不成立，请求被拒绝',
     body: '后端拒绝了这次请求，没有给出原因。',
@@ -89,8 +97,10 @@ const notice = computed<NoticeCopy | null>(() => {
   const n = store.planNotice;
   if (!n) return null;
   const copy = COPY[n.reason] ?? COPY.request_failed;
-  // 400 的原因是后端写的那句话，前端不重抄一遍门限数字，免得两处口径漂移
-  if (n.reason === 'rejected') return { ...copy, body: n.detail || copy.body };
+  // 后端写的原因（400 的门限、504 的冷读超时）直接用它那句话，前端不重抄一遍门限数字，免得两处口径漂移
+  if ((n.reason === 'rejected' || n.reason === 'assess_timeout') && n.detail) {
+    return { ...copy, body: n.detail };
+  }
   // 「没算完」得说清花了多少力气，否则它和「没路」读起来是同一句话
   if (n.reason === 'iteration_limit' && n.effort) {
     return { ...copy, body: `${copy.body}（${n.effort}）` };

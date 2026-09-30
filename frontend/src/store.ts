@@ -220,6 +220,7 @@ export interface StoreState {
   siteLoading: boolean;
   siteResult: SitePlanResult | null;      // 最近一次站点规划结果（一台一份）
   siteCatalog: SiteCatalog | null;        // 站表与机型能力包（进程内取一次）
+  hoveredSiteLegIndex: number | null;     // 地图联动：悬停的中继航段
   siteForm: SiteForm;
 }
 
@@ -321,13 +322,13 @@ export interface SiteCatalog {
 /** 规划弹窗种类：由后端 reason 映射而来，request_failed 表示请求本身没走通 */
 export type PlanNoticeReason =
   | 'blocked' | 'over_budget' | 'no_data' | 'iteration_limit' | 'request_failed'
-  | 'rejected';
+  | 'rejected' | 'assess_timeout';
 
 export interface PlanNotice {
   reason: PlanNoticeReason;
   /** 「未算出」时带上的搜索力气（"已研究 N 个路口 / 预算 M"），空串 = 后端没给 */
   effort?: string;
-  /** reason = rejected 时后端给的那句中文原因 */
+  /** reason = rejected / assess_timeout 时后端给的那句中文原因 */
   detail?: string;
 }
 
@@ -340,21 +341,40 @@ export class RequestRejected extends Error {
   }
 }
 
-/** 非 2xx 的统一出口：400 的 detail 是写给人看的原因，其余只算「后端没正常响应」 */
-export async function failRequest(response: Response, fallback: string): Promise<never> {
-  if (response.status === 400) {
-    const detail = await response.json()
-      .then(b => (typeof b?.detail === 'string' ? b.detail : ''))
-      .catch(() => '');
-    if (detail) throw new RequestRejected(detail);
+/**
+ * 后端以 504 回话：请求成立了，只是没在 `ASSESS_TIMEOUT_S` 内算完。
+ *
+ * 与「后端没响应」必须分开：后端那句写的是首次冷读要时间、重试会复用已载入的数据，
+ * 照着「请确认后端服务已启动」去重启只会让缓存更冷，越试越慢。
+ */
+export class UpstreamTimeout extends Error {
+  readonly detail: string;
+  constructor(detail: string) {
+    super(detail);
+    this.detail = detail;
   }
+}
+
+/** 后端非 2xx 的 body 里那句写给人的话；不是 JSON 或没带 detail 就当没有 */
+async function readDetail(response: Response): Promise<string> {
+  return response.json()
+    .then(b => (typeof b?.detail === 'string' ? b.detail : ''))
+    .catch(() => '');
+}
+
+/** 非 2xx 的统一出口：400 与 504 的 detail 都是写给人看的原因，其余只算「后端没正常响应」 */
+export async function failRequest(response: Response, fallback: string): Promise<never> {
+  const detail = await readDetail(response);
+  if (response.status === 400 && detail) throw new RequestRejected(detail);
+  if (response.status === 504) throw new UpstreamTimeout(detail || fallback);
   throw new Error(fallback);
 }
 
-export const noticeForError = (error: unknown): PlanNotice =>
-  error instanceof RequestRejected
-    ? { reason: 'rejected', detail: error.detail }
-    : { reason: 'request_failed' };
+export const noticeForError = (error: unknown): PlanNotice => {
+  if (error instanceof RequestRejected) return { reason: 'rejected', detail: error.detail };
+  if (error instanceof UpstreamTimeout) return { reason: 'assess_timeout', detail: error.detail };
+  return { reason: 'request_failed' };
+};
 
 export const store = reactive<StoreState>({
   selectingMode: null,
@@ -399,6 +419,7 @@ export const store = reactive<StoreState>({
   siteLoading: false,
   siteResult: null,
   siteCatalog: null,
+  hoveredSiteLegIndex: null,
   siteForm: { aircraft: '', payload_kg: 200, mission: 'cargo', text: '', parseSource: '' },
 });
 
@@ -690,6 +711,8 @@ export async function runSitePlan(): Promise<void> {
     return;
   }
   store.siteLoading = true;
+  // 旧结果上悬停的段号不能带到新链上：段的条数会变，索引会指错地方
+  store.hoveredSiteLegIndex = null;
   try {
     const body: Record<string, any> = {
       start: { lat: Number(store.start.lat), lon: Number(store.start.lng) },
@@ -712,7 +735,13 @@ export async function runSitePlan(): Promise<void> {
       body: JSON.stringify(body),
     });
     if (!response.ok) await failRequest(response, 'site plan failed');
-    store.siteResult = await response.json();
+    const data = await response.json();
+    store.siteResult = data;
+    // 表单没预选时，后端按它自己那台默认机出。结果卡上已经不再单列机型名，
+    // 就把实际飞过的那台回填成按钮的选中态，否则这条链是谁飞的界面上无从得知。
+    if (!store.siteForm.aircraft && data.meta?.aircraft) {
+      store.siteForm.aircraft = data.meta.aircraft;
+    }
   } catch (error) {
     console.error('站点规划请求失败:', error);
     store.planNotice = noticeForError(error);

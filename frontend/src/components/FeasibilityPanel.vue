@@ -71,7 +71,6 @@
           @mouseenter="store.hoveredSegmentIndex = idx"
           @mouseleave="store.hoveredSegmentIndex = null"
         >
-          <span class="seg-dot" :style="{ backgroundColor: riskColor(seg.level) }"></span>
           <span class="seg-names">{{ seg.from_name }} → {{ seg.to_name }}</span>
           <span class="seg-level" :style="{ color: riskColor(seg.level) }">{{ seg.level }}</span>
           <span class="seg-meta">{{ seg.distance_km }}km · TKE {{ fmtTke(seg.max_tke) }}</span>
@@ -226,25 +225,8 @@ const focusBlocking = () => {
 </script>
 
 <style scoped>
-/* 面板内的分区间距：本组件使用 scoped 样式，父组件 Sidebar.vue 的
-   .control-section 规则无法穿透选择器作用域，需要在此单独声明，
-   否则「开始评估」按钮会与下方结论/提示文字贴死。 */
-.control-section {
-  margin-bottom: 16px;
-}
-.hint-text {
-  font-size: 14px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-  margin: 0 0 10px 0;
-}
-.hint-text.small { font-size: 13px; opacity: 0.75; }
-
-.kpi-value.na {
-  font-size: 15px;
-  color: var(--text-secondary);
-  font-weight: 500;
-}
+/* 结论卡 / KPI / 分区标题 / 列表行骨架 / 次要按钮 已提到 style.css 的「结果区共用词汇」，
+   这里只留本页真正独有的东西。 */
 
 /* 起降点自身不安全提示 */
 .endpoint-alert {
@@ -291,120 +273,10 @@ const focusBlocking = () => {
 .priority-name { font-size: 15px; font-weight: 600; }
 .priority-limit { font-size: 12px; color: var(--text-secondary); }
 
-.verdict-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px;
-  border-radius: 12px;
-  margin-bottom: 14px;
-  border: 1px solid;
-}
-.verdict-card.ok {
-  background: rgba(34, 197, 94, 0.12);
-  border-color: rgba(34, 197, 94, 0.45);
-  color: #4ade80;
-}
-.verdict-card.bad {
-  background: rgba(239, 68, 68, 0.12);
-  border-color: rgba(239, 68, 68, 0.45);
-  color: #f87171;
-}
-/* 超预算：黄；未算出：灰。都不是「飞不了」，不能用红色 */
-.verdict-card.warn {
-  background: rgba(251, 191, 36, 0.12);
-  border-color: rgba(251, 191, 36, 0.45);
-  color: #fbbf24;
-}
-.verdict-card.unknown {
-  background: rgba(148, 163, 184, 0.12);
-  border-color: rgba(148, 163, 184, 0.4);
-  color: #cbd5e1;
-}
-.verdict-body { flex: 1; min-width: 0; }
-.verdict-line { display: flex; align-items: center; gap: 8px; }
-.verdict-title { font-size: 21px; font-weight: 700; }
-/* 风险档贴右边缘：结论在左、档位在最右，一行读完 */
-.verdict-line .risk-tag { margin-left: auto; }
-.verdict-sub { font-size: 13px; color: var(--text-secondary); margin-top: 6px; }
-
-.kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  margin-bottom: 14px;
-}
-.kpi-card {
-  background: rgba(0,0,0,0.2);
-  border: 1px solid var(--panel-border);
-  border-radius: 10px;
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.kpi-label { font-size: 12px; color: var(--text-secondary); }
-.kpi-value { font-size: 19px; font-weight: 700; }
-.kpi-value em { font-size: 12px; font-weight: 400; font-style: normal; opacity: 0.7; margin-left: 2px; }
-.kpi-value.warn { color: #f97316; }
-
-.risk-tag {
-  padding: 2px 10px;
-  border-radius: 9999px;
-  font-size: 14px;
-  font-weight: 700;
-  color: #0b1220;
-  flex-shrink: 0;
-}
-.risk-metrics {
-  display: flex;
-  gap: 3px 12px;
-  margin-top: 6px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  flex-wrap: wrap;
-}
-.risk-metrics b { color: var(--text-primary); }
-
-.sub-block {
-  margin-bottom: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--panel-border);
-}
-.sub-title {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin: 0 0 8px 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-}
-
-.segment-list { display: flex; flex-direction: column; gap: 6px; }
-/* 三列网格：圆点 | 城市对 | 风险档 占第一行，里程与 TKE 另起一行。
-   字号提上来以后一行塞不下，硬挤只会把城市名截成省略号。 */
-.segment-item {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  column-gap: 8px;
-  row-gap: 2px;
-  padding: 7px 9px;
-  background: rgba(0,0,0,0.18);
-  border: 1px solid transparent;
-  border-radius: 8px;
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
+/* 分段行是可点的（联动地图），这层行为不属于共用骨架 */
+.segment-item { cursor: pointer; transition: all 0.15s; }
 .segment-item:hover { background: rgba(255,255,255,0.07); }
 .segment-item.selected { border-color: var(--accent-color); background: rgba(52,152,219,0.15); }
-.seg-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.seg-names { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.seg-level { font-weight: 700; }
-.seg-meta { grid-column: 2 / span 2; font-size: 12px; color: var(--text-secondary); }
 
 .cost-row { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 6px; }
 .cost-row b.warn { color: #f97316; }
@@ -436,24 +308,8 @@ const focusBlocking = () => {
 .blocking-meta { font-size: 12px; color: var(--text-secondary); line-height: 1.55; }
 .blocking-meta b { color: var(--text-primary); }
 
-.ghost-btn {
-  background: transparent;
-  border: 1px dashed var(--panel-border);
-  color: var(--text-secondary);
-  border-radius: 9999px;
-  padding: 7px 18px;
-  font-size: 14px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  transition: all 0.2s;
-}
-.ghost-btn:hover { border-color: var(--accent-color); color: var(--accent-color); }
 .goto-window { margin-top: 16px; margin-bottom: 10px; }
 
-.action-row { margin-top: 16px; }
 .loading-icon { display: flex; align-items: center; gap: 8px; justify-content: center; }
 .spin { animation: spin 1.5s linear infinite; }
 @keyframes spin { 100% { transform: rotate(360deg); } }

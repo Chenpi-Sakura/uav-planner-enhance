@@ -596,10 +596,7 @@ const handleBaseClick = (base: BaseStation) => {
 .action-row {
   margin-bottom: 14px;
 }
-/* 「开始规划」是这一页的主操作，字号此前一直吃浏览器对 <button> 的默认 13.33px */
-.action-row .capsule-btn {
-  font-size: 15px;
-}
+/* 「开始规划」的 15px 字号已在 style.css 的 .action-row .capsule-btn 里统一给三个页签 */
 
 /* Custom Checkbox Grid */
 .checkbox-grid {
@@ -678,10 +675,6 @@ select option {
   color: white;
 }
 
-.disabled-btn {
-  opacity: 0.7;
-  cursor: not-allowed !important;
-}
 .loading-icon {
   display: flex;
   align-items: center;

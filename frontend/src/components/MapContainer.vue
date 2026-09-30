@@ -9,6 +9,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { store, RISK_COLORS, TIER_COLORS, PRIORITY_LABELS, activateRouteTier, fetchCoverage, SITE_AIRCRAFT_COLORS } from '../store';
 import { API_BASE, DEFAULT_REL_ALT } from '../config';
+import type { SiteCatalogSite } from '../store';
 
 const props = defineProps<{
   activeLayer: 'street' | 'satellite' | 'terrain'
@@ -91,37 +92,11 @@ onMounted(() => {
   renderCoverageBox();
   void fetchCoverage().then(renderCoverageBox);
 
-  // 选点只挪位置：相对高度是用户填的，一次点击不该顺手改成别的数。
-  // 只有还空着的（新建航点）才补默认值。
-  const pickedAlt = (cur: number | string): string =>
-    String(cur ?? '').trim() === '' ? String(DEFAULT_REL_ALT) : String(cur);
-
   // Handle clicks for point selection
   map.on('click', (e: L.LeafletMouseEvent) => {
     if (!store.selectingMode) return;
-    
-    const lat = e.latlng.lat.toFixed(6);
-    const lng = e.latlng.lng.toFixed(6);
-
-    if (store.selectingMode === 'start') {
-      store.start.lat = lat;
-      store.start.lng = lng;
-      store.start.alt = pickedAlt(store.start.alt);
-    } else if (store.selectingMode === 'end') {
-      store.end.lat = lat;
-      store.end.lng = lng;
-      store.end.alt = pickedAlt(store.end.alt);
-    } else if (store.selectingMode === 'waypoint') {
-      if (store.selectingIndex >= 0 && store.selectingIndex < store.waypoints.length) {
-        const wp = store.waypoints[store.selectingIndex];
-        wp.lat = lat;
-        wp.lng = lng;
-        wp.alt = pickedAlt(wp.alt);
-      }
-    }
-    
-    // Auto-disable selection mode after picking
-    store.selectingMode = null;
+    const hit = nearestSite(e.latlng);
+    fillSelection(hit ? hit.lat : e.latlng.lat, hit ? hit.lon : e.latlng.lng);
   });
 
   // Render fixed city bases
@@ -398,25 +373,37 @@ const renderAltBases = () => {
  * 可达圆只画起跳点那一圈 —— 213 个站点铺满屏幕不会让任何人更懂这条线，
  * 而"段长上限是个圆"这一眼就看出来了（池外灰点按 2026-09-27 裁定不进一期）。
  */
-const renderSitePlan = () => {
+const renderSitePlan = (fit = false) => {
   siteLayer.clearLayers();
   if (!map || !store.siteResult) return;
   const opts = (store.siteResult.options ?? []).filter(o => o.feasible);
+  const hovered = store.hoveredSiteLegIndex;
 
   opts.forEach(o => {
     const color = SITE_AIRCRAFT_COLORS[o.aircraft] ?? '#94a3b8';
+    const legs = o.legs ?? [];
     const pts: [number, number][] = [];
-    (o.legs ?? []).forEach((l, i) => {
+    legs.forEach((l, i) => {
       if (i === 0) pts.push([l.from.lat, l.from.lon]);
       pts.push([l.to.lat, l.to.lon]);
     });
     if (pts.length < 2) return;
-    L.polyline(pts, {
-      color, weight: 3, opacity: 0.95,
-      interactive: false,
-    }).addTo(siteLayer);
 
-    (o.legs ?? []).forEach(l => {
+    // 一段一条线：并成整链就分不出「哪一段被聚焦」，侧栏航段行的悬浮落不到地图上。
+    // 与功能一同款的双描边画法，压暗而不是变细——线宽一变整条链会跳。
+    const anyFocus = hovered !== null;
+    legs.forEach((l, i) => {
+      const piece: [number, number][] = [[l.from.lat, l.from.lon], [l.to.lat, l.to.lon]];
+      const dim = anyFocus && hovered !== i;
+      L.polyline(piece, {
+        color: '#0b1220', weight: 6, opacity: dim ? 0.12 : 0.4, interactive: false,
+      }).addTo(siteLayer);
+      L.polyline(piece, {
+        color, weight: 3, opacity: dim ? 0.3 : 0.95, interactive: false,
+      }).addTo(siteLayer);
+    });
+
+    legs.forEach(l => {
       const e = l.to;
       if (!e || String(e.site_id).startsWith('OD-')) return;
       const w = l.weather || {};
@@ -446,7 +433,80 @@ const renderSitePlan = () => {
       dashArray: '4, 6', fill: false, interactive: false,
     }).addTo(siteLayer);
   });
+
+  // 视野只在悬浮联动时挪：首次出结果、换机型那几次重画不该把地图拽走
+  const chain = opts[0]?.legs ?? [];
+  const focus = hovered !== null ? chain[hovered] : null;
+  if (!fit || chain.length === 0) return;
+  const bounds = focus
+    ? L.latLngBounds([[focus.from.lat, focus.from.lon], [focus.to.lat, focus.to.lon]] as [number, number][])
+    : L.latLngBounds([
+        [chain[0].from.lat, chain[0].from.lon],
+        ...chain.map(l => [l.to.lat, l.to.lon]),
+      ] as [number, number][]);
+  const pad = focus ? 80 : 50;
+  map.fitBounds(bounds, { padding: [pad, pad] });
 };
+
+/** 白点的图标框是 12 px 见方，半径取到它的对角线（≈8.5 px）再留一点，
+ *  这样「点中图标」与「点在图标边上」两条路径的落点范围对得上，不会一个吸一个不吸 */
+const SITE_SNAP_PX = 10;
+
+/** 选点只挪位置：相对高度是用户填的，一次点击不该顺手改成别的数。
+ *  只有还空着的（新建航点）才补默认值。 */
+const pickedAlt = (cur: number | string): string =>
+  String(cur ?? '').trim() === '' ? String(DEFAULT_REL_ALT) : String(cur);
+
+/**
+ * 把当前取点目标写成这对坐标，并结束取点。
+ *
+ * 地图空白处点击与直接点站点白点两条路共用这一份：marker 的鼠标事件不冒泡到 map，
+ * 各写一遍就会出现「点得中旁边、点不中那个点」。
+ */
+function fillSelection(lat: number, lng: number): void {
+  const la = lat.toFixed(6);
+  const ln = lng.toFixed(6);
+  if (store.selectingMode === 'start') {
+    store.start.lat = la;
+    store.start.lng = ln;
+    store.start.alt = pickedAlt(store.start.alt);
+  } else if (store.selectingMode === 'end') {
+    store.end.lat = la;
+    store.end.lng = ln;
+    store.end.alt = pickedAlt(store.end.alt);
+  } else if (store.selectingMode === 'waypoint') {
+    const wp = store.waypoints[store.selectingIndex];
+    if (wp) {
+      wp.lat = la;
+      wp.lng = ln;
+      wp.alt = pickedAlt(wp.alt);
+    }
+  }
+  store.selectingMode = null;
+}
+
+/**
+ * 屏幕上离这个位置最近的候选站点，超出吸附半径给 null。
+ *
+ * 只在「多航点」页生效：那里才铺着这些白点，吸一个看不见的点等于凭空改坐标。
+ * 候选不限当前缩放级别下有没有印出地名——远景只画机场是标签密度问题，县城照样是合法落地点，
+ * 而 10 px 的半径决定了只有正对着那个点按下去才吸得上。
+ */
+function nearestSite(ll: L.LatLng): SiteCatalogSite | null {
+  if (!map || store.sidebarTab !== 'site') return null;
+  const p = map.latLngToContainerPoint(ll);
+  let best: SiteCatalogSite | null = null;
+  let bestPx = SITE_SNAP_PX;
+  for (const s of store.siteCatalog?.sites ?? []) {
+    if (s.usable === false) continue;
+    const d = map.latLngToContainerPoint([s.lat, s.lon]).distanceTo(p);
+    if (d < bestPx) {
+      bestPx = d;
+      best = s;
+    }
+  }
+  return best;
+}
 
 /** 站表全量候选点：进「多航点」页就带地名画出来，不让人对着一串无名圆点猜算法随机落了哪儿 */
 const renderSiteCatalog = () => {
@@ -457,7 +517,7 @@ const renderSiteCatalog = () => {
   (store.siteCatalog?.sites ?? []).forEach(s => {
     if (s.usable === false) return;
     if (!labelAll && s.type !== 'airport') return;
-    L.marker([s.lat, s.lon], {
+    const m = L.marker([s.lat, s.lon], {
       zIndexOffset: -200,
       icon: L.divIcon({
         className: 'site-cat-marker',
@@ -467,6 +527,10 @@ const renderSiteCatalog = () => {
     }).addTo(siteCatalogLayer).bindTooltip(
       `${s.name} · ${s.elevation_m ?? '—'} m`,
       { direction: 'top', offset: [0, -6] });
+    // 取点时直接点在这个点上也要能落位：吸附半径只有白点那么大，未必罩得住图标
+    m.on('click', () => {
+      if (store.selectingMode) fillSelection(s.lat, s.lon);
+    });
   });
 };
 
@@ -767,6 +831,11 @@ watch([() => store.routeOptions, () => store.priority, () => store.hoveredTier],
 // 多航点模式：重跑一次规划就跟着重画
 watch([() => store.siteResult], () => {
   renderSitePlan();
+});
+
+// 侧栏悬浮哪一段 = 那一段留在原色、其余压暗，视野挪过去；移开回到整条链
+watch(() => store.hoveredSiteLegIndex, () => {
+  renderSitePlan(true);
 });
 
 // 站表只在「多航点」页铺出来；首次进页时目录可能还没取到，取到后再画一次

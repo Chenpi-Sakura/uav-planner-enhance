@@ -76,6 +76,12 @@ body {
   transform: translateY(-1px);
 }
 
+/* 请求进行中的主按钮：三个页签都用它，写在 Sidebar 的 scoped 块里只会命中它自己那一个按钮 */
+.disabled-btn {
+  opacity: 0.7;
+  cursor: not-allowed !important;
+}
+
 /* 全局工具类：放在各组件 scoped 样式之外，否则跨组件引用时不生效 */
 .full-width {
   width: 100%;
@@ -104,6 +110,156 @@ body {
   background: rgba(52, 152, 219, 0.22);
   border-color: var(--accent-color);
 }
+
+/* 字段标题：三个页签同一档字号，14px 是「标签」与 13px「正文」的分界 */
+.field-label { font-size: 14px; color: var(--text-secondary); }
+
+/* ==================== 结果区共用词汇 ====================
+   三个页签的结果卡共用这一套：结论卡 → KPI → 分区列表 → 次要说明。
+   各组件的 scoped 副本会因属性选择器特异性更高而盖过这里，
+   所以数值只允许改这一处，组件内只留真正不同的那一条。 */
+.control-section { margin-bottom: 16px; }
+
+.hint-text { font-size: 14px; color: var(--text-secondary); line-height: 1.6; margin: 0 0 10px 0; }
+.hint-text.small { font-size: 13px; opacity: 0.75; }
+
+/* 主操作按钮：三个页签的「开始规划 / 查找最佳窗口 / 规划中继站点」同一字号，
+   不吃 <button> 的默认 13.33px。间距留给各组件自己定（首元素加 margin-top 会推开整页）。 */
+.action-row .capsule-btn { font-size: 15px; }
+
+/* 四态结论卡：可飞绿 / 超预算黄 / 未算出灰 / 不可飞红。只有真「不行」才是红 */
+.verdict-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 12px;
+  margin-bottom: 14px;
+  border: 1px solid;
+}
+.verdict-card.ok {
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.45);
+  color: #4ade80;
+}
+.verdict-card.bad {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #f87171;
+}
+.verdict-card.warn {
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.45);
+  color: #fbbf24;
+}
+.verdict-card.unknown {
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.4);
+  color: #cbd5e1;
+}
+.verdict-body { flex: 1; min-width: 0; }
+.verdict-line { display: flex; align-items: center; gap: 8px; }
+.verdict-title { font-size: 21px; font-weight: 700; }
+/* 风险档贴右边缘：结论在左、档位在最右，一行读完 */
+.verdict-line .risk-tag { margin-left: auto; }
+.verdict-sub { font-size: 13px; color: var(--text-secondary); margin-top: 6px; line-height: 1.6; }
+
+.risk-tag {
+  padding: 2px 10px;
+  border-radius: 9999px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0b1220;
+  flex-shrink: 0;
+}
+.risk-metrics {
+  display: flex;
+  gap: 3px 12px;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+.risk-metrics b { color: var(--text-primary); }
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 14px;
+}
+/* 指标凑不成一行三列时（时间窗口页有四个）用两列 */
+.kpi-grid.two-col { grid-template-columns: 1fr 1fr; }
+.kpi-card {
+  background: rgba(0,0,0,0.2);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.kpi-label { font-size: 12px; color: var(--text-secondary); }
+.kpi-value { font-size: 19px; font-weight: 700; }
+.kpi-value em { font-size: 12px; font-weight: 400; font-style: normal; opacity: 0.7; margin-left: 2px; }
+/* v-html 渲染的单位上标也要命中，且不参与行高 */
+.kpi-value em sup { font-size: 0.78em; line-height: 0; }
+.kpi-value.na { font-size: 15px; color: var(--text-secondary); font-weight: 500; }
+.kpi-value.warn { color: #f97316; }
+
+.sub-block {
+  margin-bottom: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--panel-border);
+}
+.sub-title {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin: 0 0 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/* 列表行：名称 | 风险档 占第一行，里程等次要信息另起一行。
+   13px 字号下五段塞不进一行，硬挤会把风险档拆成两行、把里程截成省略号。
+   风险档右侧已经是着色文字，行首不再放同色的圆点——一套信息不给两遍编码。
+   可点行的 cursor/hover/selected 属于行为，留在各组件自己的 scoped 块里。 */
+.segment-list { display: flex; flex-direction: column; gap: 6px; }
+.segment-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 7px 9px;
+  background: rgba(0,0,0,0.18);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.seg-names { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seg-level { font-weight: 700; }
+.seg-meta { grid-column: 1 / span 2; font-size: 12px; color: var(--text-secondary); }
+
+/* 次要动作：虚线描边，不和实心蓝主按钮抢权重 */
+.ghost-btn {
+  background: transparent;
+  border: 1px dashed var(--panel-border);
+  color: var(--text-secondary);
+  border-radius: 9999px;
+  padding: 7px 18px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  transition: all 0.2s;
+}
+.ghost-btn:hover { border-color: var(--accent-color); color: var(--accent-color); }
 
 /* Scrollbar styling for dark mode */
 ::-webkit-scrollbar {

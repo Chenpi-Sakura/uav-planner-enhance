@@ -43,7 +43,8 @@ async def _run_assess(func, request):
     except asyncio.TimeoutError:
         raise HTTPException(
             status_code=504,
-            detail=f"评估超时（>{settings.ASSESS_TIMEOUT_S:.0f}s），数据可能正在冷读，请稍后重试。",
+            detail=f"评估未在 {settings.ASSESS_TIMEOUT_S:.0f} 秒上限内完成："
+                   f"气象场首次读取耗时较长，重试时将复用已载入的数据。",
         )
 
 

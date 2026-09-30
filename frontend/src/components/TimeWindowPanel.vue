@@ -47,7 +47,7 @@
         </div>
       </div>
 
-      <div class="kpi-grid">
+      <div class="kpi-grid two-col">
         <div class="kpi-card">
           <span class="kpi-label">全程风险等级</span>
           <span class="kpi-value" :style="{ color: riskColor(rec?.level ?? '') }">
@@ -315,20 +315,8 @@ const handleScan = async () => {
 </script>
 
 <style scoped>
-/* 面板内的分区间距：本组件使用 scoped 样式，父组件 Sidebar.vue 的
-   .control-section 规则无法穿透选择器作用域，需要在此单独声明，
-   否则「查找最佳窗口」按钮会与下方结果卡贴死。 */
-.control-section {
-  margin-bottom: 16px;
-}
-.hint-text {
-  font-size: 14px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-  margin: 0 0 12px 0;
-}
-.hint-text.small { font-size: 13px; opacity: 0.75; }
-
+/* 结论卡 / KPI / 分区标题 / 次要说明 已提到 style.css 的「结果区共用词汇」。
+   本页独有的只有：候选时刻行、时段风险条、7 天推演行。 */
 .btn-inner {
   display: flex;
   align-items: center;
@@ -341,75 +329,10 @@ const handleScan = async () => {
   gap: 6px;
   margin-bottom: 8px;
 }
-.field-label {
-  font-size: 14px;
-  color: var(--text-secondary);
-}
 .action-row { margin-top: 16px; }
-/* 主操作按钮：与路径规划页的「开始规划」同一字号，不吃 <button> 的默认 13.33px */
-.action-row .capsule-btn { font-size: 15px; }
 .loading-icon { display: flex; align-items: center; gap: 8px; justify-content: center; }
 .spin { animation: spin 1.5s linear infinite; }
 @keyframes spin { 100% { transform: rotate(360deg); } }
-
-.verdict-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px;
-  border-radius: 12px;
-  margin-bottom: 14px;
-  border: 1px solid;
-}
-.verdict-card.ok {
-  background: rgba(34, 197, 94, 0.12);
-  border-color: rgba(34, 197, 94, 0.45);
-  color: #4ade80;
-}
-.verdict-card.bad {
-  background: rgba(239, 68, 68, 0.12);
-  border-color: rgba(239, 68, 68, 0.45);
-  color: #f87171;
-}
-.verdict-title { font-size: 21px; font-weight: 700; }
-.verdict-sub { font-size: 13px; color: var(--text-secondary); margin-top: 2px; line-height: 1.6; }
-
-.kpi-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-.kpi-card {
-  background: rgba(0,0,0,0.2);
-  border: 1px solid var(--panel-border);
-  border-radius: 10px;
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.kpi-label { font-size: 12px; color: var(--text-secondary); }
-.kpi-value { font-size: 19px; font-weight: 700; }
-.kpi-value em { font-size: 12px; font-weight: 400; font-style: normal; opacity: 0.7; margin-left: 2px; }
-/* 同上：v-html 的上标要用 :deep 才命中，且不参与行高 */
-.kpi-value em :deep(sup) { font-size: 0.78em; line-height: 0; }
-
-.sub-block {
-  margin-bottom: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--panel-border);
-}
-.sub-title {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin: 0 0 8px 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-}
 
 .slot-list { display: flex; flex-direction: column; gap: 6px; }
 /* 三列网格：时刻 + 风险档占第一行，里程与绕行另起一行，按钮竖跨两行钉在右侧。
@@ -428,7 +351,8 @@ const handleScan = async () => {
 }
 .slot-time { grid-column: 1; grid-row: 1; white-space: nowrap; }
 .slot-level { grid-column: 2; grid-row: 1; justify-self: start; font-weight: 700; white-space: nowrap; }
-.seg-meta { grid-column: 1 / span 2; grid-row: 2; font-size: 12px; color: var(--text-secondary); }
+/* 共用骨架只管列，行号得自己钉：行尾那颗按钮竖跨两行，自动放置会把它挤走 */
+.slot-item .seg-meta { grid-row: 2; }
 
 /* 候选行：时刻后面挂「推荐」小标，行尾一个把该时刻送进功能一的按钮 */
 .route-flag {
