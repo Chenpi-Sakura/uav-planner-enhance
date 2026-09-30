@@ -39,8 +39,10 @@
                     class="trace-icon"
                     :class="{ spin: s.status === 'run' }"
                   />
-                  <span class="trace-text">{{ s.label }}</span>
-                  <span v-if="s.detail" class="trace-detail">{{ s.detail }}</span>
+                  <span class="trace-text" :title="s.label">{{ s.label }}</span>
+                  <!-- detail 可能很长（时间戳、路径、整句结论），不截断会把左边的
+                       操作名挤成多行。硬截断 + 尾部渐隐表示「还有」，完整内容靠 title -->
+                  <span v-if="s.detail" class="trace-detail" :title="s.detail">{{ s.detail }}</span>
                 </li>
               </ul>
             </div>
@@ -224,15 +226,14 @@ const send = async (raw: string) => {
     // 前端与后端各有一道轮数闸（这里 6、agent.py 里 MAX_STEPS=5）。两边都留一道是
     // 有意的：任何一边单独失效都还收得住，不至于让模型无限兜圈。
     for (let round = 0; round < 6; round++) {
-      const step = await callAgent(history, text, toolResults, round);
+      // 只有最后一轮（不再要工具）才让正文占住气泡：前几轮正文是空的，
+      // 气泡里显示的是轨迹。用户看到的是「一步步在动 → 得出结论」。
+      const step = await callAgent(history, text, toolResults, round, reply);
       if (step.error) {
         reply.error = step.error;
         break;
       }
-      if (!step.calls.length) {
-        reply.text = step.text;
-        break;
-      }
+      if (!step.calls.length) break;   // 正文已经流进 reply 了
 
       // 同一批里完全相同的调用只执行一次。模型偶尔会把 run_plan 连写两遍
       // （用户切档时尤其容易），两次都真跑就是白烧两轮 A* 拿回一样的数字。
@@ -250,12 +251,15 @@ const send = async (raw: string) => {
         const slow = SLOW_TOOLS.has(tool);
         // 慢工具先落一条「正在…」再原地改写：一次三档 A* 要十几秒，
         // 中间没有动静的话用户会以为卡死了。快工具不必多这一次闪烁。
-        const row: TraceStep = {
+        reply.steps!.push({
           tool,
           label: slow ? `正在${SLOW_VERBS[tool] ?? '处理'}…` : `${TOOL_VERBS[tool] ?? '处理'}中…`,
           status: 'run',
-        };
-        reply.steps!.push(row);
+        });
+        // 取**响应式数组里那一项**再改，而不是改 push 进去的原始对象：
+        // Vue 的数组存的是代理，改原始对象不触发重渲染（之前看着能动是搭了
+        // 别的更新的便车，这里改成不依赖巧合）。
+        const row = reply.steps![reply.steps!.length - 1];
 
         const r = await invokeTool(tool, call.args || {});
         row.label = r.label;
@@ -299,14 +303,21 @@ const send = async (raw: string) => {
   }
 };
 
-/** 问后端一步。返回要么是要调的工具，要么是最终正文，不会两者都有。 */
+/**
+ * 问后端一步。返回要么是要调的工具，要么是最终正文，不会两者都有。
+ *
+ * ``reply`` 是本轮那条**响应式**助手消息：delta 直接累加到它身上，每个 chunk 都会
+ * 触发一次重渲染，正文才是真流式出来的。攒在局部变量里等读完再一次性赋值看着
+ * "结果一样"，实际体感是卡十几秒后整段蹦出来 —— 一次三档 A* 十几秒，这个差别很大。
+ */
 const callAgent = async (
   history: { role: string; content: string }[],
   text: string,
   toolResults: Record<string, any>[],
   roundIndex: number,
-): Promise<{ calls: any[]; text: string; error?: string }> => {
-  const out: { calls: any[]; text: string; error?: string } = { calls: [], text: '' };
+  reply: Turn,
+): Promise<{ calls: any[]; error?: string }> => {
+  const out: { calls: any[]; error?: string } = { calls: [] };
   try {
     const response = await fetch(`${API_BASE}/api/assess/agent`, {
       method: 'POST',
@@ -323,6 +334,10 @@ const callAgent = async (
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    // 工具轮里气泡上写的是「正在规划…」这类中间态；正文轮第一个 delta 到达时
+    // 必须把它清掉，否则最终回答会接在中间态后面，变成
+    // 「正在规划…这是结论」。delta 只会在正文轮出现，所以清一次就够。
+    let clearedPlaceholder = false;
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -335,7 +350,10 @@ const callAgent = async (
         let event: any;
         try { event = JSON.parse(line.slice(5).trim()); } catch { continue; }
         if (event.type === 'tool_calls') out.calls = event.calls ?? [];
-        else if (event.type === 'delta') out.text += event.text ?? '';
+        else if (event.type === 'delta' && event.text) {
+          if (!clearedPlaceholder) { reply.text = ''; clearedPlaceholder = true; }
+          reply.text += event.text;
+        }
         else if (event.type === 'error') out.error = event.message ?? '生成失败';
       }
     }
@@ -629,6 +647,9 @@ onMounted(() => {
   font-size: 11px;
   line-height: 1.5;
   color: var(--text-primary);
+  /* 两列都不许换行：换行会把一行操作撑成三行，轨迹整体节奏就散了 */
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .trace-icon {
@@ -641,14 +662,36 @@ onMounted(() => {
 .trace-list li.error .trace-text { color: #fca5a5; }
 .trace-list li.run .trace-text { color: var(--text-secondary); }
 
-.trace-text { flex: 1; min-width: 0; word-break: break-word; }
+/* 操作名：优先保住自己的宽度，实在放不下才截（它比 detail 更能说明做了什么） */
+.trace-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
+/* 补充说明：硬截断 + 尾部渐隐。
+   右侧这列天然是长的（时间戳、整句结论、路径），不限宽就会把左边操作名挤没。
+   padding-right 留出的空白正好落在 mask 的渐隐区里，所以省略号不会被一起淡掉 ——
+   省略号留在可见区，渐隐只吃掉「还有更多」的那段空白。 */
 .trace-detail {
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 48%;
+  padding-right: 16px;
   font-size: 10px;
   color: var(--text-secondary);
   opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent 100%);
 }
+
+/* 没有 title 提示的场合（截断时也不该让鼠标停在死字上） */
+.trace-detail:hover { color: var(--text-primary); }
 
 .spin { animation: spin 1s linear infinite; }
 

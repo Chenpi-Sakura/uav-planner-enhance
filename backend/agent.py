@@ -19,6 +19,8 @@ import re
 import urllib.request
 from typing import Any, Dict, Iterator, List, Optional
 
+import assessor
+import tools
 from assessor import llm_available
 from config import settings
 from tools import TOOL_NAMES, catalog_text, validate_args
@@ -44,17 +46,10 @@ SYSTEM_PROMPT = f"""你是无人机气象航线规划系统里的操作助手。
 【可用工具】
 {catalog_text()}
 
-【输出格式 —— 必须严格遵守】
-需要调用工具时，**只输出一个 JSON 数组**，不要写任何别的字（不要写「好的，我来操作」这类开场白）：
-[{{"tool": "工具名", "args": {{"参数名": 值}}}}]
-
-示例（要调两个工具就输出两项）：
-[{{"tool": "toggle_overlay", "args": {{"layer": "tke", "on": true}}}}, {{"tool": "focus_region", "args": {{"name": "曲松县"}}}}]
-
-不需要调用工具、可以直接回答时，才输出普通中文正文。
+想改变界面或数据就调用工具；只是解释、回答、复述已有结果就直接说话。工具由系统以结构化方式提供，不要自己把工具调用写成 JSON 文本。
 
 【铁律】
-1. 想改变界面或数据，**必须调用工具**，不许只在文字里描述你会怎么做。用户看到的每一条动作记录都对应一次真实的工具调用。
+1. 用户看到的每一条动作记录都对应一次真实的工具调用，所以**不要只在文字里描述你会怎么做**——要做就调工具。
 2. **严禁承诺任何未来动作**。不要说「我明天发给你」「稍后补充」「回头再告诉你」——你没有任何定时、后台或通知能力，做不到的事就直说做不到。
 3. 数据里没有的，就说没有。用户问「哪里能备降」而你还没查过，就先调 search_sites 去查；查完确实没有，就回答「50 km 内没有可用备降点」。**绝不许自己编一条政策或一个数字**。
 4. 数值、距离、风险等级、站点名称**只能来自工具返回的结果**。工具没给的，一个字都不要编。
@@ -65,98 +60,89 @@ SYSTEM_PROMPT = f"""你是无人机气象航线规划系统里的操作助手。
 9. 回答用简洁中文，可用 Markdown 列表，控制在 300 字以内。不要输出思考过程、草稿或自我说明。"""
 
 
-def _llm(messages: List[Dict[str, str]], max_tokens: int = 900) -> Optional[str]:
-    """一次非流式调用，只取正文。异常一律吞掉返回 None。"""
-    if not llm_available():
-        return None
-    body = {
-        "model": settings.AI_MODEL,
-        "messages": messages,
-        "temperature": settings.AI_TEMPERATURE,
-        "max_tokens": max_tokens,
-    }
-    thinking = (settings.AI_THINKING or "").strip().lower()
-    if thinking in ("disabled", "adaptive"):
-        body["thinking"] = {"type": thinking}
-    try:
-        key = os.environ.get(settings.AI_API_KEY_ENV or "UAV_AI_API_KEY", "")
-        headers = {"Content-Type": "application/json"}
-        if key:
-            headers["Authorization"] = f"Bearer {key}"
-        url = settings.AI_BASE_URL.rstrip("/") + "/chat/completions"
-        with urllib.request.urlopen(urllib.request.Request(
-                url, data=json.dumps(body).encode("utf-8"),
-                headers=headers, method="POST"),
-                timeout=float(settings.AI_TIMEOUT_S)) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except Exception:
-        return None
+def _iter_sse_full(resp) -> Iterator[Dict[str, Any]]:
+    """读一条 OpenAI 兼容 SSE 流，同时产出正文片段与工具调用分片。
 
-    content = data["choices"][0]["message"].get("content") or ""
-    content = _THINK_BLOCK.sub("", content)
-    return content.strip()
+    没用 ``assessor._iter_sse_content``：那个只取 ``delta.content``，会把
+    ``delta.tool_calls`` 整个丢掉。这里两个都要。
 
-
-def _extract_json(text: str) -> Any:
-    """从可能混着自然语言的输出里抠出 JSON。
-
-    模型很爱在工具调用前加一句「好的，我来操作：」，更爱把工具调用写成
-    ```json ... ``` 代码块。直接 `find("[")` 会命中正文里第一个方括号
-    （例如 ``[layer=tke, on=true]``），截出来的根本不是 JSON —— 实测这一步
-    静默失败会让整个 Agent 退化成「只会说不会做」。
-
-    所以这里按候选逐个试：对象形态（取 tool_calls）与数组形态都认，
-    再从每个 ``[`` 位置起试到最后一个 ``]``，谁先解析成功用谁。
+    ``delta.tool_calls`` 是**分片**到达的（实测一轮 10 个 SSE 事件里有 1 个带它），
+    ``function.arguments`` 还是 JSON 字符串的片段，必须按 index 拼完再解析。
     """
-    if not text:
-        return None
-    # 去掉 ```json 代码块围栏，省得围栏里的内容干扰定位
-    cleaned = text.replace("```json", "").replace("```", "")
-
-    # 1) 对象形态
-    ob, oe = cleaned.find("{"), cleaned.rfind("}")
-    if ob >= 0 and oe > ob:
-        try:
-            obj = json.loads(cleaned[ob:oe + 1])
-            if isinstance(obj, dict) and isinstance(obj.get("tool_calls"), list):
-                return obj["tool_calls"]
-        except Exception:
-            pass
-
-    # 2) 数组形态：逐个左括号位置试
-    end = cleaned.rfind("]")
-    if end < 0:
-        return None
-    i = cleaned.find("[")
-    while 0 <= i < end:
-        try:
-            got = json.loads(cleaned[i:end + 1])
-            if isinstance(got, list):
-                return got
-        except Exception:
-            pass
-        i = cleaned.find("[", i + 1)
-    return None
-
-
-def _parse_calls(content: str) -> List[Dict[str, Any]]:
-    """取出工具调用列表，并逐个校验工具名与参数。"""
-    raw = _extract_json(content)
-    if not isinstance(raw, list):
-        return []
-
-    out: List[Dict[str, Any]] = []
-    for item in raw:
-        if not isinstance(item, dict):
+    partial: Dict[int, Dict[str, str]] = {}
+    for raw_line in resp:
+        line = raw_line.decode("utf-8", "replace").strip()
+        if not line.startswith("data:"):
             continue
-        name = item.get("tool") or item.get("name")
-        if name not in TOOL_NAMES:
-            continue    # 模型编了个不存在的工具名：丢掉，不猜
-        out.append({
-            "tool": name,
-            "args": validate_args(name, item.get("args") or item.get("arguments") or {}),
-        })
-        if len(out) >= 6:   # 一轮里最多 6 个，再多就是模型跑飞了
+        body = line[5:].strip()
+        if not body or body == "[DONE]":
+            continue
+        try:
+            parsed = json.loads(body)
+        except Exception:
+            continue
+        for choice in (parsed.get("choices") or []):
+            delta = choice.get("delta") or {}
+            if delta.get("content"):
+                yield {"kind": "text", "text": delta["content"]}
+            for tc in (delta.get("tool_calls") or []):
+                slot = partial.setdefault(int(tc.get("index", 0)), {"name": "", "args": ""})
+                fn = tc.get("function") or {}
+                if fn.get("name"):
+                    slot["name"] += fn["name"]
+                if fn.get("arguments"):
+                    slot["args"] += fn["arguments"]
+    for idx in sorted(partial):
+        yield {"kind": "call", "name": partial[idx]["name"], "args_raw": partial[idx]["args"]}
+
+
+def _llm_stream(msgs: List[Dict[str, str]]) -> Iterator[Dict[str, Any]]:
+    """流式跑一轮。
+
+    复用 ``assessor.chat_request_body`` / ``_open_stream`` 而不是自己拼请求体：
+    请求侧的 ``thinking: {"type": "disabled"}``（模型不思考）与响应侧的
+    ``<think>`` 剥离都在那边统一处理过，不重复发明。
+
+    实测 MiniMax-M3 走原生 function calling：工具调用落在 ``delta.tool_calls``，
+    此时 ``delta.content`` 为空 —— **正文与工具调用由协议保证分离**。所以正文
+    可以逐段立即外发（真流式），不需要「看首字符是不是 ``[``」那种猜测式分流。
+    """
+    body = assessor.chat_request_body(msgs)
+    body["tools"] = tools.openai_tools()
+    body["tool_choice"] = "auto"
+    resp = assessor._open_stream(body)
+    try:
+        for ev in _iter_sse_full(resp):
+            yield ev
+    finally:
+        try:
+            resp.close()
+        except Exception:
+            pass
+
+
+def _calls_from_stream(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """把攒下的工具调用分片变成可执行的调用列表。
+
+    工具名不在清单里、或参数不是合法 JSON 的，直接丢掉：这一轮就当它没调工具，
+    交给下一轮重新判断。宁可少调也不要执行一个界面上不存在的东西。
+    """
+    out: List[Dict[str, Any]] = []
+    for ev in events:
+        if ev.get("kind") != "call":
+            continue
+        name = (ev.get("name") or "").strip()
+        if name not in tools.TOOL_NAMES:
+            continue
+        raw = (ev.get("args_raw") or "").strip()
+        try:
+            args = json.loads(raw) if raw else {}
+        except Exception:
+            args = {}
+        if not isinstance(args, dict):
+            args = {}
+        out.append({"tool": name, "args": tools.validate_args(name, args)})
+        if len(out) >= 6:
             break
     return out
 
@@ -214,26 +200,40 @@ def run_agent(state: Dict[str, Any], messages: List[Dict[str, Any]],
 
     msgs = _build_messages(state, messages, tool_results or [])
 
-    content = _llm(msgs)
-    if content is None:
-        yield {"type": "error", "message": "AI 服务调用失败，请稍后重试。"}
+    # 正文逐段立即外发（真流式）；工具调用攒到这一轮读完再一次性给前端执行。
+    collected: List[Dict[str, Any]] = []
+    said_anything = False
+    try:
+        for ev in _llm_stream(msgs):
+            if ev.get("kind") == "text":
+                said_anything = True
+                yield {"type": "delta", "text": ev["text"]}
+            else:
+                collected.append(ev)
+    except Exception as exc:
+        yield {"type": "error", "message": f"AI 服务调用失败（{type(exc).__name__}），请稍后重试。"}
         yield {"type": "done"}
         return
 
-    calls = _parse_calls(content)
+    calls = _calls_from_stream(collected)
+
     if calls and round_index < MAX_STEPS:
         yield {"type": "tool_calls", "calls": calls}
         yield {"type": "done"}
         return
 
-    # 到这里要么本来就没要调工具，要么轮数用完了。两种情况都**不能把工具调用
-    # 的原文当答案吐出去** —— 界面上突然冒出一段 [{"tool": ...}] 是最糟的失败形态。
-    if any(t in content for t in TOOL_NAMES) and not (calls and round_index < MAX_STEPS):
-        tail = (f"\n\n（已连续执行 {round_index} 轮工具调用，本轮先到这里。"
-                "你可以直接告诉我下一步要做什么。）") if calls else ""
-        yield {"type": "delta", "text": "（这轮的指令我没有执行完，工具调用也没能正常处理。" + tail + "）"}
+    # 走到这里：要么本来就是要直接回答（正文已逐段流出），要么轮数用完了模型还想调工具。
+    if calls:
+        # 注意别把这条写成「我不具备该能力」：能力是有的，只是这轮用完了 ——
+        # 说成能力缺失会把用户引向错误结论（换个说法重试也还是不行）。
+        yield {"type": "delta", "text":
+               f"\n\n（已连续执行 {round_index} 轮工具调用，本轮先到这里。"
+               "你可以直接告诉我下一步要做什么。）"}
         yield {"type": "done"}
         return
 
-    yield {"type": "delta", "text": content or "（没有可执行的操作，也没有可回答的内容）"}
+    if not said_anything:
+        # 一个字都没出、又没有工具调用：如实说做不到，不编也不装死。
+        yield {"type": "delta", "text": "这一步我目前不具备对应的操作能力。"
+                                       "可以说清楚想达成什么，我用现有能力来做。"}
     yield {"type": "done"}

@@ -312,13 +312,34 @@ def validate_args(tool: str, raw: Any) -> Dict[str, Any]:
 def catalog_text() -> str:
     """渲染成提示词里的一段工具说明。
 
-    只写名称、用途和参数 —— **不写阈值、不写内部状态**。工具是「能做什么」，
+    走原生 tool_calls 后这段**只用于给模型一句自然语言的能力概览**（帮助它理解
+    什么时候该动手），具体的工具签名由 ``openai_tools()`` 以结构化形式提供。
     判据仍然只能来自工具返回的结果。
     """
     lines = []
     for t in TOOLS:
-        props = t["params"]["properties"]
-        args = ", ".join(f"{k}({v.get('type', 'any')})" for k, v in props.items()) or "无参数"
         where = "界面操作" if t["layer"] == "ui" else "数据计算"
-        lines.append(f"- {t['name']}（{where}）：{t['description']} 参数：{args}")
+        lines.append(f"- {t['name']}（{where}）：{t['description']}")
     return "\n".join(lines)
+
+
+def openai_tools() -> List[Dict[str, Any]]:
+    """转成 OpenAI 兼容的 ``tools`` 结构。
+
+    实测 MiniMax-M3 走原生 function calling：``finish_reason`` 为 ``tool_calls``、
+    ``content`` 为空串，工具调用落在 ``message.tool_calls``；流式时走
+    ``delta.tool_calls`` 增量到达。也就是说**正文与工具调用由协议保证分离**，
+    不再需要「看首字符是不是 ``[``」那种猜测式分流（那种写法一旦模型把 JSON 写进
+    散文就会漏给用户，本轮已实测踩过）。
+
+    描述里保留必要的判断依据（比如「切档不需要重跑」），但不写内部阈值与状态 ——
+    那是工具结果的内容，不是工具的用法。
+    """
+    return [{
+        "type": "function",
+        "function": {
+            "name": t["name"],
+            "description": t["description"],
+            "parameters": t["params"],
+        },
+    } for t in TOOLS]
