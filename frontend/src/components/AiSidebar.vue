@@ -679,10 +679,15 @@ onMounted(() => {
   flex: 0 1 auto;
   min-width: 0;
   max-width: 48%;
+  /* margin-left:auto 把它顶到行尾：补充信息是「结果」而不是「过程」，
+     贴右对齐后整列读起来是一条竖线，扫视时不用逐行去找。
+     渐隐也因此总出现在同一个位置（行的最右端），而不是跟着文字长度飘。 */
+  margin-left: auto;
   padding-right: 16px;
   font-size: 10px;
   color: var(--text-secondary);
   opacity: 0.85;
+  text-align: right;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
