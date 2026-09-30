@@ -27,7 +27,18 @@ let coverageLayer = L.layerGroup();
 let altLayer = L.layerGroup();    // 替代起降点（后端 suggestions.alt_bases）
 let peakLayer = L.layerGroup();   // 沿程最危险点（risk.stats.worst_index）
 let siteLayer = L.layerGroup();   // 多航点模式：中继序列与段长可达圆（M7）
+// AI 读完图后落的标记（mark_regions）：图钉 / 方框 / 圆圈
+let aiMarkLayer = L.layerGroup();
 let siteCatalogLayer = L.layerGroup(); // 多航点模式：站表全量候选点，只在「多航点」页显示
+
+/**
+ * divIcon 与 bindTooltip 都是拼 HTML 字符串再塞进 innerHTML。模型给的文字直接拼进去
+ * 就是一条 XSS 通路（端点在公网无鉴权，模型输出等同外部输入）。引号也一并转 ——
+ * 属性值同样是用引号包着的。
+ */
+const escapeHtml = (s: string): string => String(s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 // Map Layers
 const layers: Record<string, L.TileLayer> = {
@@ -76,6 +87,12 @@ onMounted(() => {
   const peakPane = map.getPane('peakPane');
   if (peakPane) peakPane.style.zIndex = '450';
 
+  // AI 落的标记：压在航线(overlayPane=400)之上免得被重画的线盖掉，又留在
+  // 起终点与标签(markerPane=600)之下，不至于压住用户自己摆的航点
+  map.createPane('aiMarkPane');
+  const aiMarkPane = map.getPane('aiMarkPane');
+  if (aiMarkPane) aiMarkPane.style.zIndex = '470';
+
   currentLayer = layers[props.activeLayer];
   currentLayer.addTo(map);
   coverageLayer.addTo(map);
@@ -88,6 +105,7 @@ onMounted(() => {
   peakLayer.addTo(map);
   siteLayer.addTo(map);
   siteCatalogLayer.addTo(map);
+  aiMarkLayer.addTo(map);
   map.on('zoomend', () => renderSiteCatalog());
   renderCoverageBox();
   void fetchCoverage().then(renderCoverageBox);
@@ -575,9 +593,162 @@ const renderPeakWorst = () => {
   }).addTo(peakLayer);
 };
 
+/**
+ * AI 落的标记：它正文里说过的「西侧高值区」「东北角平稳」在这里变成图上的东西。
+ *
+ * 配色按 tone 走，和地图上既有的风险四档刻意区分开：这三个色是**语义色**（高/平稳/中性），
+ * 不是风险等级 —— 混用会让用户以为红框就是「不可飞」。
+ *
+ * 几何一律画在 aiMarkPane（470）：压在航线(400)之上，才不会被重画的航线盖掉；
+ * 又在起终点与标签(600)之下，不至于盖住用户自己摆的航点。
+ */
+const MARK_TONES: Record<string, { color: string; fill: string }> = {
+  high: { color: '#ef4444', fill: '#7f1d1d' },
+  low: { color: '#22c55e', fill: '#14532d' },
+  neutral: { color: '#38bdf8', fill: '#0c4a6e' },
+};
+
+/** 地图上只摆这么长的名字，再长进 tooltip —— 十几个字的标签会把半张图糊住 */
+const MAP_LABEL_MAX = 8;
+
+/**
+ * 标签容器要留多宽。
+ *
+ * 之前按 `label.length * 13` 估，中文其实正好占满一个字宽、后面还有 20px 内边距
+ * 和 2px 边框，估出来必然偏窄；容器一窄，文字就溢出 divIcon，而 divIcon 又是
+ * 以标记点为中心摆的，靠近地图左右边缘时有一半挂到地图外被裁掉 —— 之前就出现过
+ * 「西段高值区」只剩「值区」两个字。
+ */
+const labelWidth = (s: string): number => {
+  let w = 0;
+  for (const ch of s) w += /[\u2e80-\u9fff\uff00-\uffef]/.test(ch) ? 13 : 7;
+  return Math.max(56, Math.ceil(w) + 26);
+};
+
+/** 图上显示的短名；全文始终在 tooltip 里 */
+const shortLabel = (s: string): string =>
+  s.length > MAP_LABEL_MAX ? s.slice(0, MAP_LABEL_MAX) + '…' : s;
+
+/** 渲染完统一修一次：容器补宽 + 越出地图的挪回来 */
+const fitAiLabels = (markers: L.Marker[]) => {
+  if (!map) return;
+  const box = map.getContainer().getBoundingClientRect();
+  for (const mk of markers) {
+    const el = mk.getElement();
+    const inner = el?.querySelector<HTMLElement>('.ai-mark-label');
+    if (!el || !inner) continue;
+    const w = inner.getBoundingClientRect().width;
+    const h = inner.getBoundingClientRect().height;
+    const r = el.getBoundingClientRect();
+    // 越出地图左/右边就横向挪回来；地图本身 overflow:hidden，挪不回来就是被裁掉
+    let dx = 0;
+    if (r.left < box.left) dx = box.left - r.left + 2;
+    else if (r.right > box.right) dx = box.right - r.right - 2;
+    if (dx) L.DomUtil.setPosition(el, L.point(r.left - box.left + dx, r.top - box.top));
+    // 容器比文字窄就让 Leaflet 重新量一次位置
+    const cur = (mk as unknown as { __w?: number }).__w ?? 0;
+    if (Math.abs(w - cur) > 1) {
+      (mk as unknown as { __w?: number }).__w = w;
+      mk.setIcon(L.divIcon({
+        className: 'ai-mark-label-wrap',
+        html: el.innerHTML,
+        iconSize: [w, h],
+        iconAnchor: [w / 2, (mk as unknown as { __h?: number }).__h ?? 0],
+      }));
+      const el2 = mk.getElement();
+      if (el2) L.DomUtil.setPosition(el2, L.point(
+        r.left - box.left + dx + (cur ? (cur - w) / 2 : 0), r.top - box.top));
+    }
+  }
+};
+
+const renderAiMarks = () => {
+  aiMarkLayer.clearLayers();
+  if (!map) return;
+  const set = store.aiMarks;
+  if (!set || !set.marks.length) return;
+
+  // 标记全落在当前视野外才把地图带过去。用户正在看别处时不抢镜头 ——
+  // 只要有一个标记在屏内就说明这块区域本来就在关注范围里，动它反而是打扰。
+  const vis = map.getBounds();
+  const anyVisible = set.marks.some(m =>
+    vis.contains([m.lat, m.lon])
+    || (m.lat2 != null && vis.contains([m.lat2, m.lon2!])));
+  if (!anyVisible) {
+    const pts: [number, number][] = [];
+    for (const m of set.marks) {
+      pts.push([m.lat, m.lon]);
+      if (m.lat2 != null && m.lon2 != null) pts.push([m.lat2, m.lon2]);
+    }
+    // padding 留够标签的位置，否则框刚好贴着屏幕边、名字被裁掉
+    map.fitBounds(L.latLngBounds(pts).pad(0.25), { animate: true, duration: 0.6 });
+  }
+
+  const labelMarkers: L.Marker[] = [];
+  /** 标签做成不可交互：几何本身才绑 tooltip，标签可交互会把它抢走 */
+  const putLabel = (pos: [number, number], text: string, color: string, dy: number) => {
+    const shown = shortLabel(text);
+    const w = labelWidth(shown);
+    const mk = L.marker(pos, {
+      interactive: false,
+      icon: L.divIcon({
+        className: 'ai-mark-label-wrap',
+        html: `<div class="ai-mark-label" style="border-color:${color};color:${color}">${escapeHtml(shown)}</div>`,
+        iconSize: [w, 22],
+        iconAnchor: [w / 2, dy],
+      }),
+    }).addTo(aiMarkLayer) as L.Marker & { __w?: number; __h?: number };
+    mk.__w = w; mk.__h = dy;
+    labelMarkers.push(mk);
+  };
+
+  for (const m of set.marks) {
+    const tone = MARK_TONES[m.tone ?? 'neutral'] ?? MARK_TONES.neutral;
+    const c: [number, number] = [Number(m.lat), Number(m.lon)];
+    const lines = [`<b>${escapeHtml(m.label)}</b>`];
+    if (m.note) lines.push(escapeHtml(m.note));
+    lines.push(`<span class="ai-mark-src">${escapeHtml(set.source)}</span>`);
+
+    if (m.kind === 'rect' && m.lat2 != null && m.lon2 != null) {
+      const b: [[number, number], [number, number]] = [
+        [Math.min(m.lat, m.lat2), Math.min(m.lon, m.lon2)],
+        [Math.max(m.lat, m.lat2), Math.max(m.lon, m.lon2)],
+      ];
+      L.rectangle(b, {
+        pane: 'aiMarkPane',
+        color: tone.color, weight: 2, fillColor: tone.fill, fillOpacity: 0.18,
+        dashArray: '6, 4',
+      }).addTo(aiMarkLayer).bindTooltip(lines.join('<br>'), { sticky: true });
+      const mid: [number, number] = [(b[0][0] + b[1][0]) / 2, (b[0][1] + b[1][1]) / 2];
+      putLabel(mid, m.label, tone.color, 0);
+    } else if (m.kind === 'circle') {
+      L.circle(c, {
+        pane: 'aiMarkPane',
+        radius: (m.radius_km ?? 10) * 1000,
+        color: tone.color, weight: 2, fillColor: tone.fill, fillOpacity: 0.15,
+        dashArray: '6, 4',
+      }).addTo(aiMarkLayer).bindTooltip(lines.join('<br>'), { sticky: true });
+      putLabel(c, m.label, tone.color, 0);
+    } else {
+      // 图钉：可交互的圆点负责弹气泡，不可交互的标签负责显示名字（同 renderPeakWorst 的分工）
+      L.circleMarker(c, {
+        pane: 'aiMarkPane',
+        color: '#0b1220', weight: 2.5, fillColor: tone.color, fillOpacity: 1, radius: 8,
+      }).addTo(aiMarkLayer).bindTooltip(lines.join('<br>'), { direction: 'top', offset: [0, -10] });
+      putLabel(c, m.label, tone.color, -12);
+    }
+  }
+
+  // 标签是刚插进 DOM 的，这一帧量得到真实尺寸；延到下一帧再修，免得量到 0
+  requestAnimationFrame(() => fitAiLabels(labelMarkers));
+};
+
+watch(() => store.aiMarks, () => {
+  renderAiMarks();
+}, { deep: true });
+
 // 未选中档位：各档自己的颜色 + 各自的虚线疏密，压到 30% 只让位不消失
-const TIER_FALLBACK_COLOR = '#94a3b8';
-const TIER_DASH: Record<string, string> = {
+const TIER_FALLBACK_COLOR = '#94a3b8';const TIER_DASH: Record<string, string> = {
   urgent: '4, 7',
   normal: '9, 7',
   economy: '16, 8',
@@ -1036,6 +1207,7 @@ onUnmounted(() => {
 :deep(.coverage-tag),
 :deep(.alt-tag),
 :deep(.peak-tag),
+:deep(.ai-mark-label),
 :deep(.site-relay-label) {
   font-size: 14px;
   font-weight: 700;
@@ -1058,6 +1230,24 @@ onUnmounted(() => {
 }
 :deep(.peak-tag) {
   border: 1px solid;
+}
+/* AI 落的标记：divIcon 默认带白底，要去掉，否则标签外面套一圈白框 */
+:deep(.ai-mark-label-wrap) {
+  background: transparent;
+  border: none;
+}
+/* 描边与文字色由行内 style 按 tone 给，这里只定形状 */
+:deep(.ai-mark-label) {
+  border: 1px solid;
+  font-size: 13px;
+  padding: 3px 10px;
+}
+/* tooltip 里的出处行：让用户知道这些点是从哪张图上读出来的，不是查表算出来的 */
+:deep(.ai-mark-src) {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  opacity: 0.7;
 }
 :deep(.site-relay-label) {
   position: absolute;

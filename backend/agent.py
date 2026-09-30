@@ -17,7 +17,7 @@ import json
 import os
 import re
 import urllib.request
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import assessor
 import tools
@@ -41,6 +41,11 @@ _THINK_BLOCK = re.compile(
 MAX_MESSAGES = 12
 MAX_CHARS = 1200
 
+# 端点在公网无鉴权：一次请求能塞多少图、每张多大，都要封顶。
+# 多模态按图计 token，不封顶等于把额度敞开着给人刷。
+MAX_IMAGES = 3
+MAX_IMAGE_CHARS = 2_500_000
+
 SYSTEM_PROMPT = f"""你是无人机气象航线规划系统里的操作助手。你可以通过调用工具来真正操作界面，而不只是聊天。
 
 【可用工具】
@@ -56,11 +61,13 @@ SYSTEM_PROMPT = f"""你是无人机气象航线规划系统里的操作助手。
 3. 数据里没有的，就说没有。用户问「哪里能备降」而你还没查过，就先调 search_sites 去查；查完确实没有，就回答「50 km 内没有可用备降点」。**绝不许自己编一条政策或一个数字**。
 4. 数值、距离、风险等级、站点名称**只能来自工具返回的结果**。工具没给的，一个字都不要编。
 5. **越界的话题不要主动抛**（见上面的信息边界）。**可以问、也应当问的**是：起降点、载重、货物类型、时间、机型、要不要重规划 —— 这些问完能直接干活。标准一句话：**问完能不能顺手做掉**。能就问，不能就别问。
-6. 改了规划输入（起终点、途经点、时间、载重、机型）之后，如果用户想看结果，再调对应的 run_* 工具；不要凭改完的输入直接描述结果。
-7. **用户明确说出来的每一个参数都必须先用工具设进去**（载重多少、几点起飞、什么机型、几个途经点），不能只在心里记下就当已经改好。参数没设就去规划，算出来的是另一组条件的结果。
-8. **同一件事不要调两次。** 三档航线是一次规划同时算出来的，切换档位只调 set_priority 即可，**不要为了切档再调 run_plan**。
-9. **正文里不要复述工具调用，也不要把工具名当术语抛给用户。** 界面上每一步操作都已单独列出（轨迹卡片），正文再说一遍「已调用 xxx」纯属重复；「用 set_priority 即可」这类话用户看不懂。要提档位就说「紧急档」，要操作就直接调工具。
-10. 回答用简洁中文，可用 Markdown 列表，控制在 300 字以内。不要输出思考过程、草稿或自我说明。"""
+6. **只做用户明确要求的，不要顺手多做一步。** 用户问「看看某地的湍流长什么样」是在提问，不是在改需求 —— 除了看图本身，**不许动起降点、途经点、时间、载重、机型这些规划输入**。这些是用户手上的工程，改错了要他重新收拾。曾经在这里翻过车：问「曲松县附近 40 公里 TKE 长什么样」，顺手就把终点改成了昌都。觉得「顺便把整条航线也算一下」更有帮助时，**先问一句再动**。（把用户正在问的那个图层打开给他看，不算多做 —— 那正是他在看的东西。）
+7. **凡是在正文里写了带方位的区域判断，就要把同一批区域落到地图上。** 你写「西侧有一片高值区」「东北角平稳」「中心点最亮」，用户还得自己在脑子里对到地图上——**必须调 mark_regions 把它们画出来**，方框用 rect、成片区域用 rect、单个核心点用 pin。一次调用落全，label 用你正文里的方位词。这条不是「顺手多做」，这是把已经说出口的话落到图上，是第 6 条要求的完整交付。**但反过来：只做用户明确要求的，纯提问就不要去圈与问题无关的地方。**
+8. 改了规划输入（起终点、途经点、时间、载重、机型）之后，如果用户想看结果，再调对应的 run_* 工具；不要凭改完的输入直接描述结果。
+9. **用户明确说出来的每一个参数都必须先用工具设进去**（载重多少、几点起飞、什么机型、几个途经点），不能只在心里记下就当已经改好。参数没设就去规划，算出来的是另一组条件的结果。
+10. **同一件事不要调两次。** 三档航线是一次规划同时算出来的，切换档位只调 set_priority 即可，**不要为了切档再调 run_plan**。
+11. **正文里不要复述工具调用，也不要把工具名当术语抛给用户。** 界面上每一步操作都已单独列出（轨迹卡片），正文再说一遍「已调用 xxx」纯属重复；「用 set_priority 即可」这类话用户看不懂。要提档位就说「紧急档」，要操作就直接调工具。**更不要预告或复述工具的效果**——「我把这两块高值区标在地图上了」「已经帮你打开图层」这类句子是在你还看不到结果时就断言结果，写错了就是一句假话。做了就是做了，界面上会显示；没做就别说。
+12. 回答用简洁中文，可用 Markdown 列表，控制在 300 字以内。不要输出思考过程、草稿或自我说明。"""
 
 
 def _iter_sse_full(resp) -> Iterator[Dict[str, Any]]:
@@ -89,17 +96,23 @@ def _iter_sse_full(resp) -> Iterator[Dict[str, Any]]:
             if delta.get("content"):
                 yield {"kind": "text", "text": delta["content"]}
             for tc in (delta.get("tool_calls") or []):
-                slot = partial.setdefault(int(tc.get("index", 0)), {"name": "", "args": ""})
+                slot = partial.setdefault(int(tc.get("index", 0)),
+                                          {"id": "", "name": "", "args": ""})
                 fn = tc.get("function") or {}
+                # id 也要攒着：回灌工具结果时要用它配对 role=tool 消息，
+                # 否则模型那边根本没有「这条结果对应哪次调用」的概念。
+                if tc.get("id"):
+                    slot["id"] = tc["id"]
                 if fn.get("name"):
                     slot["name"] += fn["name"]
                 if fn.get("arguments"):
                     slot["args"] += fn["arguments"]
     for idx in sorted(partial):
-        yield {"kind": "call", "name": partial[idx]["name"], "args_raw": partial[idx]["args"]}
+        yield {"kind": "call", "id": partial[idx]["id"],
+               "name": partial[idx]["name"], "args_raw": partial[idx]["args"]}
 
 
-def _llm_stream(msgs: List[Dict[str, str]]) -> Iterator[Dict[str, Any]]:
+def _llm_stream(msgs: List[Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
     """流式跑一轮。
 
     复用 ``assessor.chat_request_body`` / ``_open_stream`` 而不是自己拼请求体：
@@ -113,7 +126,9 @@ def _llm_stream(msgs: List[Dict[str, str]]) -> Iterator[Dict[str, Any]]:
     body = assessor.chat_request_body(msgs)
     body["tools"] = tools.openai_tools()
     body["tool_choice"] = "auto"
-    resp = assessor._open_stream(body)
+    # 走 _open_llm_stream 而不是 _open_stream：前者带 thinking 参数被拒时的重试兜底。
+    # 这里原本直连 _open_stream，于是同一个网关，报告能发出去、对话却整轮挂掉。
+    resp = assessor._open_llm_stream(body)
     try:
         for ev in _iter_sse_full(resp):
             yield ev
@@ -129,6 +144,10 @@ def _calls_from_stream(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     工具名不在清单里、或参数不是合法 JSON 的，直接丢掉：这一轮就当它没调工具，
     交给下一轮重新判断。宁可少调也不要执行一个界面上不存在的东西。
+
+    「参数解析失败就丢掉」这条以前只是写在 docstring 里，代码却是 ``args = {}`` 照发 ——
+    半截 JSON 于是变成一个**空参调用**。那个空参调用照样进轨迹、照样返回失败，
+    而模型在同一轮里已经流式写下了「已经把区域标在地图上」。这里必须真的丢掉。
     """
     out: List[Dict[str, Any]] = []
     for ev in events:
@@ -138,13 +157,19 @@ def _calls_from_stream(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if name not in tools.TOOL_NAMES:
             continue
         raw = (ev.get("args_raw") or "").strip()
-        try:
-            args = json.loads(raw) if raw else {}
-        except Exception:
-            args = {}
-        if not isinstance(args, dict):
-            args = {}
-        out.append({"tool": name, "args": tools.validate_args(name, args)})
+        if raw:
+            try:
+                args = json.loads(raw)
+            except Exception:
+                continue
+            if not isinstance(args, dict):
+                continue
+        else:
+            # 真的没有参数字段：只有「声明了参数的工具」才算异常，无参工具本就传空
+            args = {} if name in tools.PARAM_LESS_TOOLS else None
+            if args is None:
+                continue
+        out.append({"id": ev.get("id") or "", "tool": name, "args": tools.validate_args(name, args)})
         if len(out) >= 6:
             break
     return out
@@ -152,12 +177,14 @@ def _calls_from_stream(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def _build_messages(state: Dict[str, Any],
                     messages: List[Dict[str, Any]],
-                    tool_results: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+                    tool_results: List[Dict[str, Any]],
+                    images: Optional[List[str]] = None,
+                    said: str = "") -> List[Dict[str, Any]]:
     system = SYSTEM_PROMPT
     if state:
         system += "\n\n【当前界面状态】\n" + json.dumps(state, ensure_ascii=False)[:1200]
 
-    out: List[Dict[str, str]] = [{"role": "system", "content": system}]
+    out: List[Dict[str, Any]] = [{"role": "system", "content": system}]
     for m in (messages or [])[-MAX_MESSAGES:]:
         content = str(m.get("content") or "").strip()
         if not content:
@@ -167,19 +194,93 @@ def _build_messages(state: Dict[str, Any],
             "content": content[:MAX_CHARS],
         })
 
-    # 工具结果以 user 角色回灌：SSE 是单向的，这里就是「把结果告诉模型」的那一步。
-    # 带上 tool_calls 的原文，让模型知道自己刚调过什么、结果如何。
-    for tr in (tool_results or []):
+    # 工具结果按**协议**回灌：assistant(tool_calls=[...]) + 一串 role=tool。
+    #
+    # 以前是把结果拼成一条条 `role:user` 的「【工具执行结果】{...}」发回去。模型分不清
+    # 「这是用户说的话」和「这是喂给我的数据」，于是经常直接把这段 JSON 抄进正文 ——
+    # 用户看到的就是它突然开始打印 `{"tool": "run_time_window", "ok": true...}`。
+    # role=tool 是协议里专门放执行结果的位置，模型在这条消息上不会产生台词。
+    pending = [tr for tr in (tool_results or []) if isinstance(tr, dict)]
+    shots: List[Tuple[str, str]] = []          # (工具名, data URL)
+    if pending:
+        declared = [{
+            "id": str(tr.get("id") or f"call_{n}"),
+            "type": "function",
+            "function": {
+                "name": str(tr.get("tool") or ""),
+                "arguments": json.dumps(tr.get("args") or {}, ensure_ascii=False),
+            },
+        } for n, tr in enumerate(pending)]
+        said = str(said or "").strip()
+        msg: Dict[str, Any] = {"role": "assistant", "tool_calls": declared}
+        if said:
+            # 模型这一轮自己说过的话也补回去。不补的话它下一轮不知道自己刚讲过什么，
+            # 于是会把同一句解释换个说法再说一遍。
+            msg["content"] = said
+        out.append(msg)
+        for tr in pending:
+            data = tr.get("data")
+            image = data.get("image") if isinstance(data, dict) else None
+            if isinstance(image, str) and image.startswith("data:image/"):
+                shots.append((str(tr.get("tool") or "工具"), image))
+            out.append({
+                "role": "tool",
+                "tool_call_id": str(tr.get("id") or ""),
+                "content": json.dumps({
+                    "ok": tr.get("ok"),
+                    "label": tr.get("label"),
+                    "data": _strip_image(tr) if isinstance(data, dict) else data,
+                }, ensure_ascii=False)[:1200],
+            })
+
+    # 工具结果里的图单独走一条 user 多模态消息：图有几十万字符，塞进 tool 消息既超
+    # token 上限又毫无意义。放在 tool 消息**之后**是为了不打断 assistant→tool 的配对。
+    for name, image in shots[:MAX_IMAGES]:
         out.append({
             "role": "user",
-            "content": "【工具执行结果】\n" + json.dumps(tr, ensure_ascii=False)[:1200],
+            "content": [
+                {"type": "text", "text": f"（上面 {name} 那次工具调用返回的图）"},
+                {"type": "image_url", "image_url": {"url": image, "detail": "high"}},
+            ],
         })
+
+    # 用户本次随消息发来的图：多模态 content 数组（图在前，文字在后）。
+    # 过滤掉非 data:image 的串 —— 端点公网无鉴权，不能让它变成任意 URL 的抓取代理。
+    seen_img = 0
+    for url in (images or []):
+        if seen_img >= MAX_IMAGES:
+            break
+        if isinstance(url, str) and url.startswith("data:image/") and len(url) <= MAX_IMAGE_CHARS:
+            out.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "（以上是用户本次发来的图片）"},
+                    {"type": "image_url", "image_url": {"url": url}},
+                ],
+            })
+            seen_img += 1
     return out
+
+
+def _strip_image(tr: Dict[str, Any]) -> Dict[str, Any]:
+    """把结果里的 data URL 换成占位说明。
+
+    base64 图有几十万字符，塞进正文既超 token 上限又毫无意义 —— 图已经走
+    image_url 通道单独送过去了。
+    """
+    data = tr.get("data")
+    if not isinstance(data, dict) or "image" not in data:
+        return tr
+    shallow = dict(data)
+    shallow["image"] = "<已随本消息附上该图>"
+    return {**tr, "data": shallow}
 
 
 def run_agent(state: Dict[str, Any], messages: List[Dict[str, Any]],
               tool_results: Optional[List[Dict[str, Any]]] = None,
-              round_index: int = 0) -> Iterator[Dict[str, Any]]:
+              round_index: int = 0,
+              images: Optional[List[str]] = None,
+              said: str = "") -> Iterator[Dict[str, Any]]:
     """一轮 Agent。产出 SSE 事件字典。
 
     事件类型：
@@ -201,7 +302,7 @@ def run_agent(state: Dict[str, Any], messages: List[Dict[str, Any]],
         yield {"type": "done"}
         return
 
-    msgs = _build_messages(state, messages, tool_results or [])
+    msgs = _build_messages(state, messages, tool_results or [], images, said)
 
     # 正文逐段立即外发（真流式）；工具调用攒到这一轮读完再一次性给前端执行。
     collected: List[Dict[str, Any]] = []
@@ -214,7 +315,9 @@ def run_agent(state: Dict[str, Any], messages: List[Dict[str, Any]],
             else:
                 collected.append(ev)
     except Exception as exc:
-        yield {"type": "error", "message": f"AI 服务调用失败（{type(exc).__name__}），请稍后重试。"}
+        # 不再报裸的异常类名：HTTPError 这种对用户毫无信息量，
+        # 也看不出是「等一下就好」还是「额度用完了，等多久都没用」。
+        yield {"type": "error", "message": assessor.describe_llm_error(exc)}
         yield {"type": "done"}
         return
 

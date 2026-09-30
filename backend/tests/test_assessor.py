@@ -146,7 +146,8 @@ class TestContextBuild(unittest.TestCase):
                     assessor.build_feasibility_context(FEAS_PAYLOAD)):
             note = ctx["turbulence_calibration"]
             self.assertIn("m²/s²", note)
-            self.assertIn("m^(2/3)/s", note)
+            # 分数指数必须以行内 LaTeX 给出：m^(2/3)/s 这种 ASCII 串印在正文里像乱码
+            self.assertIn("$\\mathrm{m}^{2/3}/\\mathrm{s}$", note)
             self.assertIn(f"±{int(settings.TURB_WINDOW_HALF_HOURS)} 小时", note)
         prompt = assessor.build_prompt(assessor.build_time_window_context(TW_PAYLOAD))
         self.assertIn("m²/s²", prompt)
@@ -165,10 +166,28 @@ class TestContextBuild(unittest.TestCase):
 class TestRuleReport(unittest.TestCase):
     def test_feasible_report_contains_all_sections(self):
         text = assessor.render_rule_report(assessor.build_feasibility_context(FEAS_PAYLOAD))
-        for section in ["结论概述", "航线地理叙事", "气象解读", "时间建议", "操作建议", "数据口径声明"]:
+        for section in ["结论概述", "航线地理叙事", "气象解读", "时间建议", "操作建议"]:
             self.assertIn(section, text)
         self.assertIn("312.26", text)
         self.assertIn("拉萨市区附近", text)
+
+    def test_report_drops_data_calibration_section(self):
+        """口径声明是给开发者看的元信息，不是飞行结论，占着报告一节反而挤掉内容。"""
+        for payload, task in ((FEAS_PAYLOAD, "feasibility"), (FEAS_PAYLOAD, "time_window")):
+            with self.subTest(task=task):
+                ctx = (assessor.build_feasibility_context(payload) if task == "feasibility"
+                       else assessor.build_time_window_context(payload))
+                text = assessor.render_rule_report(ctx)
+                self.assertNotIn("数据口径声明", text)
+                self.assertNotIn("数据时区口径", text)
+
+    def test_report_never_leaks_json_field_names(self):
+        """键名是接口结构，说给用户听等于让人去查表。"""
+        for ctx in (assessor.build_feasibility_context(FEAS_PAYLOAD),
+                    assessor.build_feasibility_context(BLOCKED_PAYLOAD)):
+            text = assessor.render_rule_report(ctx)
+            for key in ("blocking", "alt_bases", "max_tke", "flight_time_h", "segments"):
+                self.assertNotIn(key, text)
 
     def test_blocked_report_explains_reason_and_alternatives(self):
         text = assessor.render_rule_report(assessor.build_feasibility_context(BLOCKED_PAYLOAD))
@@ -200,12 +219,13 @@ class TestRuleReport(unittest.TestCase):
         self.assertIn("18 秒", text)
         self.assertNotIn("用满了 120000 次", text)
 
-    def test_time_window_report_mentions_timezone_and_forecast(self):
+    def test_time_window_report_states_recommendation_and_forecast(self):
         text = assessor.render_rule_report(assessor.build_time_window_context(TW_PAYLOAD))
         self.assertIn("推荐", text)
-        self.assertIn("UTC", text)
         self.assertIn("2022-07-03", text)
         self.assertIn("结冰", text)
+        # 时区/分辨率这类口径元信息已按要求移出报告：正文只说能不能飞、怎么飞
+        self.assertNotIn("UTC", text)
 
     def test_no_window_report_states_absence(self):
         payload = dict(TW_PAYLOAD, has_window=False, recommended=None)
@@ -476,10 +496,19 @@ class TestPromptGuardrails(unittest.TestCase):
         prompt = assessor.build_prompt(ctx)
         self.assertIn("2022-07-01", prompt)
         self.assertIn("json", prompt.lower())
-        self.assertIn("只引用", prompt)
+        # 结论优先、地名照抄、禁字段名、禁编字段：四条硬约束都要在提示词里
+        for rule in ("给结论", "逐字照抄", "不得出现 JSON 的字段名", "一律不得提及"):
+            self.assertIn(rule, prompt)
+
+    def test_prompt_forbids_meta_section(self):
+        """口径声明是元信息，不该占报告一节。"""
+        self.assertIn("不要输出「数据口径声明」", assessor.build_prompt({"task": "feasibility"}))
 
     def test_system_prompt_forbids_fabrication(self):
         self.assertIn("禁止编造", settings.AI_SYSTEM_PROMPT)
+
+    def test_system_prompt_forbids_field_names(self):
+        self.assertIn("不得出现 JSON 的字段名", settings.AI_SYSTEM_PROMPT)
 
     def test_system_prompt_forbids_thinking_narration(self):
         """提示词层面也明确要求不要输出思考旁白。"""

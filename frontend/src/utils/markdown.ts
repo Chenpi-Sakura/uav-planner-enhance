@@ -5,6 +5,8 @@
  */
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
 
 DOMPurify.addHook('afterSanitizeAttributes', node => {
   if (node instanceof HTMLAnchorElement && node.target !== '_blank') {
@@ -53,10 +55,61 @@ function tabTableToPipe(src: string): string {
   return out.join('\n');
 }
 
+/**
+ * 把 `$...$` / `$$...$$` 里的数学式摘出来，交给 KaTeX 排版。
+ *
+ * **必须在 marked 之前摘**。LaTeX 里 `_`、`^`、`*` 全是 Markdown 的强调/下标标记：
+ * `$x_i$` 经 marked 会变成斜体的 `x`，上下标直接消失。留到最后再处理就晚了——
+ * 到那时公式已经被吃成普通文本，只能干瞪眼。
+ *
+ * 摘出来的片段先换成占位符，等 sanitize 完再把 KaTeX 的 HTML 填回去。
+ * 不能在 sanitize **之前**填：KaTeX 输出里的 `<math>` / `<annotation>` 会被
+ * DOMPurify 按 HTML profile 剥掉（它默认不认 MathML），公式就只剩个空壳。
+ * 反过来填在之后则完全绕过了净化 —— 所以 KaTeX 必须关掉一切危险能力
+ * （`trust: false` 且 `strict: 'ignore'`），让它只做排版、不解释任何外部资源。
+ */
+const MATH_TOKEN = (i: number) => `xMATHOx${i}xENDx`;
+
+const MATH_BLOCK = /\$\$([\s\S]+?)\$\$/g;
+// 行内式：$ 后面不能紧跟空白，前面不能紧跟空白，否则「$5 和 $10」这种货币写法会被误吞
+const MATH_INLINE = /(?<!\$)\$(?![\s$])([^$\n]+?)(?<![\s$])\$(?!\$)/g;
+
+function extractMath(src: string) {
+  const rendered: string[] = [];
+
+  const put = (tex: string, display: boolean) => {
+    let html: string;
+    try {
+      html = katex.renderToString(tex, {
+        displayMode: display,
+        throwOnError: false,   // 公式写错时原样显示而不是整块吞掉
+        strict: 'ignore',      // 不因 \frac{1}{2} 之外的写法报错打断渲染
+        trust: false,          // 禁止 \href/\includegraphics 之类引入外部资源
+        output: 'html',        // 只要 HTML 输出：MathML 会被净化剥掉，留着也没用
+      });
+    } catch {
+      html = '';               // 真出不了就留空，至少不把整段正文带走
+    }
+    rendered.push(html);
+    return MATH_TOKEN(rendered.length - 1);
+  };
+
+  let text = src.replace(MATH_BLOCK, (_, tex: string) => put(tex, true));
+  text = text.replace(MATH_INLINE, (_, tex: string) => put(tex, false));
+  return { text, rendered };
+}
+
+function restoreMath(html: string, rendered: string[]): string {
+  if (!rendered.length) return html;
+  return html.replace(/xMATHOx(\d+)xENDx/g, (_, i: string) => rendered[Number(i)] ?? '');
+}
+
 export function renderMarkdown(src: string): string {
-  return DOMPurify.sanitize(
-    marked.parse(tabTableToPipe(normalizeHeadings(src)), {
+  const { text, rendered } = extractMath(src);
+  const safe = DOMPurify.sanitize(
+    marked.parse(tabTableToPipe(normalizeHeadings(text)), {
       gfm: true, breaks: true, async: false,
     }),
   ) as string;
+  return restoreMath(safe, rendered);
 }

@@ -536,6 +536,27 @@ class WeatherQueryResponse(BaseModel):
     thresholds: Optional[Dict[str, Any]] = None
 
 
+class RegionPreviewRequest(BaseModel):
+    """渲染一块区域的气象图层，供 Agent「看图」用。"""
+    lat: float
+    lon: float
+    km: float = 30.0
+    layer: str = 'tke'
+    date: str = '2022-07-01'
+    time: str = '08:00'
+
+
+class RegionPreviewResponse(BaseModel):
+    ok: bool = False
+    reason: Optional[str] = None
+    image: Optional[str] = None          # data:image/jpeg;base64,...
+    layer: Optional[str] = None
+    date: Optional[str] = None
+    time: Optional[str] = None
+    center: Optional[Dict[str, float]] = None
+    radius_km: Optional[float] = None
+
+
 class SuggestRequest(BaseModel):
     task: str = 'feasibility'
     payload: Optional[Dict[str, Any]] = None
@@ -563,9 +584,16 @@ class AgentRequest(BaseModel):
     # 那里面有几十 KB 的评估结果，既慢又会诱导模型去数它算不出的东西。
     state: Dict[str, Any] = {}
     tool_results: List[Dict[str, Any]] = []
-    # 第几轮，从 0 起。由前端数着传 —— 后端拿「工具结果条数」当代数是错的：
+    # 每一项要带 id / tool / args —— 后端要按协议重建成 assistant(tool_calls) + role=tool，
+    # 缺了配对信息模型那边就收不到「这条结果对应哪次调用」。
+    # 轮数从 0 起，由前端数着传 —— 后端拿「工具结果条数」当代数是错的：
     # 一轮里可能返回 6 个工具调用，那样第二个还没开始就被判成调满了。
     round_index: int = 0
+    # 用户本次随消息发来的图（data URL）。端点公网无鉴权，所以条数与单张大小都要封顶。
+    images: List[str] = []
+    # 本轮到目前为止模型自己说过的正文。回灌时挂在 assistant 消息上，
+    # 它才知道自己刚讲过什么，不会换个说法把同一段再讲一遍。
+    said: str = ''
 
 
 class AgentEvent(BaseModel):

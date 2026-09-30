@@ -154,7 +154,7 @@
       <div class="scroll-area">
         <template v-if="store.sidebarTab === 'plan'">
           <div class="action-row">
-            <button class="capsule-btn full-width" @click="runPlan" :disabled="store.planLoading || store.aiBusy" :class="{'disabled-btn': store.planLoading || store.aiBusy}">
+            <button class="capsule-btn full-width" @click="runPlan()" :disabled="store.planLoading || store.aiBusy" :class="{'disabled-btn': store.planLoading || store.aiBusy}">
               <span v-if="store.planLoading" class="loading-icon"><Loader :size="16" class="spin"/> 正在规划并评估三条航线...</span>
               <span v-else-if="store.aiBusy" class="loading-icon"><Loader :size="16" class="spin"/> AI 正在处理…</span>
               <span v-else style="display:flex; align-items:center; gap:8px;"><Send :size="16" /> 开始规划</span>

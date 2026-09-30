@@ -208,6 +208,13 @@ export interface StoreState {
   hoveredTier: string | null;         // 卡片悬停时临时在地图上展示的档位
   feasibility: FeasibilityResult | null; // 当前选中档位的评估结果
   highlightRegions: BlockingRegion[];    // 地图高亮：阻塞区
+  /**
+   * AI 读完图后落的标记：图钉 / 方框 / 圆圈，对应它在正文里说的那些方位。
+   *
+   * 整组替换而不是追加 —— 每一批标记都对应**某一张特定的图**（某日某时刻某个要素），
+   * 攒着多批只会互相矛盾。source 记下出处，让用户知道这些点是从哪张图上读出来的。
+   */
+  aiMarks: AiMarkSet | null;
   selectedSegmentIndex: number | null;   // 结果面板：选中的分段
   // ---- 功能二：时间窗口 ----
   timeWindowLoading: boolean;
@@ -216,6 +223,15 @@ export interface StoreState {
   hoveredSegmentIndex: number | null;    // 地图联动：悬停的分段
   pendingTimeWindowScan: boolean;        // 从功能一跳转功能二时自动执行一次扫描
   planNotice: PlanNotice | null;         // 路径规划失败弹窗（null = 不显示）
+  /**
+   * 待生成的 AI 评估报告。手动点「开始规划」算完之后填一份，AI 侧栏 watch 到就
+   * 自动出一段报告。
+   *
+   * 为什么绕一圈 store 而不是让 runPlan 直接写侧栏：runPlan 是**规划逻辑**，
+   * 侧栏是**呈现**，两者之间只该有一条单向通知。让 store 主动去改侧栏内部状态，
+   * 迟早出现「规划组件长出一个只服务于侧栏的字段」。
+   */
+  reportRequest: { nonce: number; task: string; payload: unknown } | null;
   // ---- 功能三：多航点模式（M7 站点自动规划） ----
   siteLoading: boolean;
   siteResult: SitePlanResult | null;      // 最近一次站点规划结果（一台一份）
@@ -432,6 +448,7 @@ export const store = reactive<StoreState>({
   hoveredTier: null,
   feasibility: null,
   highlightRegions: [],
+  aiMarks: null,
   selectedSegmentIndex: null,
   timeWindowLoading: false,
   timeWindow: null,
@@ -439,6 +456,7 @@ export const store = reactive<StoreState>({
   hoveredSegmentIndex: null,
   pendingTimeWindowScan: false,
   planNotice: null,
+  reportRequest: null,
   siteLoading: false,
   siteResult: null,
   siteCatalog: null,
@@ -520,6 +538,7 @@ export function clearPlannedRoute(): void {
   anchorSimulationClock();
   store.feasibility = null;
   store.highlightRegions = [];
+  store.aiMarks = null;
   store.selectedSegmentIndex = null;
   store.hoveredSegmentIndex = null;
 }
@@ -573,13 +592,21 @@ export function effortText(e?: { expansions: number; budget: number; elapsed_s?:
   return `已尝试 ${e.expansions} 种走法 / 上限 ${e.budget}${spent}`;
 }
 
+/** 报告请求的序号。每次 +1，AI 侧栏只认最新那一次 —— 连点两次时后一次直接盖掉前一次，
+ *  没必要在对话里堆两份几乎一样的报告。 */
+let reportSeq = 0;
+
 /**
  * 一次「开始规划」= 三档几何 + 三档完整评估（/api/assess/feasibility-multi）。
  *
  * 放在 store 而不是 Sidebar 里，是因为功能二的候选列表也要能触发同一个请求：
  * 两处各写一遍迟早会出现「按钮 A 出三档、按钮 B 出一档」的行为差异。
+ *
+ * ``fromAI`` 用来关掉自动报告：AI 调 run_plan 时它自己会在正文里给结论，
+ * 再自动糊一份报告上去等于同一件事说两遍。用户手点的那次没有「说」这个环节，
+ * 所以才需要报告把结论展开。
  */
-export async function runPlan(): Promise<void> {
+export async function runPlan(opts: { fromAI?: boolean } = {}): Promise<void> {
   if (!store.start.lat || !store.start.lng || !store.end.lat || !store.end.lng) {
     alert('请先设置起点和终点！');
     return;
@@ -629,6 +656,13 @@ export async function runPlan(): Promise<void> {
 
     // 三档卡片和评估详情都在侧栏里，折叠侧栏等于把选择入口藏起来，所以这里不折叠
     store.chartCollapsed = false;
+
+    // 手动规划完成 → 通知 AI 侧栏自动出一份评估报告。
+    // 只发当前展示的那一档：报告讲的是「这条航线行不行」，三档都塞进去会变成三段
+    // 互相比选的文字，而档位对比左栏的三张卡片已经做得很清楚了。
+    if (!opts.fromAI) {
+      store.reportRequest = { nonce: ++reportSeq, task: 'feasibility', payload: target };
+    }
   } catch (error) {
     console.error('规划请求失败:', error);
     store.planNotice = noticeForError(error);
@@ -656,6 +690,13 @@ export function applyTimeWindowRoute(route: TimeWindowRoute): void {
 // 反过来不成立：推演只动 simulationTime/simulationDate，永远不回写 targetTime。
 watch([() => store.targetTime, () => store.targetDate], () => {
   anchorSimulationClock();
+});
+
+// AI 那批标记是从**某一张特定的图**上读出来的，换了日期/时刻就是另一张图了。
+// 留着旧标记等于让用户对着过期的位置做判断，所以一并收掉。
+// 只看时刻不看图层：坐标不随图层变，切个 TKE/EDR 不该让标记消失。
+watch([() => store.targetDate, () => store.simulationDate, () => store.simulationTime], () => {
+  store.aiMarks = null;
 });
 
 // ==================== 功能三 · 多航点模式（M7 站点自动规划） ====================
@@ -848,6 +889,30 @@ export interface WeatherResult {
 export interface SuggestChip {
   label: string;
   prompt: string;
+}
+
+/** AI 落的单个标记。三个几何键按 kind 取用，缺哪个就按点处理 */
+export interface AiMark {
+  kind: 'pin' | 'rect' | 'circle';
+  /** 地图上显示的短名，如「西侧高值区」 */
+  label: string;
+  lat: number;
+  lon: number;
+  /** rect 的东北角 */
+  lat2?: number;
+  lon2?: number;
+  /** circle 的半径，公里 */
+  radius_km?: number;
+  /** 点标记悬停时显示的补注，如读数 */
+  note?: string;
+  /** 配色语义：high 红 / low 绿 / neutral 蓝 */
+  tone?: 'high' | 'low' | 'neutral';
+}
+
+export interface AiMarkSet {
+  /** 出处，如「读图估计 · TKE 500hPa 2022-07-01 08:00」 */
+  source: string;
+  marks: AiMark[];
 }
 
 /** 一句话 -> 模式 + 实体。裁判在模型，规则只在模型不可用时兜一层窄判断。 */

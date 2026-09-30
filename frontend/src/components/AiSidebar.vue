@@ -8,7 +8,7 @@
 
     <div class="ai-content glass-panel">
       <div class="ai-head">
-        <span class="ai-title"><Sparkles :size="16" /> AI 助手</span>
+        <span class="ai-title"><Sparkles :size="16" /> 云枢Agent</span>
         <button v-if="turns.length" class="head-btn" :disabled="busy" @click="reset">
           <Eraser :size="12" /> 清空
         </button>
@@ -16,46 +16,73 @@
 
       <!-- 唯一的对话流：AI 靠左、用户靠右，正文按 Markdown 渲染 -->
       <div class="ai-scroll" ref="logEl">
-        <p v-if="!turns.length" class="chat-empty">{{ emptyHint }}</p>
+        <div v-if="!turns.length" class="chat-empty">
+          <div class="chat-empty-title">云枢Agent</div>
+          <div class="chat-empty-slogan">{{ emptySlogan }}</div>
+        </div>
         <div v-for="(t, i) in turns" :key="i" class="msg" :class="t.role">
-          <!-- 助手气泡：正文与动作轨迹**按发生顺序**排在同一个框里。
-               模型常常先说一句「我来查一下」再调工具，那句话必须留在轨迹**上面**；
-               调完工具接着说的话则排在轨迹**下面**。所以这里按 parts 顺序渲染，
-               而不是「轨迹永远在最上方、正文永远在最下方」——
-               那样会把先说的话挤到它发生之后的位置，读起来像时空倒流。 -->
+          <!-- 助手气泡分两个阶段：
+               **吐字中** —— 全部内容摊开，不折叠、不压暗、不加任何边框，
+               模型一边说一边做的样子原样留着；
+               **答完之后** —— 过程收成一行可点的摘要，只把最后那段回答当正文摆出来。
+               想回看中间发生了什么，点摘要行展开，而每一批操作**仍然是收起的**，
+               要看某一批的细节再单独点开。 -->
           <div v-if="t.role === 'assistant'" class="bubble assistant-bubble">
-            <template v-for="(p, pi) in t.parts" :key="pi">
-              <!-- 默认展开：轨迹是这次回答的依据，藏起来等于让人看不到它凭什么这么说。
-                   用户主动折叠后就不再自动展开。 -->
-              <div v-if="p.kind === 'steps'" class="trace" :class="{ open: traceOpen[i] !== false }">
-                <button class="trace-head" @click="toggleTrace(i)">
+            <!-- 过程摘要：只在答完后出现。点了才展开过程 -->
+            <button v-if="!isLive(i) && hasProcess(t)" class="proc-bar"
+                    :class="{ open: procOpenNow(i) }" @click="toggleProc(i)">
+              <ChevronRight :size="12" class="trace-caret" />
+              <span class="proc-title">共执行 {{ elapsedOf(t) }}</span>
+            </button>
+
+            <!-- 过程明细：按发生顺序排。铺垫（「我来查一下」）和它后面的操作是对应的，
+                 搬到顶部再摆下来就对不上了，所以一律留在原位。
+                 **整块**由摘要行控制：收起时一个字都不露，只剩那行摘要和正式回答 ——
+                 之前漏了这道门禁，块内的各批虽然收着，头部却照样挂在下面。 -->
+            <div v-if="procOpenNow(i)" class="proc">
+            <template v-for="(p, pi) in processParts(i, t)" :key="pi">
+              <!-- 一批操作。头部常驻，它说的是「做了几件事」，和下面的清单不重复 -->
+              <div v-if="p.kind === 'steps'" class="trace"
+                   :class="{ open: partOpenNow(i, pi), live: isLive(i) }">
+                <button v-if="!isLive(i)" class="trace-head" @click="togglePart(i, pi)">
                   <ChevronRight :size="12" class="trace-caret" />
                   <span class="trace-title">已执行 {{ p.steps?.length ?? 0 }} 个操作</span>
                 </button>
-                <ul v-if="traceOpen[i] !== false && p.steps?.length" class="trace-list">
+                <ul v-if="partOpenNow(i, pi) && p.steps?.length" class="trace-list">
                   <li v-for="(s, j) in p.steps" :key="j" :class="s.status">
                     <!-- 状态优先：出错/进行中盖过工具类别，否则一条「正在规划」和
                          一条「规划失败」看起来是同一类操作 -->
-                    <component
-                      :is="stepIcon(s)"
-                      :size="12"
-                      class="trace-icon"
-                      :class="{ spin: s.status === 'run' }"
-                    />
+                    <component :is="stepIcon(s)" :size="12" class="trace-icon"
+                               :class="{ spin: s.status === 'run' }" />
                     <span class="trace-text" :title="s.label">{{ s.label }}</span>
                     <!-- detail 可能很长（时间戳、路径、整句结论），不截断会把左边的
                          操作名挤成多行。硬截断 + 尾部渐隐表示「还有」，完整内容靠 title -->
                     <span v-if="s.detail" class="trace-detail" :title="s.detail">{{ s.detail }}</span>
                   </li>
                 </ul>
+                <!-- AI 实际看到的那张图也贴出来：不然用户只能相信「它看了」这句话 -->
+                <img v-for="(img, ii) in (partOpenNow(i, pi) ? p.images : []) || []" :key="'img' + ii"
+                     class="trace-image" :src="img" alt="AI 看到的图" @click="openImage(img)" />
               </div>
-              <div v-else class="md" v-html="renderMarkdown(p.text || '')"></div>
+
+              <!-- 模型的自述文字。**完整摊开**：不折叠、不截断、不加引用线。
+                   藏一半再让人点开，等于逼用户为读一句完整的话多点一次；
+                   而它本来就是「当时说了什么」的如实记录，压暗了反而像在藏。 -->
+              <div v-else class="preamble">
+                <div class="preamble-body md" v-html="renderMarkdown(p.text || '')"></div>
+              </div>
             </template>
+            </div>
+
+            <!-- 正式回答：这轮唯一不折叠的内容。上面确实摊着过程时才画分隔线 -->
+            <div v-if="finalIdx(i, t) >= 0" class="md final"
+                 :class="{ 'has-pre': hasProcess(t) && procOpenNow(i) }"
+                 v-html="renderMarkdown(finalText(i, t))"></div>
           </div>
           <div v-else class="bubble">{{ t.text }}</div>
 
           <span v-if="t.source" class="msg-meta">
-            {{ t.source === 'llm' ? 'LLM 生成' : '规则兜底' }}
+            {{ t.source === 'llm' ? clockOf(t.generatedAt) : '规则兜底' }}
           </span>
           <p v-if="t.error" class="msg-error"><AlertTriangle :size="12" /> {{ t.error }}</p>
         </div>
@@ -82,14 +109,41 @@
         </div>
         <p v-if="expanded" class="chip-full">{{ expanded }}</p>
 
-        <div class="composer-row">
-          <textarea v-model="draft" rows="2" :disabled="busy" :placeholder="draftPlaceholder"
-                    @keydown.enter.exact.prevent="send(draft)"></textarea>
-          <button class="send-btn" :disabled="busy || !draft.trim()" @click="send(draft)">
-            <Loader v-if="busy" :size="15" class="spin" />
-            <Send v-else :size="15" />
-          </button>
+        <!-- 附件缩略图：用户这次要发给 AI 看的图 -->
+        <div v-if="pendingImages.length" class="attachments">
+          <div v-for="(src, i) in pendingImages" :key="i" class="attachment">
+            <img :src="src" :alt="`附件 ${i + 1}`" />
+            <button class="attachment-x" title="移除" @click="dropImage(i)">
+              <X :size="10" />
+            </button>
+          </div>
         </div>
+
+        <!-- 「聊天框」= 文字区 + 底部按钮排，共用一圈边框。
+             两个按钮都在框内、靠下、同一排、右对齐：附件在上（无框），
+             发送在下（圆形实心）。放在框外会让人以为它们管的是整个会话。 -->
+        <div class="composer-row">
+          <div class="composer-input">
+            <textarea v-model="draft" rows="2" :disabled="busy" :placeholder="draftPlaceholder"
+                      @keydown.enter.exact.prevent="send(draft)"
+                      @paste="onPaste"></textarea>
+            <div class="composer-actions">
+              <button class="attach-btn" :disabled="busy" title="附图给 AI 看（也可以直接 Ctrl+V 粘贴）"
+                      @click="pickImage">
+                <Paperclip :size="15" />
+              </button>
+              <button class="send-btn" :disabled="busy || !draft.trim()" @click="send(draft)">
+                <Loader v-if="busy" :size="15" class="spin" />
+                <Send v-else :size="15" />
+              </button>
+            </div>
+          </div>
+          <input ref="fileEl" type="file" accept="image/*" multiple hidden @change="onFiles" />
+        </div>
+
+        <!-- 免责提示常驻在输入框正下方：飞行安全是真要担责的事，
+             这个系统的结论来自模型 + 再分析数据，不能拿它当放行凭证。 -->
+        <p class="composer-note">内容由 AI 生成，重要信息请务必核查</p>
       </div>
     </div>
   </div>
@@ -103,13 +157,13 @@ import {
   Send, Loader, Eraser, AlertTriangle,
   Wrench, MapPin, Calculator, AlertCircle, Crosshair, Layers, PanelLeft,
   ChartLine, Play, SlidersHorizontal, Clock, Package, Plane, Users, Gauge,
-  CalendarDays, Trash2, Thermometer, Search,
+  CalendarDays, Trash2, Thermometer, Search, Paperclip, X,
 } from 'lucide-vue-next';
 import {
   store, suggestChips, fetchSiteCatalog,
 } from '../store';
 import type { SuggestChip } from '../store';
-import { invokeTool, buildAgentState } from '../agentTools';
+import { invokeTool, buildAgentState, setAttachedImages } from '../agentTools';
 import { API_BASE } from '../config';
 import { renderMarkdown } from '../utils/markdown';
 
@@ -131,6 +185,8 @@ interface TurnPart {
   kind: 'text' | 'steps';
   text?: string;
   steps?: TraceStep[];
+  /** 这一批工具里 AI 实际看到的图（data URL），贴出来让用户能核对 */
+  images?: string[];
 }
 
 interface Turn {
@@ -140,6 +196,17 @@ interface Turn {
   source?: 'llm' | 'rule';
   parts?: TurnPart[];
   error?: string;
+  /** 本轮起止的墙钟时刻。摘要行上「共执行 X 分 X 秒」取自这里，答完即冻结 */
+  startedAt?: number;
+  endedAt?: number;
+  /**
+   * 生成时刻。来源标签上显示的就是它（「23:04 生成」）——
+   * 比「LLM 生成」这种只说明来源、不说明时间的标签有用：用户是拿着这份报告去做决定的，
+   * 「几点生成的」决定它现在还算不算数（数据是逐小时的，隔天就该重算）。
+   * 和 startedAt 分开：startedAt 会连带算工具耗时，语义是「这轮跑了多久」；
+   * 这个只认「正文是什么时候开始生成的」，两者不总是同一刻。
+   */
+  generatedAt?: number;
 }
 
 /** 空状态下的引导胶囊。刻意挑了**能体现多步能力**的句子，
@@ -159,10 +226,107 @@ const chipsPending = ref(false);
 /** 胶囊请求的序号：只有最新一次的结果算数，早到的旧结果直接丢弃 */
 let suggestSeq = 0;
 const expanded = ref('');
-/** 每条助手消息的轨迹折叠与否。按下标存；undefined = 默认展开。
- *  用 `!== false` 判定而不是 truthy，是为了让「默认展开」和「用户手动折叠」能区分开。 */
-const traceOpen = ref<Record<number, boolean>>({});
-const toggleTrace = (i: number) => { traceOpen.value[i] = traceOpen.value[i] === false; };
+
+/**
+ * 一条助手消息里，**哪一段才是正式回答**。
+ *
+ * 判据是「最后一段有内容的文字」—— 它之前的所有东西（模型先说的「我来查一下」、
+ * 每一批操作轨迹、AI 看到的图）都属于过程。以前这些和结论同字号排在一起，
+ * 用户得读完整段才知道哪句才是答案。
+ */
+const finalIndex = (t: Turn): number => {
+  const parts = t.parts ?? [];
+  for (let k = parts.length - 1; k >= 0; k--) {
+    if (parts[k].kind === 'text' && (parts[k].text || '').trim()) return k;
+  }
+  return -1;
+};
+
+/**
+ * 正式回答的位置。**吐字期间一律返回 -1**。
+ *
+ * 之前只用「是不是最后一段非空文字」判，害得模型刚吐出的那句「我先扫一下全年
+ * 时间窗口」在它孤零零占着末尾时，被当成结论用正常字号渲染 —— 要等下一段文字
+ * 到了、它不再垫底，才降级成引用的样子。于是同一轮里前一句已经是引用、后一句
+ * 还是正文，看着像两种语气。正式回答只在答完之后才存在，之前一律按过程处理。
+ */
+const finalIdx = (i: number, t: Turn) => (isLive(i) ? -1 : finalIndex(t));
+
+const finalText = (i: number, t: Turn) => {
+  const k = finalIdx(i, t);
+  return k >= 0 ? t.parts![k].text || '' : '';
+};
+
+/**
+ * 这一轮**要不要显出过程区**。
+ *
+ * 吐字中永远要 —— 用户得看着它一边说一边做；答完之后默认不要，只留一行摘要，
+ * 结论单独摆出来。想回看中间发生了什么，点那行。
+ */
+const hasProcess = (t: Turn) => finalIndex(t) > 0;
+const procOpenNow = (i: number) => isLive(i) || procOpen.value[`${i}`] === true;
+const toggleProc = (i: number) => {
+  if (isLive(i)) return;
+  procOpen.value[`${i}`] = !procOpenNow(i);
+};
+
+/** 要摆出来的过程块：吐字中是全部，答完后就只剩正式回答之前的那几块 */
+const processParts = (i: number, t: Turn): TurnPart[] => {
+  const parts = t.parts ?? [];
+  if (isLive(i)) return parts;
+  return parts.slice(0, Math.max(0, finalIndex(t)));
+};
+
+/**
+ * 这一轮花了多久，答完之后**冻结**。
+ *
+ * 冻结是必须的：不冻结的话那一行会随着时间一直变，用户刚读完它就变了。
+ * 顺带一提，冻结的时机在 finally 里（Agent 循环完全结束），不是最后一次
+ * delta —— 中间还要跑工具，那些时间也确实是它花的。
+ */
+const elapsedOf = (t: Turn): string => {
+  if (!t.startedAt) return '不到 1 秒';
+  const s = Math.max(1, Math.round(((t.endedAt ?? Date.now()) - t.startedAt) / 1000));
+  return s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
+};
+
+/**
+ * 生成时刻格式化成 HH:MM（本地时区，跟用户对表盘的时间一致）。
+ * 缺时刻时退回现在 —— 标签总得有个说法，不能空着或显示 NaN。
+ */
+const clockOf = (ms?: number): string => {
+  const d = new Date(ms ?? Date.now());
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+/**
+ * 这一条是不是「正在回答中」。
+ *
+ * 收起是**答完之后**的整理动作：干活的时候藏起来，用户就只能盯着一个计数，
+ * 看不到它一边说一边做。所以只有最后一条且仍在忙时才摊开。
+ */
+const isLive = (i: number) => busy.value && i === turns.value.length - 1;
+
+/**
+ * 过程区里的每一块，在**原位**独立折叠 —— 铺垫和操作本来就是交错发生的，
+ * 把它们搬到顶部再摆下来，文字和它对应的操作就对不上了。
+ * key 用「轮次:块序号」，一个气泡里多块互不影响。
+ *
+ * 展开过程区时它们默认全是收起的：先给一层结构（做了几批、每批一句话），
+ * 想钻哪一批再点开哪一批 —— 一口气摊开十几条操作，没人看得下去。
+ */
+const partOpen = ref<Record<string, boolean>>({});
+/** 过程区（那一整块）展开与否，按轮次记。它管的是「看不看得出中间发生了什么」，
+ *  partOpen 管的是「展开之后每批看不看得细」，两层别混。 */
+const procOpen = ref<Record<string, boolean>>({});
+const partOpenNow = (i: number, pi: number) =>
+  isLive(i) || partOpen.value[`${i}:${pi}`] === true;
+const togglePart = (i: number, pi: number) => {
+  // 正在回答时全部摊开，点它不改变什么 —— 但也绝不能把状态写进去：
+  // 那个键会一直留着，等这轮答完同序号的新块就莫名其妙是展开的。
+  if (isLive(i)) return;
+  partOpen.value[`${i}:${pi}`] = !partOpenNow(i, pi);
+};
 
 /** 轨迹图标按工具类别分，让用户一眼看出这条是"动了界面"还是"算了数据"。 */
 const TOOL_ICONS: Record<string, Component> = {
@@ -207,9 +371,18 @@ const busy = computed({
   set: (v: boolean) => { store.aiBusy = v; },
 });
 
-const emptyHint = computed(() =>
-  '直接说要做什么，例如「从拉萨送 200 公斤兽药到昌都」。我会自动切到对应模式、填好参数并把结果算出来。'
-);
+/**
+ * 空态：名字 + 一句 slogan。
+ *
+ * 原来这里放的是一句「直接说要做什么，例如…我会自动切到…填好参数…算出来」——
+ * 那是**说明书**，而且是最容易被记住的那一段说明书：用户读完它就知道该点哪、
+ * 会看到什么，反而不用自己去试。真正该占住这个位置的是这个名字做什么用的，
+ * 具体怎么用交给下面那排胶囊，它们本来就是例子。
+ *
+ * 标题与 slogan 都要**居中**：这是一块还没被用起来的空白，居中才像「等你开口」，
+ * 顶格靠上会让人以为上面那块已经显示了内容、下面没东西了。
+ */
+const emptySlogan = '一句话进去，一份报告出来';
 
 const draftPlaceholder = computed(() =>
   busy.value ? '正在处理…' : '说出你的任务，Enter 发送'
@@ -233,8 +406,8 @@ const appendText = (reply: Turn, s: string) => {
 };
 
 /** 追加一批操作记录。永远是新的一块 —— 操作与操作之间也按批次分开。 */
-const appendSteps = (reply: Turn, steps: TraceStep[]) => {
-  reply.parts!.push({ kind: 'steps', steps });
+const appendSteps = (reply: Turn, steps: TraceStep[], images?: string[]) => {
+  reply.parts!.push({ kind: 'steps', steps, images });
   reply.text = reply.parts!.map(p => p.text ?? '').join('\n\n');
 };
 
@@ -243,6 +416,80 @@ const lastSteps = (reply: Turn): TraceStep[] | null => {
   const last = reply.parts![reply.parts!.length - 1];
   return last && last.kind === 'steps' ? last.steps! : null;
 };
+
+/** 点开放大：缩略图看不清，而细节正是模型在描述的东西 */
+const openImage = (src: string) => { window.open(src, '_blank', 'noopener'); };
+
+// ---------------- 附件 ----------------
+// 多模态按图算 token，尺寸先压一遍再送：手机照片原图动辄几 MB，
+// 缩到长边 1024 足够看清内容，又不至于把一次对话的额度吃掉。
+
+const pendingImages = ref<string[]>([]);
+const fileEl = ref<HTMLInputElement | null>(null);
+const pickImage = () => fileEl.value?.click();
+const dropImage = (i: number) => { pendingImages.value.splice(i, 1); };
+
+const MAX_ATTACH = 3;
+const MAX_ATTACH_EDGE = 1024;
+
+const onFiles = async (ev: Event) => {
+  const input = ev.target as HTMLInputElement;
+  const files = Array.from(input.files ?? []);
+  input.value = '';                       // 允许重复选同一个文件
+  await addImages(files);
+};
+
+/**
+ * 直接 Ctrl+V 粘贴图片。
+ *
+ * 从截图工具（微信/QQ/浏览器）复制过来时，用户手上就是这个动作 —— 让他再
+ * 「存到桌面 → 点回形针 → 选文件」是凭空多出来的三步。这里不 preventDefault：
+ * 粘的是文字时必须照常落进输入框，只有**确实带图**时才拦。
+ */
+const onPaste = async (ev: ClipboardEvent) => {
+  const items = Array.from(ev.clipboardData?.items ?? []);
+  const files = items
+    .filter(it => it.kind === 'file' && it.type.startsWith('image/'))
+    .map(it => it.getAsFile())
+    .filter((f): f is File => !!f);
+  if (!files.length) return;              // 纯文字粘贴，放行
+  ev.preventDefault();
+  await addImages(files);
+};
+
+/** 统一入口：选文件与粘贴都走这里，条数与尺寸封顶也只在这里做一次 */
+const addImages = async (files: File[]) => {
+  for (const f of files) {
+    if (pendingImages.value.length >= MAX_ATTACH) break;
+    if (!f.type.startsWith('image/')) continue;
+    try {
+      pendingImages.value.push(await downscale(f));
+    } catch (e) {
+      console.error('图片读取失败:', e);
+    }
+  }
+};
+
+function downscale(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, MAX_ATTACH_EDGE / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      const ctx = cv.getContext('2d');
+      if (!ctx) return reject(new Error('canvas 不可用'));
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(cv.toDataURL('image/jpeg', 0.7));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('解码失败')); };
+    img.src = url;
+  });
+}
 
 /**
  * 一轮对话 = **Agent 循环**。
@@ -269,31 +516,43 @@ const send = async (raw: string) => {
     turns.value.push({ role: 'user', text });
     const reply = pushAssistant();
     reply.source = 'llm';
+    reply.startedAt = Date.now();
+    reply.generatedAt = reply.startedAt;
+
+    // 本轮随消息发出去的图：既随请求送给模型，也让 look_at_image(attachment) 能引用。
+    // 发送后立即清空 —— 附件的生命周期只到本轮，不该跟着对话一直挂着。
+    const sent = pendingImages.value.slice();
+    setAttachedImages(sent);
+    pendingImages.value = [];
 
     let toolResults: Record<string, any>[] = [];
     // 前端与后端各有一道轮数闸（这里 6、agent.py 里 MAX_STEPS=5）。两边都留一道是
     // 有意的：任何一边单独失效都还收得住，不至于让模型无限兜圈。
     for (let round = 0; round < 6; round++) {
-      const step = await callAgent(history, text, toolResults, round, reply);
+      const step = await callAgent(history, text, toolResults, round, reply, sent);
       if (step.error) {
         reply.error = step.error;
         break;
       }
       if (!step.calls.length) break;   // 正文已经流进 reply 了
 
-      // 同一批里完全相同的调用只执行一次。模型偶尔会把 run_plan 连写两遍
-      // （用户切档时尤其容易），两次都真跑就是白烧两轮 A* 拿回一样的数字。
-      const seen = new Set<string>();
-      const batch = step.calls.filter(c => {
-        const key = `${c.tool}:${JSON.stringify(c.args ?? {})}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-
       // 这一批要真的执行。每调完一个就把结果记进轨迹，用户能看着它一步步动。
-      for (const call of batch) {
+      //
+      // 注意遍历的是**全部**调用而不是去重后的：回灌要按协议给每个 tool_call_id
+      // 配一条结果，少一条模型那边就收不下整个请求。重复的那几个只复用结果、不重跑。
+      const done = new Map<string, { ok: boolean; label: string; data?: unknown }>();
+      for (const call of step.calls) {
         const tool = call.tool;
+        const args = call.args || {};
+        const key = `${tool}:${JSON.stringify(args)}`;
+        let r = done.get(key);
+        if (r) {
+          // 同一批里完全相同的调用（模型偶尔会把 run_plan 连写两遍）只真跑一次，
+          // 两次都跑就是白烧两轮 A* 拿回一样的数字。
+          toolResults.push({ id: call.id, tool, args, ...r });
+          continue;
+        }
+
         const slow = SLOW_TOOLS.has(tool);
         // 慢工具先落一条「正在…」再原地改写：一次三档 A* 要十几秒，
         // 中间没有动静的话用户会以为卡死了。快工具不必多这一次闪烁。
@@ -313,12 +572,20 @@ const send = async (raw: string) => {
         // 别的更新的便车，这里改成不依赖巧合）。
         const row = steps[steps.length - 1];
 
-        const r = await invokeTool(tool, call.args || {});
-        row.label = r.label;
-        row.detail = r.detail;
-        row.status = r.ok ? 'ok' : 'error';
+        const full = await invokeTool(tool, args);
+        row.label = full.label;
+        row.detail = full.detail;
+        row.status = full.ok ? 'ok' : 'error';
+        // AI 实际看到的那张图贴进这一批：不然用户只能「相信」它看了
+        if (full.image) {
+          const owner = reply.parts![reply.parts!.length - 1];
+          (owner.images ||= []).push(full.image);
+        }
         // data 只放工具真拿到的结果；模型只能引用它，所以失败时这里是空的
-        toolResults.push({ tool, ok: r.ok, label: r.label, data: r.data ?? null });
+        r = { ok: full.ok, label: full.label, data: full.data ?? null };
+        done.set(key, r);
+        // id/args 要带回去：后端据此重建 assistant(tool_calls) + role=tool 的配对
+        toolResults.push({ id: call.id, tool, args, ...r });
       }
       // 下一步要按**工具改完之后的界面状态**来判断，所以每轮都重新取快照
       if (!toolResults.length) break;
@@ -332,8 +599,20 @@ const send = async (raw: string) => {
     console.error('Agent 循环失败:', error);
     const failed = turns.value[turns.value.length - 1];
     const msg = '没能完成这次操作。可以换个说法，或者直接在左栏手动操作。';
-    if (failed?.role === 'assistant') { failed.text = msg; failed.source = 'rule'; }
+    if (failed?.role === 'assistant') {
+      failed.text = msg;
+      // parts 也要补上：助手气泡渲染的是 parts，光改 text 会剩一个空框，
+      // 底下再挂一条错误提示 —— 用户看到的是「它答了，但什么都没说」。
+      failed.parts = [{ kind: 'text', text: msg }];
+      failed.source = 'rule';
+    }
   } finally {
+    // 计时在这里收口：Agent 循环（含中间那些秒级的工具执行）确实都算它的耗时。
+    // 摘要是答完之后才露出来的，所以这一行读到的已经是终值，不会边读边跳。
+    const last = turns.value[turns.value.length - 1];
+    if (last?.role === 'assistant' && last.startedAt && !last.endedAt) {
+      last.endedAt = Date.now();
+    }
     // 输入框在这里就解锁 —— 答案已经出来了，用户可以立刻发下一条。
     // 胶囊慢两秒无所谓，它只是个建议入口，不该把整个输入区锁住。
     busy.value = false;
@@ -382,6 +661,7 @@ const callAgent = async (
   toolResults: Record<string, any>[],
   roundIndex: number,
   reply: Turn,
+  images: string[] = [],
 ): Promise<{ calls: any[]; error?: string }> => {
   const out: { calls: any[]; error?: string } = { calls: [] };
   try {
@@ -393,6 +673,10 @@ const callAgent = async (
         state: buildAgentState(),
         tool_results: toolResults,
         round_index: roundIndex,
+        images,
+        // 模型这一轮到目前说过的话。回灌时挂回 assistant 消息，
+        // 否则它不知道自己刚讲过什么，同一段话换个说法再讲一遍。
+        said: (reply.parts ?? []).map(p => p.text ?? '').join(''),
       }),
     });
     if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
@@ -440,13 +724,83 @@ const expand = (chip: SuggestChip, _i: number) => {
   expanded.value = expanded.value === chip.prompt ? '' : chip.prompt;
 };
 
+// ---------------- 手动规划完 → 自动出一份评估报告 ----------------
+
+/** 报告正在生成。用来防重复：busy 变 false 可能连着触发两次（报告结束 + 新一轮开始） */
+let reportRunning = false;
+
+/**
+ * 消费 store.reportRequest：把 /api/assess/report 的流式正文落成一条助手消息。
+ *
+ * 刻意**不**另做一套「报告卡片」：报告与 AI 回答是同一种内容（对这次规划的说法），
+ * 多一种呈现就多一份要跟着改的样式。报告整段只有一个 text 块，所以气泡里的
+ * 过程折叠天然不触发，看起来就是一段正常回答。
+ */
+const runReport = async () => {
+  const req = store.reportRequest;
+  if (!req || busy.value || reportRunning) return;   // AI 正在说话就先欠着
+  store.reportRequest = null;
+  reportRunning = true;
+  // 报告是用户主动等的东西，侧栏收着就等于没出
+  store.aiSidebarCollapsed = false;
+
+  const turn = pushAssistant();
+  turn.source = 'llm';
+  // 打生成时刻：标签上显示的就是它。放在发请求之前，且**只打一次**——
+  // 让它跟着流式增量走的话，同一条报告在十几秒里会被刷成一串不同的时间。
+  turn.generatedAt = Date.now();
+  try {
+    const response = await fetch(`${API_BASE}/api/assess/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: req.task, payload: req.payload }),
+    });
+    if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split('\n\n');
+      buffer = chunks.pop() ?? '';
+      for (const chunk of chunks) {
+        const line = chunk.split('\n').find(l => l.startsWith('data:'));
+        if (!line) continue;
+        let event: any;
+        try { event = JSON.parse(line.slice(5).trim()); } catch { continue; }
+        // LLM 没配时后端会降级成规则模板，标签要说准，不能一律写「LLM 生成」
+        if (event.type === 'meta') turn.source = event.source === 'rule' ? 'rule' : 'llm';
+        else if (event.type === 'delta' && event.text) appendText(turn, event.text);
+        else if (event.type === 'error') turn.error = event.message;
+      }
+    }
+  } catch (error) {
+    console.error('报告生成失败:', error);
+    turn.error = '报告生成失败，可以稍后重试。';
+  } finally {
+    if (!turn.text && !turn.error) {
+      turn.text = '（这次没有生成出报告）';
+      turn.parts = [{ kind: 'text', text: turn.text }];
+    }
+    reportRunning = false;
+  }
+};
+
+watch(() => store.reportRequest?.nonce, () => { void runReport(); });
+// AI 说完话那一刻也看一眼：规划可能是在 AI 回答期间算完的，那次请求要等它让出
+watch(busy, (b) => { if (!b) void runReport(); });
+
 const reset = () => {
   turns.value = [];
   chips.value = STARTER_CHIPS;
   chipsPending.value = false;
   suggestSeq++;              // 作废还在路上的那次请求，否则它回来会把占位换回旧胶囊
   expanded.value = '';
-  traceOpen.value = {};
+  partOpen.value = {};
+  procOpen.value = {};
 };
 
 // 新消息与流式增量都要把日志拉到底部
@@ -532,7 +886,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
   letter-spacing: 0.5px;
@@ -545,7 +899,7 @@ onMounted(() => {
   align-items: center;
   gap: 4px;
   padding: 3px 9px;
-  font-size: 11px;
+  font-size: 12px;
   border-radius: 9999px;
   border: 1px solid var(--panel-border);
   background: transparent;
@@ -565,11 +919,32 @@ onMounted(() => {
   gap: 14px;
 }
 
+/* 空态：标题 + slogan 占住整块空白。垂直居中，让它像「等你开口」而不是「已显示内容」 */
 .chat-empty {
-  margin: 0;
-  font-size: 11px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 20px;
+  text-align: center;
+}
+
+.chat-empty-title {
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0.5px;
+  color: var(--text-primary);
+}
+
+.chat-empty-slogan {
+  font-size: 13px;
   line-height: 1.7;
+  letter-spacing: 1px;
   color: var(--text-secondary);
+  opacity: 0.8;
 }
 
 .msg { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
@@ -579,7 +954,7 @@ onMounted(() => {
   max-width: 92%;
   padding: 8px 11px;
   border-radius: 12px;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.7;
   word-break: break-word;
 }
@@ -587,7 +962,6 @@ onMounted(() => {
 .msg.assistant .bubble {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid var(--panel-border);
-  border-bottom-left-radius: 4px;
   color: var(--text-primary);
 }
 
@@ -604,17 +978,16 @@ onMounted(() => {
 .msg.user .bubble {
   background: rgba(52, 152, 219, 0.18);
   border: 1px solid rgba(52, 152, 219, 0.42);
-  border-bottom-right-radius: 4px;
   white-space: pre-wrap;
 }
 
 /* 模型给的 Markdown 结构要在窄栏里读得下去：段落间距压到最小 */
 .md :deep(p) { margin: 0 0 6px; }
 .md :deep(p:last-child) { margin-bottom: 0; }
-.md :deep(h3), .md :deep(h4) { font-size: 12px; margin: 8px 0 4px; color: var(--text-primary); }
+.md :deep(h3), .md :deep(h4) { font-size: 14px; margin: 8px 0 4px; color: var(--text-primary); }
 .md :deep(ul), .md :deep(ol) { margin: 0 0 6px; padding-left: 18px; }
 .md :deep(li) { margin: 0 0 2px; }
-.md :deep(code) { font-size: 11px; background: rgba(0, 0, 0, 0.3); padding: 1px 4px; border-radius: 4px; }
+.md :deep(code) { font-size: 12px; background: rgba(0, 0, 0, 0.3); padding: 1px 4px; border-radius: 4px; }
 
 /* 表格：撑满气泡 + 圆角 + 按内容分配列宽 + 双向居中。
    - 圆角必须用 `border-collapse: separate`：collapse 会把圆角和裁剪一起吃掉，
@@ -632,7 +1005,7 @@ onMounted(() => {
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   overflow: hidden;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.55;
   margin: 6px 0 8px;
 }
@@ -661,7 +1034,51 @@ onMounted(() => {
 
 .md :deep(a) { color: var(--accent-color); }
 
-.msg-meta { font-size: 10px; color: var(--text-secondary); }
+.msg-meta { font-size: 11px; color: var(--text-secondary); }
+
+/* ---- 过程摘要行 ----
+   答完之后，「它干了什么」压成这一行。它是这一轮**唯一**的过程入口：
+   收起时点它展开整段过程，展开时点它又收回去。 */
+.proc-bar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 2px 0;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-family: inherit;
+  /* 刻意不加任何容器：它就是一行可点的文字。
+     套个边框底色的话，这行会比下面真正要读的正文还抢眼。 */
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+.proc-bar:hover { color: var(--text-primary); }
+.proc-bar.open .trace-caret { transform: rotate(90deg); }
+
+.proc-title {
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  /* 下划线：这行看着像正文的一部分，不是浮在外面的一个控件 */
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(148, 163, 184, 0.4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 展开后的过程区。它只是**分组用的壳**，间距交给 gap ——
+   .trace 自带 margin 的话会和 gap 叠加，同一个 gap 下块与块的距离还不一样。 */
+.proc {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.proc > .trace, .proc > .preamble { margin: 0; }
 
 /* ---- 动作轨迹 ----
    这是「让 Agent 的思考可见」的落点：每一条都对应一次真实的工具调用。
@@ -675,13 +1092,27 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
+/* 吐字过程中一律「素面」：不套卡片、不压暗、不加引用线。
+   那些装饰是用来把过程和结论**区分开**的，可答案还没出来，这会儿还没有结论
+   要区分 —— 提前把它压暗，用户看着就像自己的提问被敷衍了。 */
+.trace.live {
+  border: none;
+  background: transparent;
+  margin: 0 0 4px;
+}
+
+.trace.live .trace-list {
+  border-top: none;
+  padding: 0;
+}
+
 .trace-head {
   display: flex;
   align-items: center;
   gap: 5px;
   width: 100%;
   padding: 5px 9px;
-  font-size: 10px;
+  font-size: 11px;
   font-family: inherit;
   border: none;
   background: transparent;
@@ -695,6 +1126,27 @@ onMounted(() => {
 .trace.open .trace-caret { transform: rotate(90deg); }
 
 .trace-title { font-weight: 600; letter-spacing: 0.3px; }
+
+/* ---- 过程中的自述文字 ----
+   只有壳，正文样式全部继承气泡：不加引用线、不压暗、不给折叠头。
+   之前那套「左边一条竖线 + 62% 透明度」是把它当引用处理，实际它只是
+   模型当时说的话，藏头露尾地摆出来反而像在遮遮掩掩。 */
+.preamble {
+  flex-shrink: 0;
+}
+
+.preamble-body {
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+/* 正式回答上方的分隔线：把「过程」与「结论」在视觉上切开。
+   只在前面确实有过程时才画，否则顶部会挂一条无来由的横线。 */
+.md.final.has-pre {
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+  padding-top: 9px;
+  margin-top: 4px;
+}
 
 .trace-list {
   margin: 0;
@@ -711,7 +1163,7 @@ onMounted(() => {
   display: flex;
   align-items: baseline;
   gap: 6px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--text-primary);
   /* 两列都不许换行：换行会把一行操作撑成三行，轨迹整体节奏就散了 */
@@ -751,7 +1203,7 @@ onMounted(() => {
      渐隐也因此总出现在同一个位置（行的最右端），而不是跟着文字长度飘。 */
   margin-left: auto;
   padding-right: 16px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-secondary);
   opacity: 0.85;
   text-align: right;
@@ -772,7 +1224,7 @@ onMounted(() => {
   align-items: center;
   gap: 5px;
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   color: #fca5a5;
 }
 
@@ -780,8 +1232,8 @@ onMounted(() => {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px 20px 16px;
+  gap: 7px;
+  padding: 10px 20px 12px;
   border-top: 1px solid var(--panel-border);
   background: rgba(0, 0, 0, 0.15);
 }
@@ -795,7 +1247,7 @@ onMounted(() => {
 
 .chip {
   padding: 5px 10px;
-  font-size: 11px;
+  font-size: 12px;
   font-family: inherit;
   border-radius: 9999px;
   border: 1px solid var(--panel-border);
@@ -826,7 +1278,7 @@ onMounted(() => {
 .chip-full {
   margin: 0;
   padding: 7px 10px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.6;
   border-radius: 8px;
   border: 1px dashed var(--panel-border);
@@ -834,26 +1286,105 @@ onMounted(() => {
   color: var(--text-primary);
 }
 
-.composer-row { display: flex; align-items: flex-end; gap: 8px; }
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 
-.composer-row textarea {
+.attachment {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+}
+
+.attachment img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.attachment-x {
+  position: absolute;
+  top: 1px; right: 1px;
+  width: 15px; height: 15px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 3px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  cursor: pointer;
+}
+.attachment-x:hover { background: #ef4444; }
+
+/* 「聊天框」是**一个**框：文字区和按钮区共用一圈边框。
+   之前是 textarea 自己带框、按钮在框外，于是附件和发送看着像两个不相干的控件。 */
+.composer-row { display: flex; align-items: stretch; gap: 8px; }
+
+.composer-input {
   flex: 1;
   min-width: 0;
-  resize: none;
-  font-family: inherit;
-  font-size: 12px;
-  line-height: 1.6;
-  padding: 8px 12px;
-  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--panel-border);
+  border-radius: 12px;
   background: rgba(0, 0, 0, 0.25);
+  transition: border-color 0.2s;
+}
+.composer-input:focus-within { border-color: var(--accent-color); }
+
+.composer-input textarea {
+  width: 100%;
+  min-height: 46px;
+  resize: none;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 8px 12px 2px;
   color: var(--text-primary);
 }
-.composer-row textarea:focus { outline: none; border-color: var(--accent-color); }
+.composer-input textarea:focus { outline: none; }
+.composer-input textarea:disabled { opacity: 0.6; }
+
+/* 按钮排：靠下、右对齐、同一排。放在框内而不是绝对定位盖在文字上，
+   文字就不会被压到按钮底下 —— 那一行会长得很难看。 */
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 0 10px 8px 12px;
+}
+
+/* 附件键不带框：它是个辅助入口，套个圈会和旁边的主按钮抢注意力 */
+.attach-btn {
+  width: 28px;
+  height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.2s, background 0.2s;
+}
+.attach-btn:hover:not(:disabled) { color: var(--text-primary); background: rgba(255, 255, 255, 0.08); }
+.attach-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* AI 实际看到的那张图：贴出来是为了让用户能核对「它看的到底是哪张」，
+   点开放大到新标签 —— 缩略图看不清细节，而细节正是模型在描述的东西。 */
+.trace-image {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  border-radius: 6px;
+  border: 1px solid var(--panel-border);
+  cursor: zoom-in;
+}
 
 .send-btn {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -867,6 +1398,16 @@ onMounted(() => {
 }
 .send-btn:hover:not(:disabled) { background: var(--accent-hover); }
 .send-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* 免责提示。压得比正文小一号、灰一档 —— 它的作用是「在」，不是「抢」。
+   不另加 margin：父级 .composer 已经有 gap，两者叠加会凭空多出一截空白。 */
+.composer-note {
+  margin: 0;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
 
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

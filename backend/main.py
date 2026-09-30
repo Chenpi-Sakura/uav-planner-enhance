@@ -11,6 +11,7 @@ from schemas import (
     SitePlanRequest, SitePlanResponse, TaskParseRequest, TaskParseResponse,
     IntentRequest, IntentResponse,
     WeatherQueryRequest, WeatherQueryResponse,
+    RegionPreviewRequest, RegionPreviewResponse,
     SuggestRequest, SuggestResponse, AgentRequest,
 )
 from data_loader import data_loader
@@ -25,6 +26,7 @@ import agent
 import intent
 import suggest
 import tools
+import vision
 import weather_query
 from config import ROOT_DIR, settings
 from timebase import to_data_time_str
@@ -397,6 +399,23 @@ async def query_weather_endpoint(request: WeatherQueryRequest):
         None, weather_query.query_weather, pts, request.date, request.time))
 
 
+@app.post("/api/weather/preview", response_model=RegionPreviewResponse)
+async def region_preview(request: RegionPreviewRequest):
+    """渲染一块区域的气象图层，供对话里的 Agent **真的看图**。
+
+    复用的是前端贴图用的同一个 ``get_overlay_image``，所以 AI 看到的就是用户
+    此刻在地图上看到的那张，不是「另画一套示意图」。
+
+    返回 data URL 而不是二进制：它要同时喂给模型（下一轮走 image_url）和用户
+    （对话流里贴出来让人看到 AI 看的是哪张），放一个字段里最省事。
+    """
+    loop = asyncio.get_event_loop()
+    return RegionPreviewResponse(**await loop.run_in_executor(
+        None, vision.render_region_image,
+        request.lat, request.lon, request.km, request.layer,
+        request.date, request.time))
+
+
 @app.post("/api/assess/suggest", response_model=SuggestResponse)
 async def suggest_chips_endpoint(request: SuggestRequest):
     """后续建议胶囊：站在用户视角预测下一步最可能问什么。
@@ -431,7 +450,7 @@ async def agent_endpoint(request: AgentRequest):
 
     def event_stream():
         for event in agent.run_agent(request.state, history, request.tool_results,
-                                     request.round_index):
+                                     request.round_index, request.images, request.said):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(

@@ -13,7 +13,7 @@ import {
   store, runPlan, runSitePlan, runTimeWindowScan, queryWeather, resolvePlace,
   activateRouteTier,
 } from './store';
-import type { ChatTarget, SiteCatalogSite } from './store';
+import type { AiMark, ChatTarget, SiteCatalogSite } from './store';
 import { API_BASE } from './config';
 
 export interface ToolResult {
@@ -23,6 +23,8 @@ export interface ToolResult {
   label: string;
   /** 补充说明（数字、失败原因） */
   detail?: string;
+  /** 看图工具产出的图（data URL）。既喂给模型下一轮，也在对话里贴给用户看 */
+  image?: string;
   /**
    * 回灌给模型的真实结果。
    * **只放工具真的拿到的数据** —— 模型只能引用这里的东西，所以这一栏为空时
@@ -33,6 +35,17 @@ export interface ToolResult {
 
 let nonce = 0;
 const nextNonce = () => ++nonce;
+
+/**
+ * 用户这次随消息发来的图片（data URL）。
+ *
+ * 放在模块级而不是 store：它是**一次性的输入**，不是界面状态 ——
+ * 存进 store 会让它跟着清空对话、切页签一起被重置，而附件的生命周期只到本轮结束。
+ * AiSidebar 在发送时写入，发送完即清。
+ */
+let attachedImages: string[] = [];
+export const setAttachedImages = (imgs: string[]) => { attachedImages = imgs; };
+export const getAttachedImages = (): string[] => attachedImages;
 
 const OK = (tool: string, label: string, detail?: string, data?: unknown): ToolResult =>
   ({ tool, ok: true, label, detail, data });
@@ -171,6 +184,73 @@ export async function invokeTool(tool: string, args: Record<string, any> = {}): 
       const label = name || `${lat.toFixed(3)}, ${lng.toFixed(3)}`;
       return OK(tool, `地图已定位到${label}`, args.km ? `半径约 ${args.km} km` : undefined,
         { name: label, lat, lng, zoom });
+    }
+
+    /**
+     * 把 AI 正文里说过的那些方位（西侧高值区、东北角平稳…）真正画到地图上。
+     *
+     * 这里做三件校验，缺一不可 —— 端点在公网无鉴权，模型给的参数不能直接落到 Leaflet 上：
+     *   1. 坐标取值域（纬度 ±90、经度 ±180），越界的整条丢掉而不是夹逼：夹出来的是假位置，
+     *      留在图上比不画更糟。
+     *   2. rect 的对角要真的存在且和 (lat,lon) 构成非退化矩形，否则降级成点。
+     *   3. circle 半径封顶，省得一个 1e9 km 把整个视野拉没。
+     * 全部不合法就整组失败并把原因回给模型 —— 宁可让它重说一次，也不要在图上画假东西。
+     */
+    case 'mark_regions': {
+      const raw = Array.isArray(args.marks) ? (args.marks as any[]) : [];
+      if (!raw.length) return FAIL(tool, '没有收到任何标记', 'marks 是空的');
+
+      const inRange = (v: any, lim: number) =>
+        typeof v === 'number' && Number.isFinite(v) && v >= -lim && v <= lim;
+      const marks: AiMark[] = [];
+      const dropped: string[] = [];
+
+      for (const m of raw.slice(0, 8)) {
+        const label = String(m?.label ?? '').trim().slice(0, 20) || '未命名';
+        if (!inRange(m?.lat, 90) || !inRange(m?.lon, 180)) {
+          dropped.push(`${label}（坐标越界）`);
+          continue;
+        }
+        const kind: AiMark['kind'] =
+          m?.kind === 'rect' || m?.kind === 'circle' ? m.kind : 'pin';
+        const tone = m?.tone === 'high' || m?.tone === 'low' ? m.tone : 'neutral';
+        const mark: AiMark = {
+          kind, label,
+          lat: m.lat as number,
+          lon: m.lon as number,
+          note: m?.note ? String(m.note).slice(0, 60) : undefined,
+          tone,
+        };
+        if (kind === 'rect') {
+          // 对角缺失或退化（与主点重合）就退回成图钉：画一个看不见的方框等于没画
+          if (inRange(m?.lat2, 90) && inRange(m?.lon2, 180)
+              && (m.lat2 !== m.lat || m.lon2 !== m.lon)) {
+            mark.lat2 = m.lat2 as number;
+            mark.lon2 = m.lon2 as number;
+          } else {
+            dropped.push(`${label}（rect 缺对角，已降级为图钉）`);
+            mark.kind = 'pin';
+          }
+        } else if (kind === 'circle') {
+          const r = Number(m?.radius_km);
+          mark.radius_km = Number.isFinite(r) && r > 0 ? Math.min(200, Math.max(0.5, r)) : 10;
+        }
+        marks.push(mark);
+      }
+
+      if (!marks.length) {
+        return FAIL(tool, '这些标记一个都画不出来',
+          dropped.length ? dropped.join('；') : '坐标格式不对');
+      }
+
+      const source = String(args.source ?? '').trim().slice(0, 80) || 'AI 读图估计';
+      store.aiMarks = { source, marks };
+
+      const kindText = { pin: '图钉', rect: '方框', circle: '圆圈' };
+      const parts = marks.map(m => `${kindText[m.kind]}「${m.label}」`);
+      const detail = dropped.length ? `已丢弃 ${dropped.length} 个：${dropped.join('；')}` : source;
+      return OK(tool, `已在地图上标出 ${marks.length} 处`, `${parts.join('、')}${detail ? ' · ' + detail : ''}`,
+        { count: marks.length, source, labels: marks.map(m => m.label) });
     }
 
     case 'add_waypoint': {
@@ -331,7 +411,8 @@ export async function invokeTool(tool: string, args: Record<string, any> = {}): 
     // ---------------- 计算（复用界面上那套）----------------
     case 'run_plan': {
       if (!store.start.lat || !store.end.lat) return FAIL(tool, '起终点没设全', '无法规划');
-      await runPlan();
+      // fromAI：AI 自己会在正文里给结论，别再自动糊一份报告上来
+      await runPlan({ fromAI: true });
       const d = store.feasibility?.distance;
       if (!store.feasibility) return FAIL(tool, '规划没跑通', '没有拿到结果');
       return OK(tool, '航线规划完成',
@@ -443,6 +524,57 @@ export async function invokeTool(tool: string, args: Record<string, any> = {}): 
             km: (s as any).__km ?? null,
           })),
         });
+    }
+
+    case 'look_at_image': {
+      // attachment 源：用户这次发来的图已经随请求带上了，模型下一轮就能看到，
+      // 这里不需要再渲染，只需要确认「看第几张」。
+      if ((args.source as string) === 'attachment') {
+        const shots = getAttachedImages();
+        if (!shots.length) {
+          return FAIL(tool, '这次对话里没有你发来的图片', '提示用户先附一张图');
+        }
+        const idx = Math.min(Math.max(1, Number(args.index) || 1), shots.length);
+        return OK(tool, `已重新查看你发来的第 ${idx} 张图`, '可以结合这张图描述内容',
+          { image: shots[idx - 1], count: shots.length });
+      }
+
+      // map 源：让后端按**本区域自身数值范围**渲染一张图。
+      // 不能用地图那张（色标写死 TKE 0~30），这条航线实际只有 0.9~5.1，
+      // 全挤在色标最低 17%，出来的图一片深蓝，模型看不出任何形态。
+      const where = (args.name as string) || '';
+      const origin = resolvePlace(where);
+      if (!origin) {
+        return FAIL(tool, `没能定位到「${where}」`, '站表里没有这个地名，问清或换个说法');
+      }
+      const layer = (args.layer as string) || 'tke';
+      const km = Number(args.km) || 40;
+      const resp = await fetch(`${API_BASE}/api/weather/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lat: origin.lat, lon: origin.lng, km,
+          layer, date: store.targetDate, time: store.targetTime,
+        }),
+      });
+      if (!resp.ok) return FAIL(tool, '出图失败', `HTTP ${resp.status}`);
+      const pic = await resp.json();
+      if (!pic.ok || !pic.image) {
+        return FAIL(tool, `${where} 这块地看不了`, pic.reason || '没有可渲染的数据');
+      }
+      // 同时把地图挪过去，让用户看的和 AI 看的是同一块
+      store.mapFocus = { lat: origin.lat, lng: origin.lng, zoom: 9, nonce: nextNonce() };
+      return {
+        tool, ok: true,
+        label: `已渲染${where}周边的${layer.toUpperCase()}分布图`,
+        detail: `${store.targetDate} ${store.targetTime} · 半径 ${pic.radius_km} km`,
+        image: pic.image as string,
+        data: {
+          image: pic.image,
+          place: where, layer, date: pic.date, time: pic.time,
+          center: pic.center, radius_km: pic.radius_km,
+        },
+      };
     }
 
     default:

@@ -110,6 +110,27 @@ _P = {
     "km": {"type": "number", "description": "周边半径，公里"},
 }
 
+# AI 落点用的单个标记。kind 决定画什么：pin=图钉 rect=方框 circle=圆圈。
+# 三个几何键按 kind 取用：pin 只用 lat/lon；rect 用 lat/lon 当西南角、lat2/lon2 当东北角；
+# circle 用 lat/lon 当圆心、radius_km 当半径。缺的那个键画不出来时按点处理。
+_MARK_ITEM = {
+    "type": "object",
+    "properties": {
+        "kind": {"type": "string", "enum": ["pin", "rect", "circle"],
+                 "description": "pin=图钉 rect=方框 circle=圆圈"},
+        "label": {"type": "string", "description": "短名，如「西侧高值区」。地图上就显示这几个字"},
+        "lat": {"type": "number", "description": "纬度；rect 取南边界"},
+        "lon": {"type": "number", "description": "经度；rect 取西边界"},
+        "lat2": {"type": "number", "description": "rect 的北边界"},
+        "lon2": {"type": "number", "description": "rect 的东边界"},
+        "radius_km": {"type": "number", "description": "circle 半径，公里（1~200）"},
+        "note": {"type": "string", "description": "补注，如「TKE 3.5-4.0」，点标记时显示在气泡里"},
+        "tone": {"type": "string", "enum": ["high", "low", "neutral"],
+                 "description": "配色语义：high=高风险/高值区（红），low=平稳区（绿），neutral=中性（蓝）"},
+    },
+    "required": ["kind", "label", "lat", "lon"],
+}
+
 TOOLS: List[Dict[str, Any]] = [
     # ---- 界面操作（浏览器执行）----
     _tool("toggle_overlay", "开启/关闭气象叠加层（TKE、EDR、风速、温度、湿度、水汽）。"
@@ -117,6 +138,19 @@ TOOLS: List[Dict[str, Any]] = [
           "ui", {k: _P[k] for k in ("layer", "on")}, ["layer", "on"]),
     _tool("focus_region", "把地图视野移到某个地点并设定缩放。用户要看某个位置时用它。",
           "ui", {k: _P[k] for k in ("name", "lat", "lon", "zoom", "km")}, []),
+    _tool("mark_regions",
+          "在地图上落一组标记，把你刚才**用文字描述过的区域**画出来：图钉（pin）、方框（rect）、"
+          "圆圈（circle）。\n"
+          "什么时候必须用：你在正文里写了「西侧有一片高值区」「东北角是平稳区」这类带方位的判断时，"
+          "光有文字用户还要自己在脑子里对地图，**必须把同一批区域用这个工具落成标记**。"
+          "一次调用把描述过的区域全部落上，label 就用你正文里用的那个方位词，note 写读数。\n"
+          "会替换掉上一次落的整组标记。坐标只能来自你实际读到的图，**不要凭空估一个位置**；"
+          "读不准就少落几个，宁可少落也不要落错。",
+          "ui", {"marks": {"type": "array", "items": _MARK_ITEM,
+                           "description": "要落的标记，一次给全，最多 8 个"},
+                 "source": {"type": "string",
+                            "description": "这批标记的出处，写清是什么图、什么要素，如「读图估计 · TKE 500hPa 2022-07-01 08:00」"}},
+          ["marks"]),
     _tool("add_waypoint", "在航线中插入一个途经点。索引从 1 开始，缺省追加到末尾。",
           "ui", {k: _P[k] for k in ("name", "index")}, []),
     _tool("remove_waypoint", "删除一个途经点。索引从 1 开始。",
@@ -159,11 +193,30 @@ TOOLS: List[Dict[str, Any]] = [
           "在 220 个站表条目里检索可用落地/备降点。**用户问「哪里能备降」「附近有什么机场」"
           "时必须用它去查，不要凭印象回答，也不要承诺以后再给**。",
           "compute", {k: _P[k] for k in ("query", "name", "km")}, []),
+
+    # ---- 看图 ----
+    _tool("look_at_image",
+          "看图。source=\"map\" 渲染某个地点周边的气象图层并让你**真正看到它**；"
+          "source=\"attachment\" 重新看用户这次发来的图片。"
+          "**问「图上哪块最红」「哪段最颠」「地形上是什么形态」这类空间形态问题时用它** —— "
+          "光看数字答不了形态。看完要结合图说话，别只报数值。",
+          "compute",
+          {"source": {"type": "string", "enum": ["map", "attachment"],
+                      "description": "map=渲染地图区域；attachment=重看用户本次上传的图"},
+           "name": _P["name"], "km": _P["km"], "layer": {"type": "string",
+           "description": "要看的图层：tke/edr/wind/temp/rh/q，缺省 tke"},
+           "index": _P["index"]},
+          []),
 ]
 
 TOOL_NAMES = {t["name"] for t in TOOLS}
 UI_TOOLS = {t["name"] for t in TOOLS if t["layer"] == "ui"}
 COMPUTE_TOOLS = {t["name"] for t in TOOLS if t["layer"] == "compute"}
+
+# 真正不带参数的工具。显式列出来，而不是靠「没有分支就 return {}」——
+# 那样新加的工具漏写分支时会静默吞掉参数，而模型以为调用成功了。
+PARAM_LESS_TOOLS = {"toggle_chart", "clear_route", "run_plan",
+                    "run_site_plan", "run_time_window"}
 
 
 # ---------------------------------------------------------------- 参数校验
@@ -192,6 +245,22 @@ def validate_args(tool: str, raw: Any) -> Dict[str, Any]:
     由前端忽略即可；整个工具调用因为一个字段被拒反而会让对话卡住。
     """
     a: Dict[str, Any] = dict(raw) if isinstance(raw, dict) else {}
+
+    if tool == "look_at_image":
+        src = str(a.get("source") or "map").strip().lower()
+        out: Dict[str, Any] = {"source": src if src in ("map", "attachment") else "map"}
+        if isinstance(a.get("name"), str) and a["name"].strip():
+            out["name"] = a["name"].strip()[:40]
+        km = _num(a.get("km"), 1, 500)
+        if km is not None:
+            out["km"] = km
+        layer = _alias(a.get("layer"), OVERLAY_KEYS, OVERLAY_ALIASES)
+        if layer:
+            out["layer"] = layer
+        idx = _num(a.get("index"), 1, 4)
+        if idx is not None:
+            out["index"] = int(idx)
+        return out
 
     if tool == "toggle_overlay":
         layer = _alias(a.get("layer"), OVERLAY_KEYS, OVERLAY_ALIASES)
@@ -303,8 +372,54 @@ def validate_args(tool: str, raw: Any) -> Dict[str, Any]:
             out["km"] = km
         return out
 
-    # toggle_chart / clear_route / run_* 不带参数
-    return {}
+    if tool == "mark_regions":
+        # 逐个标记校验，越界的整条丢掉而不是夹逼：夹出来的是个假位置，
+        # 留在图上比不画更糟 —— 用户会拿它去判断能不能飞。
+        raw_marks = a.get("marks")
+        if not isinstance(raw_marks, list):
+            return {}
+        marks: List[Dict[str, Any]] = []
+        for m in raw_marks[:8]:
+            if not isinstance(m, dict):
+                continue
+            lat, lon = _num(m.get("lat"), -90, 90), _num(m.get("lon"), -180, 180)
+            if lat is None or lon is None:
+                continue
+            kind = m.get("kind") if m.get("kind") in ("pin", "rect", "circle") else "pin"
+            tone = m.get("tone") if m.get("tone") in ("high", "low", "neutral") else "neutral"
+            one: Dict[str, Any] = {
+                "kind": kind,
+                "label": str(m.get("label") or "").strip()[:20] or "未命名",
+                "lat": lat, "lon": lon, "tone": tone,
+            }
+            if isinstance(m.get("note"), str) and m["note"].strip():
+                one["note"] = m["note"].strip()[:60]
+            if kind == "rect":
+                lat2, lon2 = _num(m.get("lat2"), -90, 90), _num(m.get("lon2"), -180, 180)
+                # 对角缺失就降级成图钉：画一个看不见的方框等于没画
+                if lat2 is not None and lon2 is not None and (lat2 != lat or lon2 != lon):
+                    one["lat2"], one["lon2"] = lat2, lon2
+                else:
+                    one["kind"] = "pin"
+            elif kind == "circle":
+                r = _num(m.get("radius_km"), 0.5, 200)
+                one["radius_km"] = r if r is not None else 10
+            marks.append(one)
+        if not marks:
+            return {}
+        out = {"marks": marks}
+        if isinstance(a.get("source"), str) and a["source"].strip():
+            out["source"] = a["source"].strip()[:80]
+        return out
+
+    # 无参数工具：模型偶尔会带上没用的参数，这里明确丢弃
+    if tool in PARAM_LESS_TOOLS:
+        return {}
+
+    # 走到这里说明「这个工具声明了参数，但没写校验分支」—— 是漏写，不是设计。
+    # 这里返回原值而不是静默的 {}：上一次就是掉进这个坑，marks 数组被整个丢掉，
+    # 模型却以为调用成功了，正文写下「已经把区域标在地图上」，界面上一个点都没有。
+    return a
 
 
 # ---------------------------------------------------------------- 给模型看的清单

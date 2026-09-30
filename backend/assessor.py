@@ -36,14 +36,19 @@ def _fmt(v: Any, digits: int = 4, suffix: str = "") -> str:
 # 报告正文里的湍流量一律带单位：换了口径之后，裸数字无法区分是旧的
 # 「平均风动能」还是新的「脉动方差」。
 TKE_UNIT = " m²/s²"
-EDR_UNIT = " m^(2/3)/s"
+# EDR 的指数是分数 2/3，Unicode 只有 ⁰¹²³⁴⁵⁶⁷⁸⁹ 和 ⁄，没有对应的上标码位，
+# 只能退而求其次拼成 ASCII 的 m^(2/3)/s —— 那玩意儿印在正文里像乱码。
+# 前端接了 KaTeX，这里直接给行内 LaTeX，让它去排版。
+EDR_UNIT = " $\\mathrm{m}^{2/3}/\\mathrm{s}$"
 
 # 两条报告（可行性 / 时间窗口）共用的湍流量口径。写两遍必然漂移，
 # 而这里的数字要和前端 config.ts 的 TURB 保持一致。
+# 这段会进 prompt，所以公式用 LaTeX 写：模型照抄进正文就能直接渲染，
+# 省得它把 $\mathrm{m}^{2/3}/\mathrm{s}$ 又「翻译」回 m^(2/3)/s。
 TURB_NOTE = (
     f"TKE 为同层 u/v/w 三分量在 ±{int(settings.TURB_WINDOW_HALF_HOURS)} 小时窗口内的"
-    "脉动方差（单位 m²/s²），EDR 由 ε = C·k^1.5 / L 换算、取 L = "
-    f"{int(settings.TURB_EDR_LENGTH_SCALE_M)} m（单位 m^(2/3)/s）"
+    "脉动方差（单位 m²/s²），EDR 由 $\\varepsilon = C\\cdot k^{3/2}/L$ 换算、取 L = "
+    f"{int(settings.TURB_EDR_LENGTH_SCALE_M)} m（单位 $\\mathrm{{m}}^{{2/3}}/\\mathrm{{s}}$）"
 )
 
 
@@ -223,7 +228,7 @@ def build_weather_context(result: Dict[str, Any]) -> Dict[str, Any]:
             "tke": "湍流动能，数值越大说明该处大气扰动越强，单位 m²/s²",
             "edr": "等效顺变率（阵风强度），反映湍流对飞行器结构载荷的等效强度。"
                     f"由 TKE 经外尺度换算：EDR = ε^(1/3)，其中 ε = {settings.TURB_EDR_C_EPS}·k^1.5/L，"
-                    "故单位为 m^(2/3)/s（不是无量纲）；数值越大对结构载荷越不利",
+                    "故单位为 $\\mathrm{{m}}^{{2/3}}/\\mathrm{{s}}$（不是无量纲）；数值越大对结构载荷越不利",
             "wind_speed_ms": "水平风速模长 |V| = sqrt(u² + v²)，单位 m/s",
             "temp_c": "气温。注意这是数据所在高度层（见 level_note，约 5 km）的温度，"
                        "**不是地面气温**，回答时必须说清高度层，不要说成当地地面温度",
@@ -309,13 +314,19 @@ def _render_feasibility(ctx: Dict[str, Any]) -> str:
     lines.append("")
     lines.append("## 气象解读")
     if risk:
-        lines.append(
-            f"沿航线采样 {risk.get('n_samples') or '—'} 个格点，"
-            f"最大 TKE {_fmt(risk.get('max_tke'), 2, TKE_UNIT)}、"
-            f"最大 EDR {_fmt(risk.get('max_edr'), 3, EDR_UNIT)}，"
-            f"中度以上风险格点占比 {_fmt((risk.get('moderate_ratio') or 0) * 100, 1, '%')}。"
-        )
         worst = max(segs, key=lambda s: float(s.get("max_tke") or 0), default=None) if segs else None
+        # 先给判断再给数：读者要的是「湍流大不大」，不是一份采样统计
+        ratio = (risk.get("moderate_ratio") or 0) * 100
+        lines.append(
+            "沿线湍流整体"
+            + ("偏强" if ratio >= 10 or (risk.get("max_tke") or 0) >= 16 else "可控")
+            + "，没有成片的高危区。"
+        )
+        lines.append(
+            f"全程最大 TKE {_fmt(risk.get('max_tke'), 2, TKE_UNIT)}、"
+            f"最大 EDR {_fmt(risk.get('max_edr'), 3, EDR_UNIT)}，"
+            f"中度以上风险格点占比 {_fmt(ratio, 1, '%')}。"
+        )
         if worst:
             lines.append(
                 f"湍流最强区段出现在 {worst.get('from')}→{worst.get('to')}，"
@@ -334,10 +345,11 @@ def _render_feasibility(ctx: Dict[str, Any]) -> str:
     lines.append("## 时间建议")
     tc = d.get("time_cost_h") or {}
     if tc.get("applicable"):
+        # 结论在前：超没超是用户要的那句话，两个数只是佐证
         lines.append(
-            f"绕行额外耗时 {_fmt(tc.get('extra'), 2, ' h')}，"
-            f"当前优先级允许上限 {_fmt(tc.get('limit'), 2, ' h')}，"
-            f"{'已超出该上限' if tc.get('exceeded') else '在该上限之内'}。"
+            ("绕行代价超出当前优先级允许的上限，"
+             if tc.get("exceeded") else "绕行代价在当前优先级允许的上限之内，")
+            + f"额外耗时 {_fmt(tc.get('extra'), 2, ' h')}，上限 {_fmt(tc.get('limit'), 2, ' h')}。"
         )
     else:
         lines.append("本档没有得出可展示的航线，绕行成本无法计算。")
@@ -366,14 +378,6 @@ def _render_feasibility(ctx: Dict[str, Any]) -> str:
             for a in alts
         )
         lines.append(f"可用替代起降点：{alt_txt}。")
-
-    # 6. 数据口径声明
-    lines.append("")
-    lines.append("## 数据口径声明")
-    lines.append(
-        "本报告基于 500hPa 等压面气象数据，空间分辨率约 5km、时间分辨率逐小时；"
-        f"{TURB_NOTE}；两者均为再分析格点上的代理估算值，不构成真实气象观测。"
-    )
     return "\n".join(lines)
 
 
@@ -383,7 +387,6 @@ def _render_time_window(ctx: Dict[str, Any]) -> str:
     forecast = ctx.get("forecast") or {}
     warnings = ctx.get("warnings") or []
     backup = ctx.get("backup_windows") or []
-    meta = ctx.get("meta") or {}
 
     lines.append("## 结论概述")
     if ctx.get("has_window") and rec:
@@ -402,14 +405,9 @@ def _render_time_window(ctx: Dict[str, Any]) -> str:
     lines.append("气象解读")
     if rec:
         lines.append(
-            f"推荐时段内最大 TKE {_fmt(rec.get('max_tke'), 2, TKE_UNIT)}、"
-            f"最大 EDR {_fmt(rec.get('max_edr'), 3, EDR_UNIT)}，"
-            f"按 1 小时步长完成 {24} 个时次扫描。"
+            f"推荐时段内湍流偏弱，最大 TKE {_fmt(rec.get('max_tke'), 2, TKE_UNIT)}、"
+            f"最大 EDR {_fmt(rec.get('max_edr'), 3, EDR_UNIT)}。"
         )
-    lines.append(
-        f"数据时区口径：输入为北京时间，数据标签为 UTC"
-        f"（偏移 {meta.get('tz_offset_hours', 8)} 小时），已在后端完成换算。"
-    )
 
     lines.append("")
     lines.append("时间建议")
@@ -445,13 +443,6 @@ def _render_time_window(ctx: Dict[str, Any]) -> str:
         lines.append("其他预警提示：")
         for w in warnings:
             lines.append(f"- {w.get('text')}")
-
-    lines.append("")
-    lines.append("数据口径声明")
-    lines.append(
-        "本报告基于 500hPa 等压面气象数据，空间分辨率约 5km、时间分辨率逐小时；"
-        f"{TURB_NOTE}；「7 天推演」为基于现有数据集的向前推演，非真实气象预报。"
-    )
     return "\n".join(lines)
 
 
@@ -470,11 +461,36 @@ def build_prompt(ctx: Dict[str, Any]) -> str:
         if ctx.get("task") == "feasibility"
         else "请基于以下飞行时间窗口扫描结果，生成中文飞行建议报告。"
     )
+    # 这几条是踩过坑之后加的，不是泛泛的「不要编造」：
+    #   「墨竹工卡」被写成「墨竹墨卡」——地名按语义脑补了同音字；
+    #   「备用机场清单为空」——JSON 里根本没有这个字段，模型自己补了一个空清单出来；
+    #   正文里冒出 `blocking`、`alt_bases` 这类键名——把接口结构当成了话说给用户听；
+    #   结论概述变成一串数字——用户要的是「能不能飞」，不是一份数据表。
+    # 都不是数值幻觉，靠「只引用 JSON 中的数值」这句盖不住，得逐条点名。
     return (
         f"{task_desc}\n\n"
         f"```json\n{json.dumps(ctx, ensure_ascii=False, indent=2)}\n```\n\n"
-        "要求：只引用上面 JSON 中出现的数值与地名；按「结论概述 / 航线地理叙事 / "
-        "气象解读 / 时间建议 / 操作建议 / 数据口径声明」分段作答。"
+        "要求：\n"
+        "1. **给结论，不给数据。** 每一节先说结论，再在必要处补一两个支撑数值。"
+        "用户要知道的是「能不能飞、有什么风险、该怎么飞」，不是来查字段的。"
+        "写成「全线可飞，风险低，按计划起飞即可」是对的；"
+        "写成「直线距离 312.11 km，航线距离 312.12 km，绕航比 1，巡航速度 60 km/h」是不对的。\n"
+        "2. 地名、机场名、航路点名称必须**逐字照抄** JSON 中的写法，"
+        "不得改写、简写、换字或按语义补全；拿不准就原样复制，不要自己拼。\n"
+        "3. 正文里**不得出现 JSON 的字段名或键名**（如 blocking、alt_bases、max_tke、"
+        "flight_time_h、overall、segments），一律改写成中文说法"
+        "（「无阻塞区」「无备用起降点」「湍流动能最大值为 …」）。\n"
+        "4. 只能引用 JSON 中**实际存在**的字段。JSON 里没有的字段"
+        "（备用机场清单、跑道长度、机型性能、电池续航、空域批准情况等）**一律不得提及**——"
+        "既不能报它的值，也不能说它为空、缺失或「无需」。没有数据就不写那一项。\n"
+        "5. 数值连同单位照抄，不要四舍五入、换算或补充「约」「以上」等修饰；"
+        "并注意别串口径——「±6 小时窗口」这类只属于湍流方差计算，"
+        "不能当成飞行时长或可用时间窗口的取值范围。\n"
+        "6. 上下文里写成 `$\\mathrm{m}^{2/3}/\\mathrm{s}$` 这类行内 LaTeX 的单位与公式，"
+        "**连着 `$` 一起原样照抄**，前端会渲染成真正的上下标；"
+        "不要「翻译」回 `m^(2/3)/s` 这种 ASCII 写法。需要自己写公式时也一律用 `$...$` 包裹。\n"
+        "7. 按「结论概述 / 航线地理叙事 / 气象解读 / 时间建议 / 操作建议」"
+        "五节分段作答，每节都要有。不要输出「数据口径声明」这类元信息小节。"
     )
 
 
@@ -655,6 +671,36 @@ def _open_llm_stream(body: Dict[str, Any]) -> Any:
         return _open_stream(body)
 
 
+def describe_llm_error(exc: BaseException) -> str:
+    """把调用异常翻译成用户看得懂、且知道下一步做什么的一句话。
+
+    之前这里直接报 ``HTTPError``：用户看到「AI 服务调用失败（HTTPError）」既不知道
+    出了什么事，也不知道该等还是该充钱。实测最常撞上的是 429 —— MiniMax 侧
+    「Token Plan 用量上限」是个**硬上限**不是瞬时限流，重试多少次都一样，
+    所以必须原样说清楚，不能包装成「稍后重试」。
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        code = exc.code
+        detail = ""
+        try:
+            raw = exc.read().decode("utf-8", "replace")
+            detail = json.loads(raw).get("error", {}).get("message", "")
+        except Exception:
+            detail = ""
+        if code == 429:
+            return ("AI 服务用量已达上限"
+                    + (f"（{detail}）" if detail else "")
+                    + "。这不是故障，是额度用完了，充值或等计费周期重置后才能继续。")
+        if code in (401, 403):
+            return "AI 服务鉴权失败，请检查 API Key 配置。"
+        if code == 404:
+            return f"AI 服务接口不存在（{exc.url}），请检查 AI_BASE_URL 与模型名配置。"
+        if code in (400, 422):
+            return f"AI 服务拒绝了本次请求（{code}）" + (f"：{detail}" if detail else "。")
+        return f"AI 服务返回 HTTP {code}" + (f"：{detail}" if detail else "。")
+    return f"AI 服务调用失败（{type(exc).__name__}）：{exc}"
+
+
 def stream_llm_messages(messages: List[Dict[str, str]]) -> Iterator[str]:
     """以流式方式调用 OpenAI 兼容的 /chat/completions，逐段产出正文增量。
 
@@ -681,8 +727,8 @@ def generate_report_stream(ctx: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
     """
     if llm_available():
         # 「声明来源」必须晚于「确认真拿到内容」：
-        # 若先发 meta:llm 再失败，前端来源标签会先闪出「LLM 生成」再跳成
-        # 「规则模板」，看起来像是重复展示。因此这里等首个增量到达后
+        # 若先发 meta:llm 再失败，前端来源标签会先闪出「23:04」再跳成
+        # 「规则兜底」，看起来像是重复展示。因此这里等首个增量到达后
         # 才补发 meta，保证来源标签只出现一次且终态正确。
         announced = False
         try:
