@@ -1,7 +1,7 @@
 """
 风险分级与航线风险统计。
 
-阈值口径与 planner.py 的软/硬约束保持一致（脉动方差刻度，2026-09-23 重标定）：
+阈值口径与 planner.py 的软/硬约束保持一致（TKE 取脉动方差刻度）：
   - 安全（低风险）：  TKE < 8    且 EDR < 0.208
   - 中风险：        TKE >= 8    或 EDR >= 0.208
   - 高风险：        TKE >= 16   或 EDR >= 0.295
@@ -12,6 +12,7 @@ from typing import List, Optional, Dict, Any
 import math
 
 from config import settings
+from geo import KM_PER_DEG
 
 # 风险等级（由低到高）
 LEVEL_LOW = "低风险"
@@ -61,11 +62,23 @@ def _ge(value: float, threshold: float) -> bool:
     return value >= threshold
 
 
-def _index(level: str) -> int:
+def level_rank(level: str, default: int = 0) -> int:
+    """等级在 LEVEL_ORDER 里的序位（0=低风险 … 3=不可飞）；认不出的等级返回 default。
+
+    default 往哪边兜由调用点自己定，三个模块的口径本来就不同，不要在这里替它们统一：
+      - risk 统计用 0：样本在上游已判过合法性，认不出就当低风险；
+      - sites 复验用 -1：认不出就排在所有已知等级之前，即不当成好消息；
+      - time_window 筛选用 3：认不出就当不可飞，宁可严。
+    """
     try:
         return LEVEL_ORDER.index(level)
     except ValueError:
-        return 0
+        return default
+
+
+def _worst_level(levels: List[str]) -> str:
+    """沿程等级序列里最差的一档。只认 LEVEL_ORDER 里的四档，其余按低风险兜。"""
+    return LEVEL_ORDER[max((level_rank(lv) for lv in levels), default=0)]
 
 
 @dataclass
@@ -112,6 +125,20 @@ class RiskProfile:
         }
 
 
+def _sample_num(value: Any) -> float:
+    """把样本上的一个量取成 float；缺测（None / NaN / 非数 / Inf）一律返回 NaN。
+
+    **不能**写成 ``float(value or 0.0)``：NaN 是 falsy，那个惯用法会把
+    「没测到」静默变成 0.0，而 0.0 恰好是最安全的湍流值 —— 于是整条航线
+    都没测到时，统计量会显示成「全程零湍流」。这里让缺测一路保持 NaN。
+    """
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return float('nan')
+    return v if math.isfinite(v) else float('nan')
+
+
 def build_risk_profile(samples: List[Dict[str, Any]],
                        segment_bounds: Optional[List[Dict[str, Any]]] = None,
                        tke_high: Optional[float] = None,
@@ -129,26 +156,37 @@ def build_risk_profile(samples: List[Dict[str, Any]],
     """
     n = len(samples)
     if n == 0:
-        return RiskProfile(overall=LEVEL_LOW, stats=RiskStats(), samples=[], segments=[])
+        # 空样本没有任何依据。给 LEVEL_LOW 是在说「查过了，风平浪静」，
+        # 而实际是「一个点都没测到」。这里仍返回 LEVEL_LOW（等级枚举里没有
+        # 「未判定」这一档，强行加会波及前端配色与文案），但把 max_tke/max_edr
+        # 置成 NaN，让「未知」这件事在数值上看得见 —— 上层按 isfinite 判。
+        return RiskProfile(overall=LEVEL_LOW,
+                           stats=RiskStats(max_tke=float('nan'), max_edr=float('nan')),
+                           samples=[], segments=[])
 
-    tkes = [float(s.get('tke', 0.0) or 0.0) for s in samples]
-    edrs = [float(s.get('edr', 0.0) or 0.0) for s in samples]
+    tkes = [_sample_num(s.get('tke')) for s in samples]
+    edrs = [_sample_num(s.get('edr')) for s in samples]
     levels = [classify_point(t, e, tke_high, edr_high) for t, e in zip(tkes, edrs)]
 
-    max_tke = max(tkes)
-    max_edr = max(edrs)
-    mean_tke = sum(tkes) / n
-    mean_edr = sum(edrs) / n
-    moderate_idx = max(_index(LEVEL_MODERATE), 1)
-    high_idx = _index(LEVEL_HIGH)
-    moderate_count = sum(1 for lv in levels if _index(lv) >= moderate_idx)
-    high_count = sum(1 for lv in levels if _index(lv) >= high_idx)
+    # 统计量只在**有限样本**上算。一个有限样本都没有时给 NaN 而不是 0.0 ——
+    # 0.0 是最安全的湍流值，拿它当「没测到」的统计结果，等于凭空给出一份安全证明。
+    # NaN 经 pydantic 序列化成 JSON null，前端画成断点而不是一条贴地的零线。
+    fin_tke = [t for t in tkes if not math.isnan(t)]
+    fin_edr = [e for e in edrs if not math.isnan(e)]
+    max_tke = max(fin_tke) if fin_tke else float('nan')
+    max_edr = max(fin_edr) if fin_edr else float('nan')
+    mean_tke = (sum(fin_tke) / len(fin_tke)) if fin_tke else float('nan')
+    mean_edr = (sum(fin_edr) / len(fin_edr)) if fin_edr else float('nan')
+    moderate_idx = max(level_rank(LEVEL_MODERATE), 1)
+    high_idx = level_rank(LEVEL_HIGH)
+    moderate_count = sum(1 for lv in levels if level_rank(lv) >= moderate_idx)
+    high_count = sum(1 for lv in levels if level_rank(lv) >= high_idx)
 
     # 连续暴露最长距离（中度及以上视为暴露）
     max_exposure = 0.0
     run_start = None
     for i, lv in enumerate(levels):
-        exposed = _index(lv) >= moderate_idx
+        exposed = level_rank(lv) >= moderate_idx
         if exposed and run_start is None:
             run_start = i
         elif not exposed and run_start is not None:
@@ -157,7 +195,12 @@ def build_risk_profile(samples: List[Dict[str, Any]],
     if run_start is not None:
         max_exposure = max(max_exposure, _span_km(samples, run_start, n - 1))
 
-    worst_index = max(range(n), key=lambda i: (_index(levels[i]), tkes[i], edrs[i]))
+    # 排序键里的 NaN 换成 -inf：直接用 NaN 参与元组比较，结果取决于比较顺序，
+    # 「最危险的那个点」会变得不可复现。缺测的点本来也不该被选成最危险。
+    worst_index = max(range(n), key=lambda i: (
+        level_rank(levels[i]),
+        tkes[i] if not math.isnan(tkes[i]) else float('-inf'),
+        edrs[i] if not math.isnan(edrs[i]) else float('-inf')))
 
     stats = RiskStats(
         max_tke=round(max_tke, 4),
@@ -196,7 +239,7 @@ def build_risk_profile(samples: List[Dict[str, Any]],
             seg_levels = levels[a:b + 1]
             seg_tkes = tkes[a:b + 1]
             seg_edrs = edrs[a:b + 1]
-            seg_level = _synth_level(seg_levels, seg_tkes, seg_edrs)
+            seg_level = _worst_level(seg_levels)
             segments.append(RiskSegment(
                 from_name=sb.get('from_name', ''),
                 to_name=sb.get('to_name', ''),
@@ -213,32 +256,13 @@ def build_risk_profile(samples: List[Dict[str, Any]],
 
 def synthesize_overall(levels: List[str], stats: RiskStats) -> str:
     """由沿程等级序列与统计量合成「全程风险等级」。"""
-    if any(lv == LEVEL_UNFLYABLE for lv in levels):
-        return LEVEL_UNFLYABLE
+    base = _worst_level(levels)
 
-    base = LEVEL_LOW
-    if any(lv == LEVEL_HIGH for lv in levels):
-        base = LEVEL_HIGH
-    elif any(lv == LEVEL_MODERATE for lv in levels):
-        base = LEVEL_MODERATE
-
-    # 中度以上占比过高时，整体等级上调一级
-    if stats.moderate_ratio >= settings.RISK_MODERATE_RATIO_PROMOTE and _index(base) < _index(LEVEL_HIGH):
+    # 中度以上占比过高时，整体等级上调一级（已是「不可飞」就不再上调，那已是顶格）
+    if stats.moderate_ratio >= settings.RISK_MODERATE_RATIO_PROMOTE and level_rank(base) < level_rank(LEVEL_HIGH):
         base = LEVEL_HIGH if base == LEVEL_MODERATE else LEVEL_MODERATE
 
     return base
-
-
-def _synth_level(levels: List[str], tkes: List[float], edrs: List[float]) -> str:
-    if not levels:
-        return LEVEL_LOW
-    if any(lv == LEVEL_UNFLYABLE for lv in levels):
-        return LEVEL_UNFLYABLE
-    if any(lv == LEVEL_HIGH for lv in levels):
-        return LEVEL_HIGH
-    if any(lv == LEVEL_MODERATE for lv in levels):
-        return LEVEL_MODERATE
-    return LEVEL_LOW
 
 
 def _span_km(samples: List[Dict[str, Any]], a: int, b: int) -> float:
@@ -262,4 +286,4 @@ def _quick_km(p: Dict[str, Any], q: Dict[str, Any]) -> float:
     lat_mid = math.radians((float(p['lat']) + float(q['lat'])) / 2.0)
     dx = (float(q['lon']) - float(p['lon'])) * math.cos(lat_mid)
     dy = float(q['lat']) - float(p['lat'])
-    return math.hypot(dx, dy) * 111.0
+    return math.hypot(dx, dy) * KM_PER_DEG

@@ -31,11 +31,24 @@ def _make_loader():
 
     u[time, lat, lon] = 该帧在时间轴上的全局小时下标（v/w 恒为 0），
     于是「返回的 u 是多少」直接等价于「取到了第几帧」，断言一目了然。
+
+    ``ds_u`` 必须带真的 lat/lon/time 轴：``get_meteorology_at_points`` 现在会先查
+    时间轴范围，把越界时刻判成缺测（NaN）。替身缺轴会让这个检查抛异常。
     """
     times = T0 + np.arange(N_FRAMES) * HOUR
     ld = DataLoader()
     ld._loaded = True
-    ld.ds_u = object()          # 只要非 None 即走真实取数分支
+
+    class _FakeAxis:
+        def __init__(self, values):
+            self.values = np.asarray(values)
+
+    class _FakeDs:
+        lat = _FakeAxis(LATS)
+        lon = _FakeAxis(LONS)
+        time = _FakeAxis(times)
+
+    ld.ds_u = _FakeDs()
 
     def read_slab(var, start_time, hours, bbox):
         i0 = int(np.searchsorted(times.astype('int64'),
@@ -83,19 +96,57 @@ class TestPerPointArrivalTime(unittest.TestCase):
         np.testing.assert_allclose(out['tke'], [expected] * 3, rtol=1e-9)
         np.testing.assert_allclose(out['edr'], edr_from_tke(np.array([expected] * 3)))
 
-    def test_mismatched_times_length_falls_back_to_placeholders(self):
+    def test_mismatched_times_length_falls_back_to_nan(self):
+        """参数不匹配 -> 整批 NaN，**不是**占位常量。
+
+        契约变了：这里原本断言回落到 ``{u:5, tke:0}``，但那是「零湍流、零风」，
+        等于把一次参数错误说成一次风平浪静。现在统一走 NaN（= 未算出），
+        与「slab 读不到」「越界日期」是同一种表达。
+        """
         out = self.ld.get_meteorology_at_points([29.5, 30.5], [90.5, 91.5], [T0])
-        self.assertTrue(np.all(out['u'] == 5.0), "参数不匹配时不得半取半占位地混着返回")
-        self.assertTrue(np.all(out['tke'] == 0.0))
+        self.assertTrue(np.all(np.isnan(out['u'])), "参数不匹配时不得半取半占位地混着返回")
+        self.assertTrue(np.all(np.isnan(out['tke'])))
+        self.assertTrue(np.all(np.isnan(out['edr'])))
+
+    def test_time_before_dataset_start_is_nan_not_the_first_frame(self):
+        """数据集起始日**之前**的日期必须判缺测，不能静默钳到首帧。
+
+        ``read_slab`` 用 searchsorted 定位起始帧再 clamp 到 [0, len-1]，
+        于是 2022-01-01 之前的日期会取到首帧的真实数值，并标着用户请求的日期
+        （``weather_query`` 还会报 available=True 且无 note）。本替身的时间轴
+        从 T0=2022-07-01 起，所以 T0 之前 1 小时就是越界点。
+        """
+        out = self.ld.get_meteorology_at_points([29.5], [90.5], [T0 - 1 * HOUR])
+        self.assertTrue(np.isnan(out['tke'][0]),
+                        "越界时刻应判缺测(NaN)，而不是返回首帧的湍流值")
+        self.assertTrue(np.isnan(out['u'][0]))
+
+    def test_mixed_in_and_out_of_range_keeps_the_good_points(self):
+        """一批点里越界与在范围内混着时：越界点 NaN，在范围内的点照常有值。"""
+        out = self.ld.get_meteorology_at_points(
+            [29.5, 30.5], [90.5, 91.5], [T0 - 3 * HOUR, T0 + 8 * HOUR])
+        self.assertTrue(np.isnan(out['tke'][0]))
+        self.assertTrue(np.isnan(out['u'][0]))
+        self.assertAlmostEqual(float(out['u'][1]), 8.0, places=6)
 
 
 class TestPlaceholderFallback(unittest.TestCase):
     def test_missing_slab_keeps_placeholder_contract(self):
+        """slab 读不到时走占位常量 —— 这是**已知**契约，调用方要用 is_placeholder_sample 挡。
+
+        与上面「参数不匹配 -> NaN」不同：这里是有意保留的兼容路径，
+        因为逐点取数的返回值要直接进剖面响应，NaN 会让沿线每个点都成 null、
+        图上什么都不剩。所以常量保留，但**必须**由判定函数识别出来。
+        """
         ld = _make_loader()
         ld.read_slab = lambda *a, **kw: (None, None, None, None)
         out = ld.get_meteorology_at_points([29.5], [90.5], [T0])
         self.assertEqual(float(out['u'][0]), 5.0)
         self.assertEqual(float(out['tke'][0]), 0.0)
+        from data_loader import is_placeholder_sample
+        self.assertTrue(is_placeholder_sample(out['u'][0], out['v'][0],
+                                              out['w'][0], out['tc'][0]),
+                        "占位值必须能被哨兵识别，否则会被读成「零湍流、明确安全」")
 
     def test_no_dataset_loaded_returns_placeholders(self):
         ld = DataLoader()

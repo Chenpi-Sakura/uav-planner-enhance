@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from data_loader import data_loader
 from timebase import to_data_time_str
 from config import settings
+from geo import KM_PER_DEG, haversine_km
 from schemas import Point, PlanRequest
 
 
@@ -287,7 +288,7 @@ def _deg_to_km(a, b):
     lat_mid = math.radians((a[0] + b[0]) / 2.0)
     dx = (b[1] - a[1]) * math.cos(lat_mid)
     dy = b[0] - a[0]
-    return math.hypot(dx, dy) * 111.0
+    return math.hypot(dx, dy) * KM_PER_DEG
 
 
 def _hop_cost(tke: float, edr: float, phys_km: float, risk_scale: float,
@@ -403,8 +404,8 @@ def _pull_path(nodes, g_at, d_at, base_ns, speed_kmh, tke_grid, edr_grid, lookup
     """
     if tke_grid is None or lookup is None or len(nodes) < 3:
         return None
-    sample_km = 111.0 * resolution / 2.0
-    unit_km = 111.0 * resolution          # A* 里"一步"的标称长度，罚量的折算基准
+    sample_km = KM_PER_DEG * resolution / 2.0
+    unit_km = KM_PER_DEG * resolution      # A* 里"一步"的标称长度，罚量的折算基准
 
     # 先把连续同向的小步合成一条：几何不变，只留拐点。不合成就是 O(n²) 逐点试探。
     verts = [0]
@@ -576,7 +577,7 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
     resolution = settings.GRID_RESOLUTION_DEG
     # 整段固定的经度折算因子，喂给 heuristic（逐点对算会让 h 不是一致，见 _search_cosk）
     h_cosk = _search_cosk(start_node[0], end_node[0])
-    f_score = {start_node: heuristic(start_node, end_node, h_cosk) * 111.0}
+    f_score = {start_node: heuristic(start_node, end_node, h_cosk) * KM_PER_DEG}
 
     max_iter = expansion_budget(_deg_to_km(start_node, end_node))
     iterations = 0
@@ -664,7 +665,7 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
         # If we are close enough to the end node
         # 「抵达」按真实距离判，不按 h 判：h 里带经度折算，拿它当半径会让同一格
         # 在东西/南北两个方向上的接受半径不一样。末段安全校验随后把这一步逐格查过。
-        if _deg_to_km(current, end_node) < resolution * 1.5 * 111.0:
+        if _deg_to_km(current, end_node) < resolution * 1.5 * KM_PER_DEG:
             # 末段安全校验：终点本身与最后一段若不可飞，则不能算作抵达
             if not _terminal_hop_is_safe(current, end_node, base_ns,
                                          real_dist[current], speed_kmh,
@@ -677,7 +678,7 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
             lat_mid = math.radians((current[0] + end_node[0]) / 2.0)
             dx_phys = (end_node[1] - current[1]) * math.cos(lat_mid)
             dy_phys = end_node[0] - current[0]
-            hop_phys_dist = math.hypot(dx_phys, dy_phys) * 111.0
+            hop_phys_dist = math.hypot(dx_phys, dy_phys) * KM_PER_DEG
 
             final_g = g_score[current] + hop_phys_dist
             final_dist = real_dist[current] + hop_phys_dist
@@ -753,7 +754,7 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
             lat_mid = math.radians((current[0] + neighbor[0]) / 2.0)
             dx_phys = (neighbor[1] - current[1]) * math.cos(lat_mid)
             dy_phys = neighbor[0] - current[0]
-            phys_dist = math.hypot(dx_phys, dy_phys) * 111.0
+            phys_dist = math.hypot(dx_phys, dy_phys) * KM_PER_DEG
             
             # Predict the absolute time using the real physical distance traveled
             elapsed_hours = (real_dist[current] + phys_dist) / speed_kmh
@@ -790,7 +791,7 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
                 real_dist[neighbor] = real_dist[current] + phys_dist
                 # f 只用「真实里程 + 罚 + 到终点的网格下界」，三者同尺子 → h 一致 →
                 # 首次弹出即为最优 g，不会有把同一格点反复改进的重展开
-                f_score[neighbor] = tentative_g_score + heuristic(neighbor, end_node, h_cosk) * 111.0
+                f_score[neighbor] = tentative_g_score + heuristic(neighbor, end_node, h_cosk) * KM_PER_DEG
                 tie = _tiebreak(neighbor, end_node, start_node, h_cosk)
                 heapq.heappush(open_set, (f_score[neighbor], tie, neighbor))
                 
@@ -814,13 +815,9 @@ def plan_path_segment(start_node, end_node, tke_thresh, edr_thresh, start_time_s
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """两点大圆距离（km）。"""
-    r = 6371.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlam = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlam / 2) ** 2
-    return 2 * r * math.asin(min(1.0, math.sqrt(a)))
+    """别名：实现在 geo.haversine_km（全仓唯一一份），保留此名是为了不动
+    八个模块的既有 import 路径。"""
+    return haversine_km(lat1, lon1, lat2, lon2)
 
 
 def plan_path_ex(req: PlanRequest, field=None,
@@ -937,6 +934,10 @@ def compute_path_turbulence(req: PlanRequest, full_path: List[Point]) -> Tuple[f
 
     口径与 A* 内层判定一致（同一套 read_turbulence_field），区别在于这里按
     实际到达时刻取帧，因此能覆盖跨天的长航线。
+
+    **取不到数时返回 NaN 而不是 0**：0.0 会被下游读成「全程零湍流」，把一次
+    读盘失败说成「风平浪静，可以飞」—— 对飞行决策这是最坏的失败方向。
+    NaN 则一路传到响应层，由它显式判成「未算出」。
     """
     start_time_str = to_data_time_str(req.date + 'T' + req.start_time)
     base_time = np.datetime64(start_time_str)
@@ -958,8 +959,10 @@ def compute_path_turbulence(req: PlanRequest, full_path: List[Point]) -> Tuple[f
         elapsed_hours = cumulative / req.speed
         times[i] = base_time + np.timedelta64(int(elapsed_hours * 3600), 's')
 
-    max_tke = 0.0
-    max_edr = 0.0
+    # 初始值就是 NaN：整条航线一个有限采样点都没拿到时（`np.isfinite(...).any()`
+    # 为假），它就保持 NaN 传下去，而不是伪装成「全程零湍流」。
+    max_tke = float('nan')
+    max_edr = float('nan')
     try:
         has_data = data_loader._loaded and data_loader.ds_u is not None
     except Exception:
@@ -987,7 +990,8 @@ def compute_path_turbulence(req: PlanRequest, full_path: List[Point]) -> Tuple[f
                     max_tke = float(np.nanmax(tv))
                     max_edr = float(np.nanmax(ev))
         except Exception:
-            max_tke = 0.0
-            max_edr = 0.0
+            # 读盘失败不回落成 0.0：那会把「我不知道」变成「零湍流」。
+            max_tke = float('nan')
+            max_edr = float('nan')
 
     return max_tke, max_edr

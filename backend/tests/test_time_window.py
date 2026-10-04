@@ -596,7 +596,7 @@ class TestTopKRoutes(TWStubbed):
     def test_response_model_carries_the_planned_level(self):
         """字典 → response_model → JSON 这一整条链要钉住。
 
-        2026-09-25 真实接口探针发现：编排层给的是 overall_level，而
+        真实接口探针发现：编排层给的是 overall_level，而
         TimeWindowRoute 声明的是 planned_level，pydantic 把未知键静默丢掉，
         于是每条候选的风险等级在浏览器里是空的 —— 只测编排层字典的单元测试看不见，
         只在浏览器里点才看得见，而本机截不了图。

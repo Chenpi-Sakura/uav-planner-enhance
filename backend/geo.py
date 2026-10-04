@@ -34,8 +34,21 @@ CITIES: List[Dict[str, object]] = [
 # 用于「夹点判断」的走廊半径：航线经过城市时，取该半径为归属范围
 CORRIDOR_KM = 25.0
 
+# 1 个纬度 ≈ 111 km 的球面近似，全仓量纲换算的单一真相源。
+# 经度方向还要再乘 cos(纬度) 才是实际公里数；需要真实精度时用 haversine_km()。
+KM_PER_DEG = 111.0
 
-def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """两点大圆距离（km）。全仓唯一实现，planner 通过别名复用。
+
+    任一入参非有限（NaN / Inf）时返回 ``inf``。这里必须让非法坐标**立刻失败**：
+    NaN 会被 ``math.sqrt`` 传播，再被下面的 ``min(1.0, ...)`` 钳成 1.0，算出
+    一个看似合理的大圆距离，于是起降点守卫反而判定「两点相距很远、不是同点」
+    而放行 —— 非法输入就会以语义错误的结论穿过校验层。
+    """
+    if not all(math.isfinite(v) for v in (lat1, lon1, lat2, lon2)):
+        return float("inf")
     r = 6371.0
     p1, p2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
@@ -49,7 +62,7 @@ def nearest_city(lat: float, lon: float) -> Dict[str, object]:
     best = None
     best_d = float('inf')
     for c in CITIES:
-        d = _haversine_km(lat, lon, float(c["lat"]), float(c["lon"]))
+        d = haversine_km(lat, lon, float(c["lat"]), float(c["lon"]))
         if d < best_d:
             best_d = d
             best = c
@@ -102,7 +115,7 @@ def cities_on_path(path: List[Dict[str, float]], max_km: float = CORRIDOR_KM) ->
         best_i = -1
         best_d = float('inf')
         for i, p in enumerate(path):
-            d = _haversine_km(float(p["lat"]), float(p["lon"]), float(c["lat"]), float(c["lon"]))
+            d = haversine_km(float(p["lat"]), float(p["lon"]), float(c["lat"]), float(c["lon"]))
             if d < best_d:
                 best_d = d
                 best_i = i

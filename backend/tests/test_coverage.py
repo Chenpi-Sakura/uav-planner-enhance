@@ -5,8 +5,10 @@
 那会把"没数据"伪装成"有数据且可飞"。
 """
 import sys
+import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -84,6 +86,116 @@ class TestPadEdgeCoordsRemoved(unittest.TestCase):
     def test_helper_is_gone(self):
         import data_loader
         self.assertFalse(hasattr(data_loader, '_pad_edge_coords'))
+
+
+class TestEnsureLoaded(unittest.TestCase):
+    """``_ensure_loaded()`` 的并发安全与失败退避。
+
+    这组用例守住一条**真实踩过**的坑：``_ensure_loaded()`` 持锁调用
+    ``load_data()``，而 ``load_data()`` 自己还要再拿一次同一把锁。普通
+    ``threading.Lock`` 不可重入，同线程二次获取直接自死锁 —— 而仓库里绝大多数
+    用例都预置 ``_loaded = True`` 走早退分支，恰好永远走不到那条路径。
+    所以这里必须**真的**从冷启动跑一遍。
+    """
+
+    def _patched(self, always_fail=False):
+        """替换 xr.open_dataset，返回 (loader, 调用记录)。"""
+        calls = []
+
+        def _fake_open(path, chunks=None):
+            calls.append(path)
+            if always_fail:
+                raise FileNotFoundError(path)
+            return _Ds([26.0, 32.0], [80.0, 100.0])
+
+        patcher = mock.patch('data_loader.xr.open_dataset', _fake_open)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return DataLoader(), calls
+
+    def test_cold_start_does_not_deadlock(self):
+        """_loaded=False 时走完整条加载路径。
+
+        跑在带超时的线程里：若锁不可重入，这里会**挂死**而不是失败，
+        整个测试套件就卡住了。超时即判定死锁。
+        """
+        ld, _ = self._patched()
+        result = {}
+
+        def _worker():
+            result['ok'] = ld._ensure_loaded()
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+        t.join(timeout=20)
+        self.assertFalse(t.is_alive(),
+                         "_ensure_loaded 卡死 —— 锁不可重入（_ensure_loaded 持锁调 "
+                         "load_data，load_data 又取同一把锁）")
+        self.assertTrue(result.get('ok'), "冷启动应加载成功")
+        self.assertIsNotNone(ld.ds_u)
+
+    def test_failure_enters_cooldown_instead_of_retrying_every_request(self):
+        """加载失败后退避：连续调用不应把 open 反复重试。"""
+        ld, calls = self._patched(always_fail=True)
+        for _ in range(5):
+            self.assertFalse(self._call_with_timeout(ld))
+        self.assertLessEqual(len(calls), 6,
+                             f"退避期内不应反复 open，实际调了 {len(calls)} 次")
+        self.assertGreater(ld._load_failed_at, 0.0)
+
+    def test_repeated_calls_do_not_reopen(self):
+        """已加载后再调不应重开 —— 6 个约 102 GB 的文件不能每个请求开一遍。"""
+        ld, calls = self._patched()
+        for _ in range(3):
+            self.assertTrue(self._call_with_timeout(ld))
+        self.assertEqual(len(calls), 6, f"应只开 6 次，实际 {len(calls)}")
+
+    @staticmethod
+    def _call_with_timeout(ld, seconds=20):
+        """在带超时的线程里调 _ensure_loaded，避免死锁把整个套件卡住。"""
+        box = {}
+
+        def _worker():
+            try:
+                box['r'] = ld._ensure_loaded()
+            except Exception as e:                      # noqa: BLE001
+                box['r'] = False
+                box['e'] = e
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+        t.join(timeout=seconds)
+        if t.is_alive():
+            raise AssertionError("_ensure_loaded 卡死（锁不可重入？）")
+        return box.get('r')
+
+    def test_concurrent_cold_start_opens_each_file_once(self):
+        """并发冷启动：open 次数应等于文件数，而不是线程数 × 文件数。
+
+        实测修复前 4 线程冷启动把 open_dataset 调了 48 次（应为 6）。
+        """
+        ld, calls = self._patched()
+        barrier = threading.Barrier(4)
+        results = []
+
+        def _worker():
+            barrier.wait()
+            results.append(self._call_with_timeout(ld))
+
+        threads = [threading.Thread(target=_worker, daemon=True) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+            self.assertFalse(t.is_alive(), "线程卡死 —— 锁不可重入或存在竞态")
+
+        self.assertEqual(results, [True] * 4)
+        self.assertEqual(len(calls), 6, f"并发冷启动应只开 6 次，实际 {len(calls)}")
+
+    def test_reentrant_lock_is_required(self):
+        """_ensure_loaded -> load_data 会二次取锁，锁必须可重入。"""
+        ld, _ = self._patched()
+        self.assertIsInstance(ld._load_lock, type(threading.RLock()))
 
 
 if __name__ == '__main__':

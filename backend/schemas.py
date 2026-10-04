@@ -1,10 +1,13 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Tuple
+
+from config import settings
 
 # ==================== 结论四态（功能一 / 功能二共用） ====================
 # feasible=False 不等于「飞不了」。verdict 是给前端的机器码（选色、选图标），
 # conclusion 是按它渲染的中文。两套 reason 码各自映射到这里的一个枚举：
 #   planner:  blocked / no_data / iteration_limit / time_limit
+#              / turbulence_unavailable
 #   feasibility: no_safe_path / data_coverage_insufficient / detour_exceeds_threshold
 #                / search_iteration_limit
 VERDICT_FEASIBLE = "feasible"
@@ -27,6 +30,9 @@ PLANNER_REASON_VERDICT: Dict[str, str] = {
     "iteration_limit": VERDICT_UNDETERMINED,
     # 墙钟先到与预算顶格是同一件事的两种说法：都没算完，都不代表没有路
     "time_limit": VERDICT_UNDETERMINED,
+    # 航线搜到了但沿程湍流取不到数：这里绝不能落到 verdict_of 的默认 infeasible，
+    # 那会把「不知道」说成「飞不了」。反过来报 0.0 更糟 —— 那是「零湍流，可以飞」。
+    "turbulence_unavailable": VERDICT_UNDETERMINED,
 }
 
 
@@ -75,8 +81,11 @@ class SearchEffort(BaseModel):
 
 
 class Point(BaseModel):
-    lat: float
-    lon: float
+    # 经纬度边界与 NaN/Inf 都在这一层挡住。放任它们穿过校验层的后果不是 500，
+    # 而是一个语义错误的结论：NaN 会被距离公式传播后再被 min() 钳成 1.0，
+    # 于是「两点相距很远」成立，起降点守卫反而放行。
+    lat: float = Field(ge=-90.0, le=90.0, allow_inf_nan=False)
+    lon: float = Field(ge=-180.0, le=180.0, allow_inf_nan=False)
 
 class ProfileRequest(BaseModel):
     waypoints: List[Point]
@@ -89,7 +98,7 @@ class ProfileDataPoint(BaseModel):
     lat: float
     lon: float
     distance_from_start: float = 0.0  # 方便前端折线图作为X轴
-    elevation: float = 3650.0 # Geographical elevation
+    elevation: float = settings.SRTM_FALLBACK_ELEV_M # Geographical elevation
     u: float
     v: float
     w: float

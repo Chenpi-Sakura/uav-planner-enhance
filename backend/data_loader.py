@@ -1,5 +1,7 @@
 import os
 import math
+import threading
+import time
 import xarray as xr
 import io
 from collections import OrderedDict
@@ -12,6 +14,33 @@ import numpy as np
 
 from config import settings
 from meteorology import pulsation_tke, edr_from_tke
+
+
+# slab 读不到（数据集缺失 / bbox 落在域外）时逐点取数退回的占位常量。
+# 全仓唯一一份，判定入口是下面的 is_placeholder_sample()。
+# 注意它存在只是**历史兼容**：逐点取数的返回值会整批进响应，而剖面图要的是一条能画的
+# 曲线。用 NaN 也能表达缺测（pydantic 会序列化成 JSON null，前端画断点），
+# 但那样沿线每个点都是 null，图上什么都没有。所以这里保留常量 + 显式哨兵判定，
+# 而不是把「没读到」伪装成一个能画出来的 0。
+_PLACEHOLDER = {"u": 5.0, "v": 5.0, "w": 0.0, "tc": 280.0,
+                "rh": 50.0, "qvapor": 0.005, "tke": 0.0, "edr": 0.0}
+
+
+def is_placeholder_sample(u, v, w, tc) -> bool:
+    """判断一组逐点取数结果是不是 :data:`_PLACEHOLDER`（即这一次 slab 没读到）。
+
+    这不是杞人忧天：``_loaded`` 守卫挡不住这种情况（数据确实加载好了，
+    只是这一次 slab 没读到），而占位值里的 ``tke=0.0`` 是一个**看起来最安全的数**，
+    直接送进 ``classify_point`` 会把一次读盘失败说成「零湍流、低风险、可以飞」。
+
+    真实格点不会同时精确等于这组常数，所以整体比对足够可靠；
+    宁可误报「无数据」，也不能误报「安全」。
+    """
+    try:
+        return (float(u) == _PLACEHOLDER["u"] and float(v) == _PLACEHOLDER["v"]
+                and float(w) == _PLACEHOLDER["w"] and float(tc) == _PLACEHOLDER["tc"])
+    except (TypeError, ValueError):
+        return False
 
 
 def nearest_time_index(times, target_time) -> int:
@@ -115,31 +144,104 @@ class DataLoader:
         # 没有这层就要把同一块数据从 USB 盘上捞三遍。
         self._grid_cache = OrderedDict()
         self._axis_bounds_cache = None
+        # 冷启动互斥。6 个 NetCDF 各约 102 GB，并发 open 是纯粹的 IO 放大：
+        # 实测 4 线程冷启动把 open_dataset 调了 48 次（应为 6）。
+        # 更糟的是重入本身有破坏性 —— 一个线程重开会先把**别的线程正在用的**
+        # dataset 置 None，那边读到的就是占位常量（tke=0）且不抛异常。
+        #
+        # 必须是 **RLock**：_ensure_loaded() 持锁调用 load_data()，而 load_data()
+        # 自己还要再拿一次锁。普通 Lock 不可重入，同线程二次获取直接自死锁
+        # ——而现有用例大多预置 _loaded=True 走早退分支，恰好绕过了这条路径。
+        self._load_lock = threading.RLock()
+        # 失败退避：加载失败后不要每个请求都重试一遍 6 个 102 GB 的 open。
+        self._load_failed_at = 0.0
+
+    _DS_ATTRS = ("ds_u", "ds_v", "ds_w", "ds_tc", "ds_rh", "ds_q")
+
+    def _close_datasets(self) -> None:
+        """显式关掉已打开的 dataset。
+
+        xarray 的 dataset 持有底层文件句柄。靠 GC 回收既不及时也不确定 —— 尤其在
+        「重开覆盖旧对象」这条路上，句柄会随着请求数累积到系统句柄上限。
+        """
+        for attr in self._DS_ATTRS:
+            ds = getattr(self, attr, None)
+            if ds is not None:
+                try:
+                    ds.close()
+                except Exception:      # 关闭失败不该挡住后续流程
+                    pass
+            setattr(self, attr, None)
+
+    # 加载失败后的重试冷却（秒）。数据缺失/损坏不会自己好起来，
+    # 每个请求都重试 6 个 102 GB 的 open 是个现成的 IO 放大器。
+    _LOAD_RETRY_COOLDOWN_S = 30.0
+
+    def _ensure_loaded(self) -> bool:
+        """确保数据已加载，**并发安全**。返回是否可用。
+
+        双检 + 互斥：6 个 NetCDF 各约 102 GB，并发 open 是纯粹的 IO 放大
+        （实测 4 线程冷启动 open_dataset 被调 48 次，应为 6）。
+        失败后退避 ``_LOAD_RETRY_COOLDOWN_S`` 秒，避免每个请求都重试一遍。
+        """
+        if self._loaded:
+            return True
+        if (self._load_failed_at
+                and time.monotonic() - self._load_failed_at < self._LOAD_RETRY_COOLDOWN_S):
+            return False
+        with self._load_lock:
+            if self._loaded:          # 双检：等锁期间别的线程可能已经加载完
+                return True
+            if (self._load_failed_at
+                    and time.monotonic() - self._load_failed_at < self._LOAD_RETRY_COOLDOWN_S):
+                return False
+            self.load_data()
+        return self._loaded
 
     def load_data(self):
+        """打开 6 个数据集。**调用方应走 :meth:`_ensure_loaded`，不要直接调这里。**
+
+        直接调用本身是安全的（open 全程在锁内），但会绕过「已加载就返回」
+        和失败退避这两道判断。
+        """
         u_path = os.path.join(settings.DATA_DIR, settings.U_FILE)
         v_path = os.path.join(settings.DATA_DIR, settings.V_FILE)
         w_path = os.path.join(settings.DATA_DIR, settings.W_FILE)
         tc_path = os.path.join(settings.DATA_DIR, settings.TC_FILE)
         rh_path = os.path.join(settings.DATA_DIR, settings.RH_FILE)
 
-        try:
-            self.ds_u = xr.open_dataset(u_path, chunks={'time': 24, 'lev': 1, 'lat': 80, 'lon': 80})
-            print("  U (wind) OK", flush=True)
-            self.ds_v = xr.open_dataset(v_path, chunks={'time': 24, 'lev': 1, 'lat': 80, 'lon': 80})
-            print("  V (wind) OK", flush=True)
-            self.ds_w = xr.open_dataset(w_path, chunks={'time': 24, 'lev': 1, 'lat': 80, 'lon': 80})
-            print("  W (wind) OK", flush=True)
-            self.ds_tc = xr.open_dataset(tc_path, chunks={'time': 24, 'lev': 1, 'lat': 80, 'lon': 80})
-            print("  TC (temp) OK", flush=True)
-            self.ds_rh = xr.open_dataset(rh_path, chunks={'time': 24, 'lev': 1, 'lat': 80, 'lon': 80})
-            print("  RH (humidity) OK", flush=True)
-            self.ds_q = xr.open_dataset(os.path.join(settings.DATA_DIR, settings.Q_FILE), chunks={'time': 24, 'lev': 1, 'lat': 80, 'lon': 80})
-            print("  Q (qvapor) OK", flush=True)
-            self._loaded = True
-            print("All data loaded successfully.")
-        except FileNotFoundError as e:
-            print(f"Warning: Data file not found. {e}")
+        with self._load_lock:
+            if self._loaded:          # 已有可用句柄就不重开
+                return
+            try:
+                self.ds_u = xr.open_dataset(u_path, chunks={'time': 24, 'lev': 1, 'lat': 80, 'lon': 80})
+                print("  U (wind) OK", flush=True)
+                self.ds_v = xr.open_dataset(v_path, chunks={'time': 24, 'lev': 1, 'lat': 80, 'lon': 80})
+                print("  V (wind) OK", flush=True)
+                self.ds_w = xr.open_dataset(w_path, chunks={'time': 24, 'lev': 1, 'lat': 80, 'lon': 80})
+                print("  W (wind) OK", flush=True)
+                self.ds_tc = xr.open_dataset(tc_path, chunks={'time': 24, 'lev': 1, 'lat': 80, 'lon': 80})
+                print("  TC (temp) OK", flush=True)
+                self.ds_rh = xr.open_dataset(rh_path, chunks={'time': 24, 'lev': 1, 'lat': 80, 'lon': 80})
+                print("  RH (humidity) OK", flush=True)
+                self.ds_q = xr.open_dataset(os.path.join(settings.DATA_DIR, settings.Q_FILE), chunks={'time': 24, 'lev': 1, 'lat': 80, 'lon': 80})
+                print("  Q (qvapor) OK", flush=True)
+                self._loaded = True
+                self._load_failed_at = 0.0
+                print("All data loaded successfully.")
+            except FileNotFoundError as e:
+                # 缺文件时把已经开好的几个也关掉，别留半开的句柄
+                self._close_datasets()
+                self._load_failed_at = time.monotonic()
+                print(f"Warning: Data file not found. {e}")
+            except Exception as e:
+                # 权限、文件损坏等不是 FileNotFoundError。原来它直接冒泡成 500，
+                # 这里给出可读信息并保证句柄回收。
+                self._close_datasets()
+                self._load_failed_at = time.monotonic()
+                print(f"Error: failed to load meteorological datasets: "
+                      f"{type(e).__name__}: {e}", flush=True)
+                raise
 
     def _gather_slab(self, var: str, la, lo, tt, t0, hours, bbox):
         """读一块 slab 并算好每个采样点最近的 (时, 纬, 经) 下标。
@@ -170,16 +272,18 @@ class DataLoader:
         再逐点在自己的 ±TURB_WINDOW_HALF_HOURS 窗内算脉动方差，不按点次读盘。
 
         缺测点是 NaN（不是 0）：NaN 经 pydantic 序列化为 JSON null，前端画成断点。
-        数据文件缺失时退回占位常量（与旧实现一致，tke/edr 为 0）。
+        数据文件缺失时退回 ``_PLACEHOLDER``（与旧实现一致，tke/edr 为 0）——
+        **这组常量是「没读到」而不是「读到了零」，任何拿它做安全判定的调用方
+        都必须先用 ``is_placeholder_sample`` 挡一道**，否则一次读盘失败会被
+        ``classify_point`` 判成「零湍流、低风险、可以飞」。
         """
-        if not self._loaded:
-            self.load_data()
+        if not self._ensure_loaded():
+            return out
 
         la = np.asarray(lats, dtype=float).ravel()
         lo = np.asarray(lons, dtype=float).ravel()
         n = la.size
-        placeholder = {"u": 5.0, "v": 5.0, "w": 0.0, "tc": 280.0,
-                       "rh": 50.0, "qvapor": 0.005, "tke": 0.0, "edr": 0.0}
+        placeholder = _PLACEHOLDER
         out = {k: np.full(n, v, dtype=np.float64) for k, v in placeholder.items()}
         if n == 0 or n != lo.size or self.ds_u is None:
             return out
@@ -195,6 +299,25 @@ class DataLoader:
                     float(lo.min()) - pad, float(lo.max()) + pad)
             t0 = tt.min() - np.timedelta64(half, 'h')
             span = int((tt.max() - tt.min()) / np.timedelta64(1, 'h')) + 2 * half + 1
+
+            # 越界的时刻必须在读之前判掉。``read_slab`` 用 searchsorted 定位起始帧
+            # 再 clamp 到 [0, len-1]，于是 2022-01-01 **之前**的日期会被静默钳到
+            # 首帧：返回真实数值却标着用户请求的日期，``available=True`` 且无 note。
+            # 实测 2021-06-15 / 2021-01-01 / 1990-01-01 返回的 tke/tc 与
+            # 2022-01-01T00:00 逐位相同。数据**之后**的方向本来就是 NaN
+            # （下面 inside 掩码负责），这里把前面这个方向补齐成一致行为。
+            #
+            # 判据是**中心时刻**在不在数据集时间轴上，不是「±half 窗是否与数据相交」：
+            # 后者会把边缘处只覆盖了几小时的点也算成有效，那正是脉动方差
+            # 样本不足该给 NaN 的情形，交给下面的 pulsation_tke 判。
+            # 与 get_meteorology_grid 的越界守卫同一口径。
+            b = self._axis_bounds()
+            in_range = (tt >= b['time'][0]) & (tt <= b['time'][1])
+            if not in_range.all():
+                # 全越界：直接给 NaN，不要让 searchsorted 去钳
+                if not in_range.any():
+                    return {k: np.full(n, np.nan) for k in placeholder}
+                tt = np.where(in_range, tt, tt.max())   # 越界点不参与窗内计算
 
             cols = []
             itime = None
@@ -225,8 +348,17 @@ class DataLoader:
                 if got is not None:
                     vals, ilat, ilon, it = got
                     out[key] = vals[it, ilat, ilon]
+
+            # 越界的点最终一律 NaN。上面把越界时刻挪到 tt.max() 只是为了让
+            # searchsorted 有个合法落点、不至于钳到首帧，值到这里必须被抹掉。
+            if not in_range.all():
+                for key, arr in out.items():
+                    out[key] = np.where(in_range, arr, np.nan)
         except Exception:
-            pass
+            # 这里已经出错了，我们对这条航线**什么都不知道**。返回占位常量等于
+            # 报「零湍流、零风、280K」——那是一份凭空的安全证明，比报错更糟。
+            # 所以整批给 NaN：前端画断点，上层按 isfinite 判成「未算出」。
+            return {k: np.full(n, np.nan) for k in placeholder}
 
         return out
 
@@ -274,8 +406,8 @@ class DataLoader:
         缓存：三档规划的 bbox 只由起终点决定、date 也相同，是逐比特一样的三次读；
         带途经点的航线原本每段各读一次，现在也收敛成一次。
         """
-        if not self._loaded:
-            self.load_data()
+        if not self._ensure_loaded():
+            return self._empty_grid()
 
         if self.ds_u is None:
             return None, None, None, None, None
@@ -440,9 +572,18 @@ class DataLoader:
         return tke[idx], edr[idx], lats, lons, times[idx]
 
     def check_coverage(self, lat: float, lon: float, tol: float = 0.25) -> bool:
-        """判断坐标是否落在气象数据覆盖范围内（带容差）。
+        """判断坐标是否落在气象数据覆盖范围内（带容差）。全仓唯一实现。
 
-        数据未加载时返回 True（不阻塞评估流程，与功能一口径一致）。
+        数据未加载时返回 True —— 这里只回答「坐标是否在数据域内」，不回答
+        「数据是否可用」。放行之后真正的取数失败会由上游按「未算出」处理
+        （compute_path_turbulence 返回 NaN、端点判为不安全），不会退化成
+        「查不到就算安全」。
+
+        真正读轴失败（如 dataset 已损坏）不能与「确实在范围内」混为一谈，
+        所以记一条告警而不是静默吞掉。注意本方法**仍然返回 True**：
+        它只回答「坐标是否在数据域内」，不回答「数据是否可用」——
+        轴读不出来与「坐标在域内」是两件事，把后者说成前者会让一次
+        数据集损坏冒充成一次正常的覆盖检查。取数失败由上游按「未算出」处理。
         """
         try:
             ds = self.ds_u
@@ -454,7 +595,9 @@ class DataLoader:
             lon_lo, lon_hi = float(np.min(lons)), float(np.max(lons))
             return bool((lat_lo - tol <= lat <= lat_hi + tol)
                         and (lon_lo - tol <= lon <= lon_hi + tol))
-        except Exception:
+        except Exception as e:
+            print(f"Warning: coverage check failed for ({lat}, {lon}): "
+                  f"{type(e).__name__}: {e}", flush=True)
             return True
 
     def coverage_bbox(self) -> Optional[Dict[str, float]]:

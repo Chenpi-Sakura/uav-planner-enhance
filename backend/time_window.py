@@ -31,7 +31,7 @@ import timebase
 from data_loader import data_loader
 from planner import (plan_path_ex, PlanResult, search_deadline,
                      _haversine_km, SEGMENT_PAD_DEG)
-from risk import classify_point, LEVEL_LOW, LEVEL_UNFLYABLE
+from risk import classify_point, LEVEL_UNFLYABLE, level_rank
 from route_options import summarize_plan
 import geo
 
@@ -300,11 +300,9 @@ def _make_window(slots: List[SlotResult], a: int, b: int) -> Window:
     )
 
 
-_LEVEL_ORDER = {LEVEL_LOW: 0, "中风险": 1, "高风险": 2, LEVEL_UNFLYABLE: 3}
-
-
 def _level_rank(level: str) -> int:
-    return _LEVEL_ORDER.get(level, 3)
+    """认不出的等级按「不可飞」兜 —— 筛窗口时宁可严，不要把没判出来的槽位算成好天气。"""
+    return level_rank(level, default=3)
 
 
 def pick_recommended(windows: List[Window], slots: Optional[List[SlotResult]] = None) -> Optional[Window]:

@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from config import settings
-from data_loader import data_loader
+from data_loader import data_loader, is_placeholder_sample
 from risk import classify_point
 from timebase import to_data_time_str
 
@@ -51,20 +51,10 @@ def _outside_coverage(lat: float, lon: float) -> bool:
 def _is_placeholder(u: Any, v: Any, w: Any, tc: Any) -> bool:
     """识别 ``get_meteorology_at_points`` 在 slab 读取失败时退回的占位常量。
 
-    这不是杞人忧天：``data_loader`` 里 ``_gather_slab`` 返回 None 时直接
-    ``return out``，而 ``out`` 是 ``{u:5, v:5, w:0, tc:280, rh:50, tke:0, edr:0}``
-    的占位字典 —— **不是 NaN**。本模块开头那道 ``_loaded`` 守卫挡不住这种情况
-    （数据确实加载好了，只是这一次 slab 没读到），于是 tke=0 会经
-    ``classify_point`` 判成「低风险」，把一次读盘失败说成「风平浪静，可以飞」。
-
-    真实格点不会同时精确等于这组常数，所以整体比对足够可靠；宁可误报「无数据」，
-    也不能误报「安全」。
+    判定逻辑本身在 ``data_loader.is_placeholder_sample``（占位常量定义在那边，
+    这里不该有第二份），本函数只保留本模块的调用点形状。
     """
-    try:
-        return (float(u) == 5.0 and float(v) == 5.0 and float(w) == 0.0
-                and float(tc) == 280.0)
-    except (TypeError, ValueError):
-        return False
+    return is_placeholder_sample(u, v, w, tc)
 
 
 def query_weather(points: List[Dict[str, Any]], date: str, time: str) -> Dict[str, Any]:

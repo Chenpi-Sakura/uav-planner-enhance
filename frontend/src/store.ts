@@ -326,7 +326,7 @@ export interface SiteOption {
   diagnostics: Record<string, any>;
   search_effort?: { expansions: number; budget: number; elapsed_s?: number } | null;
   notes: string[];
-  elapsed_s?: number;
+  // 注意：后端不返回顶层 elapsed_s，用时在 diagnostics.elapsed_s 里
 }
 
 export interface SitePlanResult {

@@ -20,7 +20,7 @@ import numpy as np
 from config import settings
 from planner import plan_path_ex, search_deadline, PlanResult, search_effort_of, _haversine_km
 from route_options import plan_tiers_with_guard
-from data_loader import data_loader
+from data_loader import data_loader, is_placeholder_sample
 from schemas import (
     VERDICT_FEASIBLE, VERDICT_INFEASIBLE, VERDICT_LABELS,
     VERDICT_OVER_BUDGET, VERDICT_UNDETERMINED, verdict_of,
@@ -326,18 +326,8 @@ def _to_plan_request(req, priority: str):
 
 
 def _check_coverage(pt: Tuple[float, float]) -> bool:
-    """检查给定坐标是否落在气象数据覆盖范围内。"""
-    try:
-        ds = data_loader.ds_u
-        if ds is None:
-            return True  # 数据未加载时不阻塞评估流程
-        lats = ds.lat.values
-        lons = ds.lon.values
-        lat_lo, lat_hi = float(np.min(lats)), float(np.max(lats))
-        lon_lo, lon_hi = float(np.min(lons)), float(np.max(lons))
-        return (lat_lo - 0.25 <= pt[0] <= lat_hi + 0.25) and (lon_lo - 0.25 <= pt[1] <= lon_hi + 0.25)
-    except Exception:
-        return True
+    """检查给定坐标是否落在气象数据覆盖范围内。委托给 data_loader 的唯一实现。"""
+    return data_loader.check_coverage(pt[0], pt[1])
 
 
 def _sample_along_path(path, date: str, start_time: str, speed: float,
@@ -477,15 +467,25 @@ def _check_endpoints(start, end, req, end_time=None) -> Dict[str, Any]:
     for key, pt in (("start", start), ("end", end)):
         tke = float("nan")
         edr = float("nan")
-        safe = True
+        # 取不到数时按「不安全」处理。旧写法停在初始值 True，于是同一份输出里
+        # tke 是 None（前端知道没数据）而 safe 却是 True（明确说安全），自相矛盾；
+        # 宁可误报一次不安全，也不能在没有数据支撑时给出「可飞」。
+        safe = False
         try:
             t = end_time if (key == "end" and end_time is not None) else takeoff
             vals = data_loader.get_meteorology_at_points([pt[0]], [pt[1]], [t])
-            tke = float(vals["tke"][0])
-            edr = float(vals["edr"][0])
-            tke_th = req.tke_threshold if req.tke_threshold is not None else settings.TKE_THRESHOLD_HIGH
-            edr_th = req.edr_threshold if req.edr_threshold is not None else settings.EDR_THRESHOLD_HIGH
-            safe = not (tke >= tke_th or edr >= edr_th)
+            if is_placeholder_sample(vals["u"][0], vals["v"][0],
+                                     vals["w"][0], vals["tc"][0]):
+                # 这次 slab 没读到，取回来的是占位常量。它的 tke=0.0 比 NaN 更危险：
+                # NaN 至少让下游判不出等级，而 0.0 会被读成「零湍流、明确安全」。
+                # 留在初值（tke/edr=NaN、safe=False），让前端看到「未算出」。
+                pass
+            else:
+                tke = float(vals["tke"][0])
+                edr = float(vals["edr"][0])
+                tke_th = req.tke_threshold if req.tke_threshold is not None else settings.TKE_THRESHOLD_HIGH
+                edr_th = req.edr_threshold if req.edr_threshold is not None else settings.EDR_THRESHOLD_HIGH
+                safe = not (tke >= tke_th or edr >= edr_th)
         except Exception:
             pass
         out[key] = {
@@ -612,8 +612,8 @@ def _suggest_alt_bases(req,
                     break
                 if (b_lat, b_lon) in seen_dirs:
                     continue
-                cand_lat = float(anchor.lat) + b_lat * (radius / 111.0)
-                cand_lon = float(anchor.lon) + b_lon * (radius / (111.0 * math.cos(math.radians(float(anchor.lat)))))
+                cand_lat = float(anchor.lat) + b_lat * (radius / geo.KM_PER_DEG)
+                cand_lon = float(anchor.lon) + b_lon * (radius / (geo.KM_PER_DEG * math.cos(math.radians(float(anchor.lat)))))
 
                 if target == "start":
                     s_pt = type(req.start)(lat=cand_lat, lon=cand_lon)

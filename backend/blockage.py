@@ -22,6 +22,7 @@ import numpy as np
 import scipy.ndimage as ndimage
 
 from config import settings
+from geo import KM_PER_DEG
 
 SHAPE_BAND = "条带状"
 SHAPE_BLOB = "块状"
@@ -115,12 +116,12 @@ def analyze_blockage(tke_grid: np.ndarray,
 
     # 每个格点的等效面积（km²）
     if len(lats) > 1:
-        dlat_km = abs(lats[1] - lats[0]) * 111.0
+        dlat_km = abs(lats[1] - lats[0]) * KM_PER_DEG
     else:
         dlat_km = 5.0
     lat_mid = math.radians(float(np.mean(lats)))
     if len(lons) > 1:
-        dlon_km = abs(lons[1] - lons[0]) * 111.0 * math.cos(lat_mid)
+        dlon_km = abs(lons[1] - lons[0]) * KM_PER_DEG * math.cos(lat_mid)
     else:
         dlon_km = 5.0
     cell_km2 = max(dlat_km * dlon_km, 1e-6)
@@ -142,8 +143,8 @@ def analyze_blockage(tke_grid: np.ndarray,
 
         # 形状：PCA 主轴 / 短轴（在 km 空间做，避免经度形变）
         pts = np.column_stack([
-            (reg_lons - center_lon) * 111.0 * math.cos(lat_mid),
-            (reg_lats - center_lat) * 111.0,
+            (reg_lons - center_lon) * KM_PER_DEG * math.cos(lat_mid),
+            (reg_lats - center_lat) * KM_PER_DEG,
         ])
         aspect, extent_km = _pca_aspect(pts)
         shape = SHAPE_BAND if aspect >= BAND_RATIO else SHAPE_BLOB
@@ -278,8 +279,8 @@ def _point_to_segment_km(plat: float, plon: float,
                          a: Tuple[float, float], b: Tuple[float, float]) -> float:
     """点到线段的最短距离（km），在等距圆柱近似下计算。"""
     lat0 = math.radians((a[0] + b[0]) / 2.0)
-    kx = 111.0 * math.cos(lat0)
-    ky = 111.0
+    kx = KM_PER_DEG * math.cos(lat0)
+    ky = KM_PER_DEG
 
     ax, ay = a[1] * kx, a[0] * ky
     bx, by = b[1] * kx, b[0] * ky

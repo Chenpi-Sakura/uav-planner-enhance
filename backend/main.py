@@ -1,3 +1,5 @@
+import math
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
@@ -51,23 +53,36 @@ def _build_context(task: str, payload):
     return assessor.build_feasibility_context(payload)
 
 
+# 评估用**显式定长**执行器，而不是 loop.run_in_executor(None, ...) 的默认池。
+# 原因见 settings.ASSESS_MAX_CONCURRENCY：wait_for 超时后线程仍在后台跑到底，
+# 无限派生会拖垮整个进程；定长池把超出的请求挡在队列里，线程数恒定。
+_ASSESS_EXECUTOR = ThreadPoolExecutor(
+    max_workers=int(settings.ASSESS_MAX_CONCURRENCY),
+    thread_name_prefix="assess",
+)
+
+
 async def _run_assess(func, request):
     """在事件循环外执行重计算，并施加超时保护。
 
     评估接口依赖 NetCDF 冷读，个别情况下 I/O 争用会使单次请求显著变慢；
     这里统一用 ``asyncio.wait_for`` 兜底，超时返回 504 而非让请求无限挂起。
+
+    注意超时只是**客户端不再等待**，排队的那个线程仍会算完 —— 所以并发靠
+    执行器长度控制，504 文案也不许承诺「重试会更快」。
     """
     loop = asyncio.get_event_loop()
     try:
         return await asyncio.wait_for(
-            loop.run_in_executor(None, func, request),
+            loop.run_in_executor(_ASSESS_EXECUTOR, func, request),
             timeout=settings.ASSESS_TIMEOUT_S,
         )
     except asyncio.TimeoutError:
         raise HTTPException(
             status_code=504,
-            detail=f"评估未在 {settings.ASSESS_TIMEOUT_S:.0f} 秒上限内完成："
-                   f"气象场首次读取耗时较长，重试时将复用已载入的数据。",
+            detail=f"评估未在 {settings.ASSESS_TIMEOUT_S:.0f} 秒上限内完成"
+                   f"（并发上限 {settings.ASSESS_MAX_CONCURRENCY}）。"
+                   f"超时的请求仍会在后台算完，请稍后重试。",
         )
 
 
@@ -116,7 +131,18 @@ app.add_middleware(
 )
 
 def _fetch_elevations(waypoints):
-    elevations = []
+    """向 opentopodata 取 SRTM 高程，按航点下标回填。
+
+    旧写法用 ``append`` 累加，有两个会静默出错的地方：
+      1. 该接口对无效坐标可能少返回 ``results`` 条数，append 就让后续点的高程
+         与航点**整体错位**，而接口照样返 200，没有任何报错；
+      2. 中途抛异常时把已取到的部分全丢掉、统一重填。
+
+    改成预分配 + 按接口回传的 ``location`` 把每个结果对回它原本的航点，
+    对不上的宁可留空走兜底值，也不猜位置。
+    """
+    fallback = settings.SRTM_FALLBACK_ELEV_M
+    elevations: list = [None] * len(waypoints)
     try:
         chunk_size = 100
         for i in range(0, len(waypoints), chunk_size):
@@ -126,15 +152,26 @@ def _fetch_elevations(waypoints):
             api_req = urllib.request.Request(url, headers={'User-Agent': 'UAV-Planner/1.0'})
             with urllib.request.urlopen(api_req, timeout=10) as response:
                 api_data = json.loads(response.read().decode())
-                for res in api_data.get('results', []):
-                    val = res.get('elevation')
-                    elevations.append(val if val is not None else 3650.0)
+            for res in api_data.get('results', []):
+                loc = res.get('location') or {}
+                lat, lng = loc.get('lat'), loc.get('lng')
+                if lat is None or lng is None:
+                    continue
+                # 凭经纬找回原航点下标（限本 chunk 范围），保证一一对应。
+                # 必须跳过已填的下标：重复航点（A→B→A）时两条结果的经纬完全相同，
+                # 不跳过就会都落到第一个 A 上，第二个 A 反而空着走兜底值。
+                for idx in range(i, min(i + chunk_size, len(waypoints))):
+                    if elevations[idx] is not None:
+                        continue
+                    wp = waypoints[idx]
+                    if abs(wp.lat - lat) < 1e-6 and abs(wp.lon - lng) < 1e-6:
+                        val = res.get('elevation')
+                        elevations[idx] = fallback if val is None else val
+                        break
     except Exception as e:
+        # 保留已取到的部分，只让仍为空的位置走兜底
         print(f"Elevation fetch error: {e}")
-        elevations = [3650.0] * len(waypoints)
-    while len(elevations) < len(waypoints):
-        elevations.append(3650.0)
-    return elevations
+    return [fallback if v is None else v for v in elevations]
 
 @app.post("/api/weather/profile", response_model=ProfileResponse)
 async def get_weather_profile(req: ProfileRequest):
@@ -173,7 +210,7 @@ async def get_weather_profile(req: ProfileRequest):
             lat=wp.lat,
             lon=wp.lon,
             distance_from_start=round(cum_km[i], 2),
-            elevation=elevations[i] if i < len(elevations) else 3650.0,
+            elevation=elevations[i] if i < len(elevations) else settings.SRTM_FALLBACK_ELEV_M,
             u=float(meteo_batch['u'][i]),
             v=float(meteo_batch['v'][i]),
             w=float(meteo_batch['w'][i]),
@@ -204,6 +241,16 @@ async def plan_route(request: PlanRequest):
 
     max_tke, max_edr = await loop.run_in_executor(
         None, compute_path_turbulence, request, result.path)
+    if not (math.isfinite(max_tke) and math.isfinite(max_edr)):
+        # 航线本身搜到了，但沿程湍流统计取不到数。这里**保留航线**：
+        # A* 每一格都已按硬阈值判过，丢掉的只是「峰值统计」这一个量。
+        # max_tke/max_edr 填 NaN —— pydantic 会把它序列化成 JSON null（不是裸 NaN），
+        # 前端据此显示「未算出」，而不是一条零风险曲线。
+        # verdict 经 turbulence_unavailable -> undetermined，不会被说成「不可飞」。
+        return PlanResponse(path=result.path,
+                            total_distance=result.total_distance,
+                            max_tke=float('nan'), max_edr=float('nan'),
+                            feasible=False, reason='turbulence_unavailable')
     return PlanResponse(
         path=result.path,
         total_distance=result.total_distance,
@@ -468,7 +515,7 @@ async def plan_site_route(request: SitePlanRequest):
     """多航点模式：按机型能力包给出最少中继落地序列 + 逐段 A* 复验。
 
     一次请求只算**一台**机型（`aircraft` 留空取 `SITE_DEFAULT_AIRCRAFT`），按该机的巡航速度推时间轴。
-    双机对照已于 2026-09-28 撤销：要比就换一台再点一次，两次请求各自完整复验。
+    双机对照不做：要比就换一台再点一次，两次请求各自完整复验。
     载重只在厂家公开锚点覆盖的区间内作答，超出一律判「无依据」而非外推。
     """
     _require_valid_od(request)

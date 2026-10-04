@@ -29,6 +29,7 @@ import feasibility
 import geo
 import route_options
 from config import settings
+from data_loader import is_placeholder_sample as _real_is_placeholder_sample
 from planner import PlanResult, SegmentResult
 from schemas import FeasibilityRequest, Point
 
@@ -46,10 +47,30 @@ class _StubLoader:
         ts = list(times) if times is not None else [None] * n
         for lat, t in zip(lats, ts):
             self.point_calls.append((round(float(lat), 4), str(t)))
-        return {"tke": np.full(n, 0.1), "edr": np.full(n, 0.001)}
+        # u/v/w/tc 必须给真实取值：feasibility 会用它们过一遍占位哨兵判定，
+        # 缺键会被 KeyError 吞掉、把「读到低湍流」也压成「未算出」。
+        return {"u": np.full(n, 1.0), "v": np.full(n, 1.0), "w": np.full(n, 0.1),
+                "tc": np.full(n, 250.0),
+                "tke": np.full(n, 0.1), "edr": np.full(n, 0.001)}
 
     def get_meteorology_grid(self, *args, **kwargs):
         return None, None, None, None, None
+
+    def check_coverage(self, lat, lon, tol=0.25):
+        """feasibility._check_coverage 已委托到 data_loader.check_coverage，
+        替身上补同一个接口：合成数据一律视作在覆盖范围内。"""
+        return True
+
+    def is_placeholder_sample(self, u, v, w, tc):
+        """刻意**不**在这里提供这个方法。
+
+        它在 data_loader 里是模块级函数，不是 DataLoader 的实例方法。之前这里
+        补了一个同名实例方法，于是替身比真身多一个属性，把
+        ``data_loader.is_placeholder_sample(...)`` 当实例方法调用会抛 AttributeError
+        这件事完全盖住了 —— 而线上正是这一行把起降点读数判成了「不安全/未算出」。
+        真实调用点已在下面那条用真身跑的用例里守住。
+        """
+        raise AssertionError("不该被调用：占位判定是模块级函数，不挂在 loader 上")
 
 
 def _fake_plan(total_distance: float, found: bool = True, reason: str = 'blocked',
@@ -425,6 +446,149 @@ class TestFeasibilityMulti(unittest.TestCase):
         out = feasibility.assess_feasibility_multi(self._req(priority='economy'))
         self.assertEqual(out['active'], 'economy')
         self.assertEqual(asked, ['economy'], f"只有当前档该算替代点，实际算了 {asked}")
+
+
+class TestEndpointMissingData(unittest.TestCase):
+    """起降点取不到数时，**不许**说它安全。
+
+    这是全套 fail-open 修复里最隐蔽的一条：`get_meteorology_at_points` 在 slab
+    读不到时返回的是占位常量而不是 NaN，而且它**不抛异常**。占位常量里
+    ``tke=0.0``，直接送进 ``tke >= tke_threshold`` 就是 False，于是
+    ``safe = True`` —— 一次读盘失败被说成「起降点零湍流、明确安全」。
+    """
+
+    def setUp(self):
+        self.saved_loader = feasibility.data_loader
+        feasibility.data_loader = _StubLoader()
+
+    def tearDown(self):
+        feasibility.data_loader = self.saved_loader
+
+    def _req(self):
+        return FeasibilityRequest(
+            start=Point(lat=29.65, lon=91.13),
+            end=Point(lat=29.66, lon=94.36),
+            date='2022-07-01', start_time='08:00', speed=60.0,
+        )
+
+    # _check_endpoints 收的是 (lat, lon) 元组，不是 Point
+    _START = (29.65, 91.13)
+    _END = (29.66, 94.36)
+
+    def _check(self):
+        return feasibility._check_endpoints(self._START, self._END, self._req())
+
+    def test_placeholder_sample_is_recognised(self):
+        """哨兵判定本身：占位常量认得出，真实读数认不出。"""
+        from data_loader import _PLACEHOLDER, is_placeholder_sample
+        self.assertTrue(is_placeholder_sample(_PLACEHOLDER['u'], _PLACEHOLDER['v'],
+                                              _PLACEHOLDER['w'], _PLACEHOLDER['tc']))
+        self.assertFalse(is_placeholder_sample(5.1, 5.0, 0.0, 280.0))
+        self.assertFalse(is_placeholder_sample(None, None, None, None))
+
+    def test_placeholder_endpoint_is_not_reported_safe(self):
+        """整批返回占位常量时，tke/edr 留空（未算出）且 safe 为 False。"""
+        from data_loader import _PLACEHOLDER
+
+        class _PlaceholderLoader(_StubLoader):
+            def get_meteorology_at_points(self, lats, lons, times=None):
+                n = len(lats)
+                return {k: np.full(n, v) for k, v in _PLACEHOLDER.items()}
+
+        feasibility.data_loader = _PlaceholderLoader()
+        out = self._check()
+        for key in ('start', 'end'):
+            self.assertFalse(out[key]['safe'],
+                             f"{key} 拿到的是占位常量（tke=0.0），不能判成安全")
+            self.assertIsNone(out[key]['tke'], f"{key} 的 tke 应留空表示未算出")
+            self.assertIsNone(out[key]['edr'], f"{key} 的 edr 应留空表示未算出")
+
+    def test_real_unsafe_endpoint_is_still_reported(self):
+        """对照组：真的读到超阈湍流时，照旧判不安全 —— 别把守卫写成一律 False。"""
+
+        class _HotLoader(_StubLoader):
+            def get_meteorology_at_points(self, lats, lons, times=None):
+                n = len(lats)
+                return {"u": np.full(n, 1.0), "v": np.full(n, 1.0),
+                        "w": np.full(n, 0.1), "tc": np.full(n, 250.0),
+                        "tke": np.full(n, settings.TKE_THRESHOLD_HIGH + 5.0),
+                        "edr": np.full(n, 0.001)}
+
+        feasibility.data_loader = _HotLoader()
+        out = self._check()
+        for key in ('start', 'end'):
+            self.assertFalse(out[key]['safe'], f"{key} 真的超阈，应判不安全")
+            self.assertIsNotNone(out[key]['tke'], f"{key} 读到了数，tke 不该是 None")
+
+    def test_real_safe_endpoint_is_still_reported_safe(self):
+        """对照组：真的读到低湍流时，safe 仍为 True —— 守卫不能把结论全压成未知。"""
+        req = self._req()
+        out = feasibility._check_endpoints(self._START, self._END, req)
+        for key in ('start', 'end'):
+            self.assertTrue(out[key]['safe'], f"{key} 实测 tke=0.1，应判安全")
+
+    def test_placeholder_detection_runs_against_the_real_loader(self):
+        """**不替身**跑一遍：占位判定是模块级函数，调用点不许把它当实例方法。
+
+        这条守的是一个已经真实发生过的 bug：调用点写成
+        ``data_loader.is_placeholder_sample(...)``，而 ``data_loader`` 是
+        ``from data_loader import data_loader`` 拿到的**实例**，实例上没有这个属性
+        → AttributeError → 被 ``except Exception: pass`` 吞掉 → 每次评估都把起降点
+        判成「不安全且读不出数」。上一批用例之所以全绿，是因为替身比真身多一个属性。
+        """
+        import data_loader as dl_module
+        from data_loader import data_loader as real_loader
+        from schemas import Point as _Pt
+
+        self.assertFalse(hasattr(real_loader, "is_placeholder_sample"),
+                         "占位判定是模块级函数，不应挂在 loader 实例上")
+        self.assertTrue(callable(dl_module.is_placeholder_sample))
+
+        saved = real_loader.get_meteorology_at_points
+        try:
+            real_loader.get_meteorology_at_points = lambda la, lo, ti=None: {
+                "u": [1.0], "v": [1.0], "w": [0.1], "tc": [250.0],
+                "tke": [0.1], "edr": [0.001]}
+            feasibility.data_loader = real_loader
+            out = feasibility._check_endpoints(self._START, self._END, self._req())
+        finally:
+            real_loader.get_meteorology_at_points = saved
+
+        # 真身路径上必须真的判出 safe，而不是 AttributeError 被吞成 safe=False
+        for key in ('start', 'end'):
+            self.assertTrue(out[key]['safe'],
+                            f"{key} 读到了 tke=0.1，真身路径上应判安全；"
+                            f"若这里失败，多半是占位判定又被当成了实例方法")
+            self.assertEqual(out[key]['tke'], 0.1)
+
+
+class TestVerdictMapping(unittest.TestCase):
+    """reason 码 -> 结论四态的映射。
+
+    ``verdict_of`` 对**没登记**的 reason 一律返回 infeasible。默认值是「不可飞」，
+    所以每加一个 reason 码都必须显式登记 —— 漏登记不会报错，只会安静地把
+    「没算出来」说成「飞不了」。
+    """
+
+    def test_every_planner_reason_is_registered(self):
+        from schemas import PLANNER_REASON_VERDICT
+        expected = {'blocked', 'no_data', 'iteration_limit', 'time_limit',
+                    'turbulence_unavailable'}
+        self.assertEqual(set(PLANNER_REASON_VERDICT), expected)
+
+    def test_turbulence_unavailable_is_undetermined_not_infeasible(self):
+        """航线搜到了但沿程湍流取不到数：判「未算出」，不能判「不可飞」。"""
+        from schemas import (PLANNER_REASON_VERDICT, VERDICT_UNDETERMINED,
+                             verdict_of)
+        self.assertEqual(
+            verdict_of(False, 'turbulence_unavailable', PLANNER_REASON_VERDICT),
+            VERDICT_UNDETERMINED)
+
+    def test_truly_blocked_stays_infeasible(self):
+        """对照组：确认没把「封死」也一起降级成「未算出」。"""
+        from schemas import PLANNER_REASON_VERDICT, VERDICT_INFEASIBLE, verdict_of
+        self.assertEqual(verdict_of(False, 'blocked', PLANNER_REASON_VERDICT),
+                         VERDICT_INFEASIBLE)
 
 
 if __name__ == "__main__":

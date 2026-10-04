@@ -89,6 +89,11 @@ class Settings(BaseModel):
 
     GRID_RESOLUTION_DEG: float = 0.045 # Approximate resolution for A* grid (~5km)
 
+    # SRTM 高程取不到数时的兜底填充值（米）。高程只进剖面与出图，不进搜索，
+    # 所以这里不代表任何安全门限，纯粹是让剖面图有个能画的高度。
+    # 集中在这里是为了别再散落成几处字面量 —— 之前 main.py 与 schemas.py 各写一份。
+    SRTM_FALLBACK_ELEV_M: float = 3650.0
+
     # ---- A* 展开预算（随该段直线距离伸缩）----
     # 斜率按标定集实测确定（代价与启发式都换成真实公里、节点量化改 6 位之后）：
     #   日喀则→昌都 824 km 三档 8087/9296/10552（12.8 次/km 封顶）、
@@ -270,6 +275,11 @@ class Settings(BaseModel):
     # 评估接口超时（秒）：超过则返回 504 并提示稍后重试，避免请求长期挂起。
     # 实测端到端 5-8s（暖读），首次冷读可能更久，故默认留足余量。
     ASSESS_TIMEOUT_S: float = 120.0
+    # 评估并发上限。评估是 CPU 密集的 A* 搜索，且 asyncio.wait_for **收不回
+    # 已经在跑的线程** —— 超时只让客户端不再等，线程照跑到底。不设上限的话，
+    # 公网无鉴权场景下连续打满会不断派生新线程把进程拖垮。定长执行器让超出的
+    # 请求排队而不是无限开线程。
+    ASSESS_MAX_CONCURRENCY: int = 4
 
     AI_SYSTEM_PROMPT: str = (
         '你是无人机飞行决策助手。只允许引用用户给出的 JSON 中的数值与地名，'

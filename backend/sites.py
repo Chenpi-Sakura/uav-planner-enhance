@@ -12,7 +12,7 @@ r"""站点自动规划（多航点模式）：给定机型与载重，在站表�
   - 载重超商载上限 → `payload_exceeds_max`（确定的物理否）
   - 载重在商载内但超出公开锚点 → `payload_beyond_published_envelope`（**没依据**，判未算出）
 
-场地海拔不参与判定（2026-09-28 裁定）：站表的 elevation_m / elev_kind 只作展示与复核台账，
+场地海拔不参与判定：站表的 elevation_m / elev_kind 只作展示与复核台账，
 既不再筛站，也不判起降点——机型没有可引用的最大起降海拔依据。
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ from data_loader import data_loader
 import assessor
 import geo
 from planner import SEGMENT_PAD_DEG, plan_path_ex, search_deadline, search_effort_of, _haversine_km
-from risk import LEVEL_ORDER, build_risk_profile
+from risk import build_risk_profile, level_rank
 from schemas import (PLANNER_REASON_VERDICT, SITE_REASON_VERDICT, VERDICT_FEASIBLE,
                      VERDICT_LABELS, VERDICT_UNDETERMINED, PlanRequest, Point,
                      SitePlanRequest, verdict_of)
@@ -208,12 +208,12 @@ def _polyline(req: SitePlanRequest) -> List[Tuple[float, float]]:
 
 def _to_polyline_km(lat: float, lon: float, poly: Sequence[Tuple[float, float]]) -> float:
     """点到走廊折线的最短距离（局部等距投影，走廊尺度下误差远小于 150 km 外扩量）。"""
-    kx = 111.0 * math.cos(math.radians(lat))
-    px, py = lon * kx, lat * 111.0
+    kx = geo.KM_PER_DEG * math.cos(math.radians(lat))
+    px, py = lon * kx, lat * geo.KM_PER_DEG
     best = float("inf")
     for (a_lat, a_lon), (b_lat, b_lon) in zip(poly, poly[1:]):
-        ax, ay = a_lon * kx, a_lat * 111.0
-        bx, by = b_lon * kx, b_lat * 111.0
+        ax, ay = a_lon * kx, a_lat * geo.KM_PER_DEG
+        bx, by = b_lon * kx, b_lat * geo.KM_PER_DEG
         dx, dy = bx - ax, by - ay
         seg2 = dx * dx + dy * dy
         t = 0.0 if seg2 == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / seg2))
@@ -331,6 +331,12 @@ def _unreachable_report(nodes, adj, reached, ti, cap_km) -> Dict[str, Any]:
 
 # ==================== Pass 2：气象邻域统计（只排序与标注） ====================
 
+# 候选点最近格点的最大容许偏移（km）。候选点若落在取数框外，`argmin` 会静默返回
+# 边缘那一格，统计就变成了「看盒子里最边上那个点的天气」——与该点所在的走廊无关。
+# 超过这个距离直接判定为「取不到格点」，不参与统计。
+NEAREST_CELL_MAX_KM = 60.0
+
+
 def _corridor_bbox(nodes: List[Dict[str, Any]]) -> Tuple[float, float, float, float]:
     lats = [n["lat"] for n in nodes]
     lons = [n["lon"] for n in nodes]
@@ -360,8 +366,8 @@ def _neighborhood_stats(field, nodes: List[Dict[str, Any]], arrival_ns: Dict[str
     for n in nodes:
         i = int(np.argmin(np.abs(lat_a - n["lat"])))
         j = int(np.argmin(np.abs(lon_a - n["lon"])))
-        if abs(float(lat_a[i]) - n["lat"]) * 111.0 > 60.0 or \
-           abs(float(lon_a[j]) - n["lon"]) * 111.0 * math.cos(math.radians(n["lat"])) > 60.0:
+        if abs(float(lat_a[i]) - n["lat"]) * geo.KM_PER_DEG > NEAREST_CELL_MAX_KM or \
+           abs(float(lon_a[j]) - n["lon"]) * geo.KM_PER_DEG * math.cos(math.radians(n["lat"])) > NEAREST_CELL_MAX_KM:
             continue    # 走廊外扩后仍取不到格点的点，不参与统计
         t_ns = arrival_ns.get(n["key"])
         if t_ns is None or time_a.size == 0:
@@ -431,10 +437,8 @@ def _swap_key(node: Dict[str, Any], metrics: Dict[str, Any]):
 # ==================== Pass 3：逐段 A* 复验 + 编排 ====================
 
 def _level_rank(level: str) -> int:
-    try:
-        return LEVEL_ORDER.index(level)
-    except ValueError:
-        return -1
+    """认不出的等级排到所有已知等级之前（-1），不当成好消息。"""
+    return level_rank(level, default=-1)
 
 
 def _stub_option(pack_key: str, payload_kg: float, mission: str) -> Dict[str, Any]:
@@ -648,7 +652,7 @@ def _plan_for_aircraft(doc: Dict[str, Any], pack_key: str, req: SitePlanRequest,
 def plan_site_options(req: SitePlanRequest) -> Dict[str, Any]:
     """一次请求 = 一笔墙钟余额 + 一次读场，跑**一台**机型。
 
-    双机对照已于 2026-09-28 撤销：海拔不再判站之后，两台在同一条走廊上给出的是同一条中继序列，
+    不做双机对照：海拔不判站之后，两台在同一条走廊上给出的是同一条中继序列，
     差异只剩「谁在哪个载重档不答话」与一个航时刻度——两张并排的卡换来的是重复信息，
     而界面本来就决定不印型号。要比就换一台再点一次，两次请求各自完整复验。
     """
