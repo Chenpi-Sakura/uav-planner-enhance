@@ -26,7 +26,7 @@ let basesLayer = L.layerGroup(); // layer for city bases
 let coverageLayer = L.layerGroup();
 let altLayer = L.layerGroup();    // 替代起降点（后端 suggestions.alt_bases）
 let peakLayer = L.layerGroup();   // 沿程最危险点（risk.stats.worst_index）
-let siteLayer = L.layerGroup();   // 多航点模式：中继序列与段长可达圆（M7）
+let siteLayer = L.layerGroup();   // 多航点模式：中继序列与段长可达圆
 // AI 读完图后落的标记（mark_regions）：图钉 / 方框 / 圆圈
 let aiMarkLayer = L.layerGroup();
 let siteCatalogLayer = L.layerGroup(); // 多航点模式：站表全量候选点，只在「多航点」页显示
@@ -389,7 +389,7 @@ const renderAltBases = () => {
  *
  * 只画"能飞的"那份；被拒的结果在侧栏卡片里给结论与原因，不在地图上留残线。
  * 可达圆只画起跳点那一圈 —— 213 个站点铺满屏幕不会让任何人更懂这条线，
- * 而"段长上限是个圆"这一眼就看出来了（池外灰点按 2026-09-27 裁定不进一期）。
+ * 而"段长上限是个圆"这一眼就看出来了（池外灰点不进一期）。
  */
 const renderSitePlan = (fit = false) => {
   siteLayer.clearLayers();
@@ -886,7 +886,7 @@ const quantizeBounds = (bounds: L.LatLngBounds) => {
 let inflightOverlays: L.ImageOverlay[] = [];
 let overlaySeq = 0;
 
-// 热图渲染算法版本：行纬度自 2026-09 起改按 Web Mercator 重采样（旧图等纬度行在
+// 热图渲染算法版本：行纬度按 Web Mercator 重采样（旧图等纬度行在
 // 中视口最多漂 ~1°）。覆盖层 URL 被浏览器/OpenResty/CF 按 max-age=86400 缓存一天，
 // 服务端出图几何一变必须改这个常量击穿旧缓存，否则线上继续吃一天错图。
 const OVERLAY_RENDER_VERSION = 'merc1';

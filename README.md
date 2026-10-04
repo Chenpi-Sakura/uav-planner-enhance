@@ -61,7 +61,7 @@ start.bat
 ```
 
 `setup.bat` 行为：
-- 检测系统 Python 3.10+；没有则自动从 python.org 下载 embeddable Python (~10 MB) 到 `backend/.python/portable/`
+- 检测系统 Python 3.12+；没有则自动从 python.org 下载 embeddable Python (~10 MB) 到 `backend/.python/portable/`
 - `pip install -r backend/requirements.txt` 安装后端依赖
 - 整个仓库 clone 后只跑这两条命令即可
 
@@ -99,7 +99,7 @@ python main.py   # 端口统一从根目录 config.json 读取（默认 9090）
 服务器侧链路是 `Cloudflare → OpenResty(443) → frps → 本机 9090`：TLS 在 Cloudflare 与 OpenResty 之间终结，
 `/api/weather/overlay` 的热图 PNG 在服务器上 `proxy_cache`（实测 `X-Cache: MISS → HIT`），
 AI 报告的 SSE 单独关掉 `proxy_buffering`。**当前形态是有意不加鉴权的公开服务**，取舍与影响见 runbook 的「鉴权」一节。
-完整步骤与配置文件见 [`docs/公网访问部署.md`](docs/公网访问部署.md)。
+完整步骤与配置文件见 [`docs/方案设计/公网访问部署.md`](docs/方案设计/公网访问部署.md)。
 
 两条硬性约束：**不要把 Vite dev server 暴露到公网**（dev 模式下仓库文件可经 `/@fs/` 原文读取，含 `frp/frpc.toml` 里的 token），
 以及 `frp/` 目录已 gitignore、不要提交。
@@ -138,9 +138,9 @@ Copy-Item .env.example .env
 
 `.env` 已被 `.gitignore` 忽略，可安全存放真实 Key。
 优先级：**真实环境变量 > `.env` > `config.json` 的 `ai` 段 > 默认值**。
-详见 [`docs/AI评估接入说明.md`](docs/AI评估接入说明.md)。
+详见 [`docs/方案设计/AI-评估接入说明.md`](docs/方案设计/AI-评估接入说明.md)。
 
-推理型模型（MiniMax-M3 / DeepSeek-R1 等）默认已关闭「思考输出」，
+推理型模型默认已关闭「思考输出」，
 报告正文不会再混入分析旁白；配置好 Key 后可用下面的命令一次性验证连通性与正文干净度：
 
 ```powershell
@@ -150,4 +150,4 @@ cd backend
 ### 依赖说明
 - **后端依赖**：见 `backend/requirements.txt`，包含 xarray、netCDF4、FastAPI、numpy 等
 - **数据依赖**：本地气象 NetCDF 文件 (`.nc`) 与 SRTM 地形切片 (`.hgt`)
-- **环境要求**：Python ≥ 3.10, Node.js ≥ 16
+- **环境要求**：Python ≥ 3.12, Node.js ≥ 16

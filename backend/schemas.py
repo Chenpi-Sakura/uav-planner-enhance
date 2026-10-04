@@ -37,7 +37,7 @@ def verdict_of(feasible: bool, reason: Optional[str], mapping: Dict[str, str]) -
     return mapping.get(reason or "", VERDICT_INFEASIBLE)
 
 
-# ==================== M7 选址的 reason → 四态 ====================
+# ==================== 选址的 reason → 四态 ====================
 # 各道门各有各的码，不共用「未算出」也不并入「不可飞」：
 # 「装不下」是确定的物理否，「这一档没有公开航程数据」是**没依据**，
 # 后者必须是 undetermined，否则我们就等于替厂家做了承诺。
@@ -411,7 +411,7 @@ class FeasibilityMultiResponse(BaseModel):
     meta: Dict[str, Any] = {}
 
 
-# ==================== M7 · 站点自动规划（多航点模式） ====================
+# ==================== 站点自动规划（多航点模式） ====================
 
 class SitePlanRequest(BaseModel):
     """多航点模式的一次请求：给定 OD（或已经手填的 waypoints）+ 机型 + 载重，求中继序列。

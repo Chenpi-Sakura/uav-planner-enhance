@@ -1,4 +1,4 @@
-r"""M7 站点自动规划的行为契约（合成站表 + 替身 A\*，不读真实 NetCDF）。
+r"""站点自动规划的行为契约（合成站表 + 替身 A\*，不读真实 NetCDF）。
 
 要守住的口径：
   1. 载重是**自变量**：超商载上限与超公开锚点是两个不同结论——后者判「未算出」，
@@ -439,7 +439,7 @@ class TestRealSiteTable(unittest.TestCase):
             self.assertTrue(s.get("source"), s["id"])
 
     def test_elevation_no_longer_gates_the_pool(self):
-        """2026-09-28 裁定：海拔不筛站，两台机型拿到的池一样，且等于表内 usable 数。"""
+        """海拔不筛站，两台机型拿到的池一样，且等于表内 usable 数。"""
         sites.plan_path_ex = _fake_plan
         sites.search_effort_of = lambda p: None
         sites.data_loader = _StubLoader()

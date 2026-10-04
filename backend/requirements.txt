@@ -10,6 +10,5 @@ pydantic
 aiofiles
 matplotlib
 pillow
-scipy
 dask
 h5netcdf

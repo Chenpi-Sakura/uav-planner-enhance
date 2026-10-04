@@ -2,9 +2,9 @@
  "schema_version": 3,
  "generated": "2026-09-27",
  "derived_from": [
-  "docs/站点清单调研.json",
-  "docs/站点海拔复核.json",
-  "docs/站点海拔复核2.json"
+  "docs/数据/站点清单调研.json",
+  "docs/数据/站点海拔复核-第1批.json",
+  "docs/数据/站点海拔复核-第2批.json"
  ],
  "coverage_box": {
   "la0": 25.9119225,

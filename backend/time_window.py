@@ -352,7 +352,7 @@ def _user_pair(data_time) -> Tuple[str, str]:
 
 def _plan_one_candidate(req, slot, straight_km, field=None,
                         deadline=None) -> Dict[str, Any]:
-    """按候选自己的起飞时刻规划一条真实航线（功能二 B10 的第二遍）。
+    """按候选自己的起飞时刻规划一条真实航线（Top-K 两遍里的第二遍）。
 
     只按「平衡」档规划：Top-K 已经乘过一次成本，再乘三档不值；
     切档回功能一，那里有完整的三档评估。
@@ -433,7 +433,7 @@ def plan_top_k_routes(req, slots: List[SlotResult], windows: List[Window],
 def rank_routes(routes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """细排：可飞 > 整体风险档 > 沿程最坏点 > 里程 > 起飞时刻。
 
-    刻意不把「风险」与「里程」混成一个加权键 —— backlog B1 留档第 2 条：
+    刻意不把「风险」与「里程」混成一个加权键 ——
     绕得更远的线风险可能更高，混排会产出「推荐那条反而更危险」的结论。
 
     「沿程最坏点」必须排在「里程」前面：一条走廊全天平静的日子里四条候选线

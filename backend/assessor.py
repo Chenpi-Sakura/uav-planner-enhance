@@ -494,7 +494,7 @@ def build_prompt(ctx: Dict[str, Any]) -> str:
     )
 
 
-# 部分推理模型（MiniMax-M3 / DeepSeek-R1 / QwQ 等）会把思考过程直接写进正文，
+# 部分推理型模型会把思考过程直接写进正文，
 # 常见形态是用内联标签包裹。这里只按已知标签名成对剥离；标签不在名单内时
 # 原样输出，宁可少删也不破坏正文。
 _THINK_TAGS = tuple(
@@ -610,10 +610,10 @@ def _iter_sse_content(resp) -> Iterator[str]:
 def chat_request_body(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     """组装 /chat/completions 请求体（报告与对话共用）。
 
-    关键是显式关闭推理型模型的「思考输出」：MiniMax-M3 这类模型默认会把
+    关键是显式关闭推理型模型的「思考输出」：这类模型默认会把
     思考过程一并写进返回，前端就会把推理独白当成正文展示。
     ``AI_THINKING`` 为空或取值不认识时不发送该字段，以兼容不支持它的网关
-    （Ollama、vLLM 等），此时改由响应侧的 ThinkTagFilter 兜底。
+    （部分自建/本地部署的推理服务），此时改由响应侧的 ThinkTagFilter 兜底。
     """
     body: Dict[str, Any] = {
         "model": settings.AI_MODEL,
@@ -675,7 +675,7 @@ def describe_llm_error(exc: BaseException) -> str:
     """把调用异常翻译成用户看得懂、且知道下一步做什么的一句话。
 
     之前这里直接报 ``HTTPError``：用户看到「AI 服务调用失败（HTTPError）」既不知道
-    出了什么事，也不知道该等还是该充钱。实测最常撞上的是 429 —— MiniMax 侧
+    出了什么事，也不知道该等还是该充钱。实测最常撞上的是 429 —— 网关侧的
     「Token Plan 用量上限」是个**硬上限**不是瞬时限流，重试多少次都一样，
     所以必须原样说清楚，不能包装成「稍后重试」。
     """

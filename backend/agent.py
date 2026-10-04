@@ -119,7 +119,7 @@ def _llm_stream(msgs: List[Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
     请求侧的 ``thinking: {"type": "disabled"}``（模型不思考）与响应侧的
     ``<think>`` 剥离都在那边统一处理过，不重复发明。
 
-    实测 MiniMax-M3 走原生 function calling：工具调用落在 ``delta.tool_calls``，
+    实测走原生 function calling 的网关：工具调用落在 ``delta.tool_calls``，
     此时 ``delta.content`` 为空 —— **正文与工具调用由协议保证分离**。所以正文
     可以逐段立即外发（真流式），不需要「看首字符是不是 ``[``」那种猜测式分流。
     """

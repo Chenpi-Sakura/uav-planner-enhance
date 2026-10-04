@@ -174,7 +174,7 @@ def _llm_parse(text: str, base_date: Optional[str]) -> Optional[Dict[str, Any]]:
         "max_tokens": 800,
     }
     # 与 assessor.chat_request_body 同一套请求侧开关（取空时不发该字段，兼容
-    # Ollama / vLLM 这类不认识该参数的网关）。
+    # 不认识该参数的网关）。
     thinking = (settings.AI_THINKING or "").strip().lower()
     if thinking in ("disabled", "adaptive"):
         body["thinking"] = {"type": thinking}

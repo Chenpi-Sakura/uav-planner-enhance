@@ -232,7 +232,7 @@ export interface StoreState {
    * 迟早出现「规划组件长出一个只服务于侧栏的字段」。
    */
   reportRequest: { nonce: number; task: string; payload: unknown } | null;
-  // ---- 功能三：多航点模式（M7 站点自动规划） ----
+  // ---- 功能三：多航点模式（站点自动规划） ----
   siteLoading: boolean;
   siteResult: SitePlanResult | null;      // 最近一次站点规划结果（一台一份）
   siteCatalog: SiteCatalog | null;        // 站表与机型能力包（进程内取一次）
@@ -675,7 +675,7 @@ export async function runPlan(opts: { fromAI?: boolean } = {}): Promise<void> {
  * 采用功能二某个候选：把它的起飞时刻写回规划条件，切到「路径规划」并立刻重规划。
  *
  * 不在功能二里另画一条线 —— 同一个时刻、同一组起终点走同一个 planner，
- * 两条必然一致；另起一套渲染就等于再造一个会出现差异的入口（B10 的原始抱怨）。
+ * 两条必然一致；另起一套渲染就等于再造一个会出现差异的入口。
  */
 export function applyTimeWindowRoute(route: TimeWindowRoute): void {
   const [date, time] = String(route.takeoff).split('T');
@@ -699,7 +699,7 @@ watch([() => store.targetDate, () => store.simulationDate, () => store.simulatio
   store.aiMarks = null;
 });
 
-// ==================== 功能三 · 多航点模式（M7 站点自动规划） ====================
+// ==================== 功能三 · 多航点模式（站点自动规划） ====================
 
 /** 机型配色：油动暖色、纯电冷色，与风险档配色刻意不撞（数据线一律实线那条规矩同样适用） */
 export const SITE_AIRCRAFT_COLORS: Record<string, string> = {

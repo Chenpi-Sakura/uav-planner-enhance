@@ -1,4 +1,4 @@
-"""M5 联调验收脚本：按计划书 §9.2 的 3 航线 × 2 日期矩阵跑真实数据接口。
+"""联调验收脚本：按 3 航线 × 2 日期矩阵跑真实数据接口。
 
 用法（需后端已在 9090 运行）：
     cd backend
@@ -12,6 +12,11 @@ import os
 import sys
 import time
 import urllib.request
+
+# 强制 UTF-8 输出 (Windows cmd 默认 GBK, 打印中文/单位符号会 UnicodeEncodeError)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 # 默认打本机常驻实例；想在另一个端口上验新起的后端时用它覆盖，
 # 免得为了跑一次验收去改这个脚本。

@@ -1,4 +1,0 @@
-name: uav-planner-backend
-dependencies:
-  - python=3.10
-  - pip

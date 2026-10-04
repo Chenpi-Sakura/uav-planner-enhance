@@ -17,6 +17,11 @@ import sys
 import time
 import warnings
 
+# 强制 UTF-8 输出 (Windows cmd 默认 GBK, 打印 m²/s² 会 UnicodeEncodeError)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 import numpy as np
 import xarray as xr
 

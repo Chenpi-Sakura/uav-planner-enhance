@@ -346,7 +346,7 @@ class _FakeResp(list):
 
 
 class TestThinkingControl(unittest.TestCase):
-    """推理型模型（MiniMax-M3 等）的思考过程不得混进报告正文。"""
+    """推理型模型的思考过程不得混进报告正文。"""
 
     def setUp(self):
         self._thinking = settings.AI_THINKING
@@ -370,7 +370,7 @@ class TestThinkingControl(unittest.TestCase):
         self.assertEqual(body["thinking"], {"type": "adaptive"})
 
     def test_request_body_omits_thinking_when_blank(self):
-        """留空表示不发送该字段，兼容不认识它的网关（Ollama / vLLM）。"""
+        """留空表示不发送该字段，兼容不认识它的网关。"""
         settings.AI_THINKING = ""
         self.assertNotIn("thinking", assessor.build_request_body({"task": "feasibility"}))
 

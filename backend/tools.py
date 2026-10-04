@@ -470,7 +470,7 @@ SYSTEM_BOUNDARY = """【系统信息边界 —— 越界的东西一律不提、
 def openai_tools() -> List[Dict[str, Any]]:
     """转成 OpenAI 兼容的 ``tools`` 结构。
 
-    实测 MiniMax-M3 走原生 function calling：``finish_reason`` 为 ``tool_calls``、
+    实测走原生 function calling 的网关：``finish_reason`` 为 ``tool_calls``、
     ``content`` 为空串，工具调用落在 ``message.tool_calls``；流式时走
     ``delta.tool_calls`` 增量到达。也就是说**正文与工具调用由协议保证分离**，
     不再需要「看首字符是不是 ``[``」那种猜测式分流（那种写法一旦模型把 JSON 写进

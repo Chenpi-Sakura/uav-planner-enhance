@@ -14,7 +14,7 @@
 
 ## Build, Test, and Development Commands（构建、测试与开发命令）
 
-- `setup.bat`（Windows 推荐）或 `setup.sh`：检测 Python 3.10+（必要时自动下载便携版）并安装后端依赖。
+- `setup.bat`（Windows 推荐）或 `setup.sh`：检测 Python 3.12+（必要时自动下载便携版）并安装后端依赖。依赖走 `pip install -r backend/requirements.txt` 装进该解释器，**不用 conda**（仓库没有 conda 环境文件）。
 - `start.bat`：启动后端（`python -m uvicorn main:app --reload`，端口由根目录 `config.json` 决定，默认 9090）与前端（`npm run dev`，端口 5173），自动打开浏览器。
 - `start.bat public`：同上，额外做两件事——`npm run build:watch` 持续产出 dist、启动 `frp\frpc.exe` 把服务挂到公网（关闭本窗口会一并停掉隧道）。不带 `public` 时任何端口都不对外，日常开发默认走这条。
 - 手动开发：后端先 `pip install -r backend/requirements.txt`，再运行 `python main.py`（API 文档见 `/docs`，端口由 `config.json` 决定）；前端先 `npm install`，再 `npm run dev`。
@@ -24,7 +24,10 @@
 - `npm run build`：执行 `vue-tsc -b && vite build`（类型检查 + 构建），提交前端改动前必须通过。
 - `npm run build:watch`：`vite build --watch` 增量重建 `frontend/dist`，供后端托管、公网长期访问时使用。**它跳过类型检查**，不能代替 `npm run build`。
 - `npm run preview`：本地预览生产构建。
-- 公网访问：只需转发后端一个端口（`dist` 与 `/api` 同源），详见 `docs/公网访问部署.md`。
+- **调试日志只有两个合法落点**：仓库根的 `logs\`（手工排查）与 `%TEMP%\uav_*`（`start.bat` 自己的运行时产物，两者互不重叠）。**不要往仓库根、`backend\` 或源码目录丢 `.log`**——`logs/` 整棵与所有 `*.log` 虽已 gitignore，但排查完仍应手工删掉。
+  应用代码不写任何文件日志（无 `basicConfig`/`FileHandler`、无 `open(..., 'w')`），所以 `backend\` 下出现 `.log` 只可能是手工重定向留下的。
+  新增 `.bat` 时**注释一律用英文**：cmd.exe 按系统 ANSI 码页读 `.bat`，无 BOM 的 UTF-8 中文注释会被解析成命令而不是注释。
+- 公网访问：只需转发后端一个端口（`dist` 与 `/api` 同源），详见 `docs/方案设计/公网访问部署.md`。
   当前形态：`Cloudflare → OpenResty(443) → frps → 本机 9090`，**有意不加鉴权**（公开可用）。
   **禁止把 Vite dev server 暴露到公网**：dev 模式下仓库内文件可经 `/@fs/` 原文读取，且首屏是数百个未压缩模块请求。
 
@@ -33,12 +36,16 @@
 - Python 遵循 PEP 8，4 空格缩进；函数/变量用 `snake_case`，常量用 `UPPER_SNAKE_CASE`；公开函数加类型标注和 docstring；注释可用中文。
 - Vue/TypeScript：使用 Vue 3 `<script setup>` 单文件组件；组件文件 `PascalCase.vue`，工具模块 `camelCase.ts`；保持类型安全（`vue-tsc` 把关）。
 - 文件统一 UTF-8；目前未配置 linter/formatter，推荐安装 Volar 扩展（见 `frontend/.vscode/extensions.json`）。
+- **已知取舍，不要"顺手优化"**：① `backend/requirements.txt` 有意不钉版本（后端是单机部署，钉死反而会在别的机器上卡在 netcdf4/h5netcdf 这类带 C 扩展的轮子上）；② `start.bat` 有意不校验解释器版本，拿到哪个解释器就用哪个。
 - 前端请求一律走同源相对路径 `${API_BASE}/api/...`，`src/config.ts` 的 `API_BASE` 保持空串；**不要写死 `http://localhost:<port>`**（公网访问者的浏览器会去连自己的本机）。
 
 ## Testing Guidelines（测试规范）
 
-- 仓库目前无自动化测试框架与测试目录。新增后端测试时使用 pytest，放在 `backend/tests/`，命名 `test_*.py`，用 `python -m pytest` 运行。
-- 重点覆盖：A* 路径正确性（含狗腿/平局决胜）、气象阈值硬/软约束、数据缺失区处理。
+- 后端测试在 `backend/tests/`：19 个 `test_*.py` + 一个基准数据助手 `golden_plan.py`。用**标准库 `unittest`**，不是 pytest——`pytest` 既不在 `requirements.txt` 里也没装，别去找它。
+  运行：在 `backend/` 目录下执行 `python -m unittest discover -s tests -t .`（当前 316 个用例，约 6 s）。
+- 有 3 个用例默认跳过：`test_grid_cache.py::TestRealDataEquivalence` 要拿真实 NetCDF 做新旧取数路径的逐比特比对（约 20 s），需显式设 `UAV_REAL_DATA_TESTS=1` 才跑。**动 `data_loader` 的取数/缓存路径时必须带这个环境变量复跑一次**——它守的就是「优化不改结论」这条底线。
+- 前端只有一个测试文件 `frontend/tests/simClock.test.mjs`（推演时钟的跨天、折线与游标取数），用 `node:test` + `node:assert/strict`，需 Node ≥ 22.18（它直跑 `.ts`）。运行：`cd frontend && npm test`（等价于 `node tests/simClock.test.mjs`）。
+- 重点覆盖：A* 路径正确性（栅格阶梯拉直与平局决胜）、气象阈值硬/软约束、NaN/数据缺失区处理。
 - 前端改动需通过 `npm run build`，并在本地地图界面手工验证。
 - 改动涉及同源/托管链路时，补一步：`npm run build` 后请求 `http://127.0.0.1:<后端端口>/` 应返回页面，`/api/meta/cities` 仍返回 JSON（根路径挂载会兜走所有请求，注册顺序错了就找不到）。
 

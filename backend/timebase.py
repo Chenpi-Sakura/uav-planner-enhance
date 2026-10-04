@@ -1,8 +1,7 @@
 """统一时间基准换算（UI 北京时间 <-> 数据标签时间）。
 
-背景（见 `docs/决策平台M2-时间窗口实现方案.md` §0.1）：
-  NetCDF 时间标签实为 UTC，而前端输入与展示均为北京时间，
-  两者相差 `settings.DATA_TZ_OFFSET_HOURS` 小时。
+背景：NetCDF 时间标签实为 UTC，而前端输入与展示均为北京时间，
+两者相差 `settings.DATA_TZ_OFFSET_HOURS` 小时。
 
 约定：
   - 后端**对外契约**（API 入参 / 响应 / UI 文案）统一使用北京时间；

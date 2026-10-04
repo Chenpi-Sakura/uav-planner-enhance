@@ -1,7 +1,7 @@
 # AI 辅助评估接入说明（功能三）
 
 > 版本：v1.0（2026-09-19）
-> 上游文档：`docs/决策平台实现计划.md` §6
+> 上游文档：`docs/方案设计/决策平台-实现计划.md` §6
 > 相关代码：`backend/assessor.py`、`POST /api/assess/report`、`frontend/src/components/ReportCard.vue`
 
 ---

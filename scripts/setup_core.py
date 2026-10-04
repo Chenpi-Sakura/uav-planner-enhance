@@ -18,8 +18,8 @@ import subprocess
 from pathlib import Path
 
 # ---- 配置 ----
-PYTHON_MIN = (3, 10)
-EMBED_PYTHON_VERSION = "3.10.11"
+PYTHON_MIN = (3, 12)
+EMBED_PYTHON_VERSION = "3.12.10"
 EMBED_PYTHON_URL = (
     f"https://www.python.org/ftp/python/{EMBED_PYTHON_VERSION}/"
     f"python-{EMBED_PYTHON_VERSION}-embed-amd64.zip"
@@ -222,7 +222,8 @@ def main():
     cprint("3/3", "完成")
     print()
     cprint("完成", "环境已就绪", "green")
-    print(f"  下一步: 运行 .\\start.bat (Windows) 或 ./start.sh (Linux/Mac) 启动服务")
+    print("  下一步 (Windows): 运行 .\\start.bat 启动后端与前端")
+    print("  下一步 (Linux/Mac): 后端 python backend/main.py, 前端 cd frontend && npm run dev")
     print()
 
 

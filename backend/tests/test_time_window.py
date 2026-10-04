@@ -493,7 +493,7 @@ class TestWarningsGraceful(unittest.TestCase):
 
 
 class TestTopKRoutes(TWStubbed):
-    """B10：粗筛之后，Top-K 候选各按【自身起飞时刻】规划真实航线，再按真实航线重排。
+    """粗筛之后，Top-K 候选各按【自身起飞时刻】规划真实航线，再按真实航线重排。
 
     合成场景给出三个互不相邻的安全窗口（北京时 00:00 / 02:00 / 04:00），
     于是「粗排冠军」与「细排冠军」可以被人为拧反 —— 这正是排序口径要钉的地方。
@@ -543,7 +543,7 @@ class TestTopKRoutes(TWStubbed):
     def test_fine_rank_prefers_lower_risk_over_shorter_distance(self):
         """粗排冠军规划出来是中风险 200 km，次候选是安全 250 km —— 必须选后者。
 
-        风险与里程不能混成一个加权键（backlog B1 留档第 2 条）。
+        风险与里程不能混成一个加权键。
         """
         res = self._assess(tke_values=[MODERATE_TKE, SAFE_TKE, MODERATE_TKE],
                            distances=[200.0, 250.0, 300.0])
@@ -558,7 +558,7 @@ class TestTopKRoutes(TWStubbed):
     def test_one_big_window_still_fills_k_candidates(self):
         """全天安全会合并成一个窗口，Top-K 只剩 1 条 —— 必须在窗口内补点凑满。
 
-        否则 B10 的原始抱怨（「我要 14:00 起飞的那条线」）在最常见的场景里没被解决。
+        否则「我要 14:00 起飞的那条线」在最常见的场景里没被解决。
         """
         self._install([SAFE_TKE] * 24)
         res = tw.assess_time_window(self._Req())

@@ -1,6 +1,10 @@
 # Logs
-logs
+# 统一落点是仓库根的 logs/（start.bat 自己走 %TEMP%，两处互不重叠）。
+# 这里忽略整棵 logs/，手工排查的产物一律不要入库。
+logs/
 *.log
+# 手工起进程留下的 PID 文件
+*.pid
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

@@ -1,4 +1,4 @@
-"""A* 湍流场取数路径的契约（B10 Step A/B）。
+"""A* 湍流场取数路径的契约（两步走：粗筛 + Top-K 精排）。
 
 `get_meteorology_grid` 从「dask label-sel」换成「read_slab 的 isel 路径 + 场级缓存」，
 这是纯性能改动，结论必须逐比特不变；同时越界语义必须保持「空数组」而不是

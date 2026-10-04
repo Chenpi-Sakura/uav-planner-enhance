@@ -32,22 +32,22 @@ if not defined PY_EXE (
 
 REM 3. No Python found: offer auto-download or manual install
 if not defined PY_EXE (
-    echo [!] No Python 3.10+ found on this system.
+    echo [!] No Python 3.12+ found on this system.
     echo.
     echo Choose an option:
-    echo   [1] Auto-download Python 3.10 embeddable ^(~10 MB^)
+    echo   [1] Auto-download Python 3.12 embeddable ^(~10 MB^)
     echo   [2] I'll install Python manually, then re-run this script
     echo.
     set /p CHOICE="Enter 1 or 2: "
     if "!CHOICE!"=="1" (
         echo.
-        echo Downloading Python 3.10 embeddable...
+        echo Downloading Python 3.12 embeddable...
         echo.
 
         if exist "%SystemRoot%\System32\curl.exe" (
-            curl -L -o "%TEMP%\python-embed.zip" "https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip"
+            curl -L -o "%TEMP%\python-embed.zip" "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip"
         ) else (
-            powershell -Command "& {[Net.ServicePointManager]::SecurityProtocol='Tls12'; Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip' -OutFile '%TEMP%\python-embed.zip'}"
+            powershell -Command "& {[Net.ServicePointManager]::SecurityProtocol='Tls12'; Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip' -OutFile '%TEMP%\python-embed.zip'}"
         )
         if errorlevel 1 (
             echo [X] Download failed. Check your network or choose option 2.
@@ -77,7 +77,7 @@ if not defined PY_EXE (
         set "PY_EXE=backend\.python\portable\python.exe"
     ) else (
         echo.
-        echo Please install Python 3.10+ from https://www.python.org/downloads/
+        echo Please install Python 3.12+ from https://www.python.org/downloads/
         echo ^(Make sure to check "Add Python to PATH" during installation^)
         echo.
         pause
