@@ -179,6 +179,7 @@ import type { SuggestChip } from '../store';
 import { invokeTool, buildAgentState, setAttachedImages } from '../agentTools';
 import { API_BASE } from '../config';
 import { renderMarkdown } from '../utils/markdown';
+import { mergeChips, pickKeep } from '../utils/chips';
 
 interface TraceStep {
   tool: string;
@@ -236,6 +237,16 @@ const logEl = ref<HTMLElement | null>(null);
 const chips = ref<SuggestChip[]>(STARTER_CHIPS);
 /** 胶囊正在后台生成：期间显示占位且不可点，但**不锁输入框** */
 const chipsPending = ref(false);
+/**
+ * 本轮要**保留**在屏幕上的旧胶囊。
+ *
+ * 用户一次只点一条：点掉的那条已被消费，另外两条问的是别的角度、依然成立，
+ * 所以留着不动，只补一条新的填坑。用户自己打字时上下文变了（可能已经覆盖了
+ * 留着那两条的角度），整排重生成，这时它是空的。
+ */
+let keepChips: SuggestChip[] = [];
+/** 新补出来的那条该插回第几位（用户点的是第几条）。-1 = 不指定，追加到末尾。 */
+let keepAt = -1;
 /** 胶囊请求的序号：只有最新一次的结果算数，早到的旧结果直接丢弃 */
 let suggestSeq = 0;
 const expanded = ref('');
@@ -555,9 +566,14 @@ const send = async (raw: string) => {
     pendingImages.value = [];
 
     let toolResults: Record<string, any>[] = [];
+    // 兜底：站表正常在 main.ts 启动时就取到了，这里只在「启动那次失败」时
+    // 才真的产生等待。仍然要留着 —— 工具分不清「没加载」和「没有」，
+    // 一次空表会让它回「站表里没有『曲松县』」，而曲松县确实在 220 条站表里
+    // （CT-84）。用户会据此认为当地没有备降点，照着改任务区域就改错方向。
     // 前端与后端各有一道轮数闸（这里 6、agent.py 里 MAX_STEPS=5）。两边都留一道是
     // 有意的：任何一边单独失效都还收得住，不至于让模型无限兜圈。
     for (let round = 0; round < 6; round++) {
+      if (round === 0) await fetchSiteCatalog();
       const step = await callAgent(history, text, toolResults, round, reply, sent);
       if (step.error) {
         reply.error = step.error;
@@ -650,16 +666,28 @@ const send = async (raw: string) => {
   // 胶囊**不等**：在后台自己跑，跑完再替换。期间显示为「生成中」且不可点。
   // 用 seq 挡住竞态：用户在这两秒里又发了一条的话，上一轮的胶囊回来就是过期的，
   // 直接丢弃，不能覆盖新一轮的建议。
+  //
+  // count / keep 由调用方按「这轮是点胶囊还是自己打字」定：
+  //   点胶囊 -> 只补被吃掉的那一条（keep 里的两条原样留着）
+  //   自己打字 -> 上下文变了，3 条整排重生成（keep 为空）
   const seq = ++suggestSeq;
   chipsPending.value = true;
-  const lastAssistant = turns.value[turns.value.length - 1]?.text ?? '';
-  const recentUser = turns.value.filter(t => t.role === 'user' && t.text).map(t => t.text).slice(-3);
+  // keep / at 必须在**发请求之前**取成本轮快照。下面紧接着就把模块级变量清空了，
+  // 而合并发生在 .then 回调里 —— 回调再读 keepChips 读到的只会是那个空数组，
+  // 留着的那两条就凭空没了，屏幕上只剩新补的那 1 条。
+  const keep = keepChips;
+  const at = keepAt;
   void suggestChips({
     task: store.timeWindow && store.sidebarTab === 'timeWindow' ? 'time_window' : 'feasibility',
     payload: (store.timeWindow && store.sidebarTab === 'timeWindow'
       ? store.timeWindow : store.feasibility) as any,
-    last_assistant: lastAssistant,
-    recent: recentUser,
+    // 完整对话：判断「哪些角度还没被问到」只有问答往复本身够用。
+    // 不传工具轨迹与图片 —— 那些是「我干了什么」，与「用户接下来想问什么」无关。
+    history: turns.value
+      .filter(t => t.text)
+      .map(t => ({ role: t.role, text: t.text })),
+    keep,
+    count: keep.length ? 1 : 3,
     state: {
       sidebar_tab: store.sidebarTab,
       has_result: !!(store.feasibility || store.timeWindow || store.siteResult),
@@ -668,13 +696,19 @@ const send = async (raw: string) => {
     },
   }).then(got => {
     if (seq !== suggestSeq) return;          // 已有更新的一轮，丢弃这份过期结果
-    chips.value = got.chips?.length ? got.chips : STARTER_CHIPS;
+    // 补出来的一条插回用户点的那个位置。一条都没补出来时优先留着那两条原样，
+    // 而不是退回开场胶囊 —— 开场那三条里有一条正是用户刚点过的，再端上来
+    // 等于让他点一下原地打转。
+    const merged = mergeChips(keep, at, got.chips);
+    chips.value = merged.length ? merged : (keep.length ? keep : STARTER_CHIPS);
     chipsPending.value = false;
   }).catch(() => {
     if (seq !== suggestSeq) return;
-    chips.value = STARTER_CHIPS;
+    chips.value = keep.length ? keep : STARTER_CHIPS;
     chipsPending.value = false;
   });
+  keepChips = [];
+  keepAt = -1;
 };
 
 /**
@@ -742,9 +776,23 @@ const callAgent = async (
   return out;
 };
 
-/** 点胶囊 = 填入完整问句并直接发出，保持「对话即操作」的连贯感 */
+/**
+ * 点胶囊 = 填入完整问句并直接发出，保持「对话即操作」的连贯感。
+ *
+ * 被点的这条算「消费掉了」，另外两条原样留着：用户一次只点一条，
+ * 留着那两条问的是别的角度、依然成立，没必要连坐重生成。
+ * 新生成的那一条会接在它们后面，凑回三条。
+ */
 const useChip = (chip: SuggestChip) => {
   if (busy.value) return;
+  // 留哪些、新补的插回第几位：交给纯算子算（见 utils/chips.ts），
+  // 位置是相对**留着的那几条**算的 —— 点掉一条之后后面会往前挪，
+  // 直接拿原列表的下标会插错一格。
+  const { keep, at } = pickKeep(chips.value, chip);
+  keepChips = keep;
+  // 补出来的那条插回用户点的那个位置，而不是甩到末尾：位置本身就是信息，
+  // 三条胶囊的排序本来就表达了推荐优先级，挪位等于悄悄改了推荐。
+  keepAt = at;
   void send(chip.prompt);
 };
 
@@ -826,6 +874,8 @@ const reset = () => {
   turns.value = [];
   chips.value = STARTER_CHIPS;
   chipsPending.value = false;
+  keepChips = [];                // 不清会漏进下一轮：清空对话后残留的旧胶囊不该被保留
+  keepAt = -1;
   suggestSeq++;              // 作废还在路上的那次请求，否则它回来会把占位换回旧胶囊
   expanded.value = '';
   partOpen.value = {};
@@ -842,8 +892,9 @@ watch(
   }
 );
 
-// 意图识别要用站表把「曲松县」这类地名解成坐标，站表没取过就先取一次。
-// 重复调用没有代价（store 里已按 null 判空）。
+// 站表在 main.ts 里就随应用启动发出去了，正常到这里早已到位。
+// 这里保留只是**启动期那次失败后的重试入口**（后端当时还没起来），
+// 重复调用没有代价：store 里按 null 判空，store.ts 里共用同一个 in-flight 请求。
 onMounted(() => {
   if (!store.siteCatalog) void fetchSiteCatalog();
 });

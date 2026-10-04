@@ -120,6 +120,22 @@ export function buildAgentState(): Record<string, unknown> {
   };
 }
 
+/**
+ * 地名解析失败时该怎么说。**「站表没加载成功」和「站表里没这个地点」必须分开。**
+ *
+ * 合在一起会制造一句事实错误的断言：站表没到时 resolvePlace 必然返回 null，
+ * 于是工具回「站表里没有『曲松县』」——而曲松县**确实在**站表里（CT-84）。
+ * 用户看到这句会以为那片没有备降点，照着改任务区域就改错了方向。
+ * 工具宁可说「我不知道」，也不能编一个能推翻用户决定的结论。
+ */
+function placeMiss(name: string): string {
+  if (!store.siteCatalog) {
+    return '站表还没加载成功（网络或后端未就绪），**无法判断这个地名是否存在**；'
+      + '不要据此断定「这里没有」，也不要改起降点或任务区域，先让用户重试一次';
+  }
+  return `站表里没有「${name}」`;
+}
+
 /** 站表本地检索。站表已经在 store 里（220 条），不必再发一次请求。 */
 type SiteHit = { site: SiteCatalogSite; km: number | null };
 
@@ -176,7 +192,7 @@ export async function invokeTool(tool: string, args: Record<string, any> = {}): 
         if (p) { lat = p.lat; lng = p.lng; }
       }
       if (lat == null || lng == null) {
-        return FAIL(tool, '没能定位到该地点', name ? `站表里没有「${name}」` : '缺少坐标或地名');
+        return FAIL(tool, '没能定位到该地点', name ? placeMiss(name) : '缺少坐标或地名');
       }
       // 给了 km 就折算成缩放层级：km 是用户脑子里的距离，zoom 不是
       const zoom = args.zoom ?? (args.km ? Math.max(5, Math.min(13, Math.round(12 - Math.log2(args.km)))) : 9);
@@ -256,7 +272,7 @@ export async function invokeTool(tool: string, args: Record<string, any> = {}): 
     case 'add_waypoint': {
       const name = (args.name as string) || '';
       const p = resolvePlace(name);
-      if (!p) return FAIL(tool, '没能把这个地点加为途经点', name ? `站表里没有「${name}」` : '没给地名');
+      if (!p) return FAIL(tool, '没能把这个地点加为途经点', name ? placeMiss(name) : '没给地名');
       const idx = args.index as number | undefined;
       const wp = { lat: String(p.lat), lng: String(p.lng), alt: '' };
       if (idx && idx >= 1 && idx <= store.waypoints.length) store.waypoints.splice(idx - 1, 0, wp);
@@ -282,7 +298,7 @@ export async function invokeTool(tool: string, args: Record<string, any> = {}): 
         return FAIL(tool, '改不了这个途经点', `当前只有 ${store.waypoints.length} 个途经点`);
       }
       const p = resolvePlace(name);
-      if (!p) return FAIL(tool, '没能改成这个地点', name ? `站表里没有「${name}」` : '没给地名');
+      if (!p) return FAIL(tool, '没能改成这个地点', name ? placeMiss(name) : '没给地名');
       store.waypoints[idx - 1] = { lat: String(p.lat), lng: String(p.lng), alt: '' };
       return OK(tool, `第 ${idx} 个途经点已改为${name}`, undefined, { index: idx, name });
     }
@@ -293,7 +309,7 @@ export async function invokeTool(tool: string, args: Record<string, any> = {}): 
       const p = (args.lat != null && args.lon != null)
         ? { lat: args.lat as number, lng: args.lon as number }
         : resolvePlace(name);
-      if (!p) return FAIL(tool, '没能设置这个端点', name ? `站表里没有「${name}」` : '缺少坐标或地名');
+      if (!p) return FAIL(tool, '没能设置这个端点', name ? placeMiss(name) : '缺少坐标或地名');
       if (idx === 0) { store.start.lat = String(p.lat); store.start.lng = String(p.lng); }
       else { store.end.lat = String(p.lat); store.end.lng = String(p.lng); }
       const which = idx === 0 ? '起点' : '终点';
@@ -480,6 +496,17 @@ export async function invokeTool(tool: string, args: Record<string, any> = {}): 
         .map(n => ({ name: n, ...(resolvePlace(n) ?? {}) }))
         .filter(p => p.lat != null && p.lng != null) as { name: string; lat: number; lng: number }[];
       if (!pts.length) {
+        // 用户点名了地点却一个都没解析出来时，**不能悄悄换成起点**。
+        // 问「曲松县现在湍流多少」、回一句拉萨的实况，数字是真的、地点是错的 ——
+        // 比明说「查不了」危险得多，因为用户无从察觉被换了地方。
+        if (names.length) {
+          const bad = names.join('、');
+          return FAIL(tool, '取不到实况',
+            store.siteCatalog
+              ? `没能把「${bad}」解析成坐标，本次没有查询；不要用别处的实况代替`
+              : '站表还没加载成功，本次**没有真正查询**；不要用别处的实况代替，'
+                + '也不要改起降点，让用户重试一次');
+        }
         const e = store.start.lat;
         if (e == null) return FAIL(tool, '取不到实况', '没有可查询的地点');
         pts.push({ name: '起点', lat: Number(store.start.lat), lng: Number(store.start.lng) });
@@ -507,8 +534,18 @@ export async function invokeTool(tool: string, args: Record<string, any> = {}): 
         ? `${originName} 周边 ${wantKm} km`
         : (args.query ? `站表中匹配「${args.query}」` : '全部可用站点');
       if (!hits.length) {
+        // 站表空着的时候，「0 条」不是「附近没有备降点」，是**根本没查**。
+        // 这两句意思相反：前者让用户去别处找，后者会让用户放弃一个其实有站的地方。
+        if (!store.siteCatalog) {
+          return FAIL(tool, `${scope}内没有找到可落地点`,
+            '站表还没加载成功，本次**没有真正检索过**；不要据此说「附近没有备降点」，'
+            + '也不要改任务区域，让用户重试一次',
+            { scope, searched_km: wantKm ?? null, origin: originName ?? null,
+              found: 0, sites: [], catalog_loaded: false });
+        }
         return FAIL(tool, `${scope}内没有找到可落地点`, '如实告知用户「没有」，不要编造',
-          { scope, searched_km: wantKm ?? null, origin: originName ?? null, found: 0, sites: [] });
+          { scope, searched_km: wantKm ?? null, origin: originName ?? null,
+            found: 0, sites: [], catalog_loaded: true });
       }
       return OK(tool, `${scope}内找到 ${hits.length} 个可落地点`,
         hits.slice(0, 5).map(s => (s as any).__km != null ? `${s.name}（${(s as any).__km} km）` : s.name).join('、'),
@@ -545,7 +582,7 @@ export async function invokeTool(tool: string, args: Record<string, any> = {}): 
       const where = (args.name as string) || '';
       const origin = resolvePlace(where);
       if (!origin) {
-        return FAIL(tool, `没能定位到「${where}」`, '站表里没有这个地名，问清或换个说法');
+        return FAIL(tool, `没能定位到「${where}」`, placeMiss(where));
       }
       const layer = (args.layer as string) || 'tke';
       const km = Number(args.km) || 40;

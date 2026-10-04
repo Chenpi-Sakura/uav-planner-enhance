@@ -467,14 +467,17 @@ async def region_preview(request: RegionPreviewRequest):
 async def suggest_chips_endpoint(request: SuggestRequest):
     """后续建议胶囊：站在用户视角预测下一步最可能问什么。
 
-    只吃前端送来的结构化结果（与对话同一防幻觉口径），不额外取数。
+    吃前端送来的**完整对话**与当前结果（与主对话同一防幻觉口径，不额外取数）。
+    ``count`` 区分两种情形：用户自己打字 -> 3（整排重生成）；
+    用户点了某条胶囊 -> 1（只补被吃掉的那条，``keep`` 里的原样留着）。
     端点公网无鉴权，条数与长度在 ``suggest`` 模块内封顶。
     """
     return SuggestResponse(**suggest.suggest_chips(
         task=request.task,
         payload=request.payload,
-        last=request.last_assistant,
-        recent=request.recent,
+        history=request.history,
+        keep=request.keep,
+        count=request.count,
         state=request.state,
     ))
 

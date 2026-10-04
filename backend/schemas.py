@@ -572,6 +572,15 @@ class SuggestRequest(BaseModel):
     last_assistant: str = ''
     recent: List[str] = []
     state: Dict[str, Any] = {}
+    # 完整对话正文（用户与助手交替），判断「哪些角度还没被问到」的唯一依据。
+    # 刻意**不含**工具轨迹与图片附件：那些是给模型看「我干了什么」的，
+    # 而胶囊要预判的是「用户接下来想问什么」，两者无关，带进去只是白烧 token。
+    history: List[Dict[str, str]] = []
+    # 还要**保留**在屏幕上的旧胶囊（用户点了其中一条后，另外两条原样留着）。
+    # 它们也要进「别重复」清单 —— 否则补出来的新胶囊很可能和留着的那两条撞车。
+    keep: List[Dict[str, str]] = []
+    # 本次要生成几条。点胶囊时只补被吃掉的那一条（1），打字时全量重生成（3）。
+    count: int = 3
 
 
 class SuggestResponse(BaseModel):

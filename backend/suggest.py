@@ -36,7 +36,10 @@ _SUGGEST_SYSTEM = (
     "系统没有的能力一个字都不要提 —— 胶囊是用户点一下就会问出口的问题，"
     "凭空造一个「电池够不够飞完」「能耗剖面」之类，"
     "等于主动把用户领到一个回答不了的地方。\n"
-    "8. 想不出第三条怎么办：**宁可给三条角度不同但都在能力内的，也不要凑一条能力外的**。"
+    "8. 想不出第三条怎么办：**宁可给三条角度不同但都在能力内的，也不要凑一条能力外的**。\n"
+    "9. **绝对不要重复用户刚刚问过的问题**，也不要三条都围绕同一个角度"
+    "（例：别三条都在问湍流峰值）。用户刚问过的会列在下面，避开它们，"
+    "从**用户还没问过的角度**里挑。\n"
 )
 
 _STATE_HINT = {
@@ -123,10 +126,43 @@ def _out_of_scope(prompt: str) -> bool:
     return any(w in low for w in _OUT_OF_SCOPE)
 
 
-def _llm_chips(task: str, state: Dict[str, Any], last: str,
-               recent: List[str], payload: Optional[Dict[str, Any]]) -> Optional[List[Dict[str, str]]]:
+def _fmt_history(history: List[Dict[str, str]], limit: int = 12,
+                 cap: int = 3000) -> str:
+    """把完整对话压成一段纯文本，按时间正序。
+
+    刻意只取文字：工具轨迹与图片附件不传。轨迹是给模型看「我干了什么」的，
+    而胶囊要预判的是「用户接下来想问什么」—— 判断「哪些角度还没被问到」
+    只需要问答往复本身，带上轨迹只是白烧几千 token。
+    """
+    rows: List[str] = []
+    used = 0
+    # 从最新往回收，装不下就停 —— 最近几轮才是判断「还剩什么角度」的依据。
+    for turn in reversed(history or []):
+        role = "用户" if turn.get("role") == "user" else "助手"
+        text = str(turn.get("text") or "").strip()
+        if not text:
+            continue
+        room = cap - used
+        if room <= 80:
+            break
+        if len(text) > room:
+            text = text[-room:]        # 掐头留尾：结论一般都在末尾
+        rows.append(f"{role}：{text}")
+        used += len(text) + 1
+        if len(rows) >= limit:
+            break
+    return "\n".join(reversed(rows)) or "（无）"
+
+
+def _llm_chips(task: str, state: Dict[str, Any], history: List[Dict[str, str]],
+               keep: List[Dict[str, str]], count: int,
+               payload: Optional[Dict[str, Any]]) -> Optional[List[Dict[str, str]]]:
     if not llm_available():
         return None
+
+    # 「用户问过的」和「屏幕上还留着的」本质是同一类约束 —— 别再端一个一样的上来。
+    asked = [str(t.get("text") or "") for t in (history or []) if t.get("role") == "user"]
+    avoid = asked + [str(c.get("prompt") or "") for c in (keep or []) if c.get("prompt")]
 
     state_line = _STATE_HINT.get(task, task)
     if state.get("sidebar_tab") and state["sidebar_tab"] != task:
@@ -138,23 +174,34 @@ def _llm_chips(task: str, state: Dict[str, Any], last: str,
     if state.get("level"):
         state_line += f"；风险等级：{state['level']}"
 
+    if count < MAX_CHIPS:
+        lead = (f"屏幕上还留着 {len(keep)} 条胶囊，用户刚点掉了其中一条。"
+                f"这次**只补 {count} 条**，且必须与留着的那几条角度不同。\n")
+    else:
+        lead = ""
+
     user = (
         _SUGGEST_SYSTEM
         + f"\n\n{tools.SYSTEM_BOUNDARY}\n"
+        + lead
         + f"【对话对象】{task}\n"
         + f"【当前状态】{state_line}\n"
-        + f"【上一轮助手回复】\n{(last or '（无）')[:600]}\n"
-        + f"【用户最近问过】\n{'；'.join(recent[-3:]) or '（无）'}\n"
+        + f"【完整对话记录（判断「哪些角度还没被问到」的唯一依据）】\n"
+        + _fmt_history(history) + "\n"
+        + f"【绝对不要再生成的：用户问过的 + 屏幕上还留着的胶囊】\n"
+        + ("\n".join(f"- {a}" for a in avoid[-8:]) or "（无）") + "\n"
         + "【可供提问的数据（只有这些是真的）】\n"
         + json.dumps(payload, ensure_ascii=False)[:1500]
-        + "\n\n请输出 JSON："
+        + f"\n\n请输出 JSON（恰好 {count} 条）："
     )
 
     req = {
         "model": settings.AI_MODEL,
         "messages": [{"role": "user", "content": user}],
         "temperature": 0.7,   # 这里要多样性，0.3 会每次都给出同一批
-        "max_tokens": 400,
+        # 补一条时也给 3 条的输出预算：去重会挡掉与「问过的/留着的」撞车的，
+        # 让模型多想两条，才凑得出要的那 count 条。
+        "max_tokens": 400 if count >= MAX_CHIPS else 220,
     }
     thinking = (settings.AI_THINKING or "").strip().lower()
     if thinking in ("disabled", "adaptive"):
@@ -184,21 +231,76 @@ def _llm_chips(task: str, state: Dict[str, Any], last: str,
         raw = json.loads(content[s:e + 1])
     except Exception:
         return None
-    return _clean(raw.get("chips") if isinstance(raw, dict) else None)
+    # 一次给足 MAX_CHIPS：去重会挡掉一部分，让模型多想几条才凑得出要的 count 条。
+    return _clean(raw.get("chips") if isinstance(raw, dict) else None)[:MAX_CHIPS]
 
 
-def suggest_chips(task: str, payload: Optional[Dict[str, Any]], last: str,
-                  recent: List[str], state: Dict[str, Any]) -> Dict[str, Any]:
-    """入口。返回 ``{chips, source}``；``source="rule"`` 表示模型没顶上。"""
+def _norm(s: str) -> str:
+    """归一化到可比形式：只留实义字符，丢掉标点、空格与全半角差异。
+
+    比对「是不是同一个问题」必须先归一：模型这次写「哪一段的颠簸最厉害?」、
+    下次写「哪一段的颠簸最厉害？」，用户那边发过来的又是另一种标点，
+    原始字符串永远不相等，去重就成了摆设。
+    """
+    return "".join(ch for ch in (s or "").lower() if ch.isalnum())
+
+
+def _dedup(chips: List[Dict[str, str]], avoid: List[str]) -> List[Dict[str, str]]:
+    """去掉重复的胶囊，以及**已经被问过 / 还亮在屏幕上**的同一个问题。
+
+    后者是必须的：避让清单已经传进提示词了，但那只是「请模型避开」的请求，
+    不是保证。实测同一段对话里连续四次生成，第一条胶囊全是「哪段最颠」类，
+    其中一次与用户刚发出的问句一字不差 —— 用户点它等于把自己的话再问一遍。
+
+    判定用归一化后的**包含**关系：短句被长句包住时也算重复。
+    """
+    seen: List[str] = []
+    out: List[Dict[str, str]] = []
+    for c in chips:
+        p = _norm(c["prompt"])
+        if not p:
+            continue
+        # 与「问过的 + 还留着的」比对：命中就丢弃这一条。
+        # 后者不能省 —— 补出来的新胶囊若和留着的那两条撞车，屏幕上就并排
+        # 摆着两个几乎一样的胶囊，等于白占一个位置。
+        if any(p in _norm(a) or _norm(a) in p for a in avoid if a):
+            continue
+        # 与本批次已保留的比对：模型偶尔会把同一个问题写两遍
+        if any(p in s or s in p for s in seen):
+            continue
+        seen.append(p)
+        out.append(c)
+    return out
+
+
+def suggest_chips(task: str, payload: Optional[Dict[str, Any]],
+                  history: List[Dict[str, str]], keep: List[Dict[str, str]],
+                  count: int, state: Dict[str, Any]) -> Dict[str, Any]:
+    """入口。返回 ``{chips, source}``；``source="rule"`` 表示模型没顶上。
+
+    ``count`` = 本次要**新生成**几条：
+      - 用户自己打字 → 3（上下文变了，整排重生成）
+      - 用户点了某条胶囊 → 1（只补被吃掉的那一条，另外两条原样留着）
+    ``keep`` 是要保留在屏幕上的旧胶囊，它们会进避让清单。
+    """
+    count = max(1, min(int(count or MAX_CHIPS), MAX_CHIPS))
     chips: List[Dict[str, str]] = []
     source = "rule"
 
+    asked = [str(t.get("text") or "") for t in (history or []) if t.get("role") == "user"]
+    avoid = asked + [str(c.get("prompt") or "") for c in (keep or []) if c.get("prompt")]
+
     if settings.AI_ENABLED:
-        got = _llm_chips(task, state, last, recent, payload)
+        got = _llm_chips(task, state, history, keep, count, payload)
         if got:
             chips, source = got, "llm"
 
     if not chips:
         chips = _rule_chips(task, state)
-    # 兜底也凑不满 3 条时，宁可少给也不要拿空胶囊糊弄用户
-    return {"chips": chips[:MAX_CHIPS], "source": source}
+
+    # 去重放在最后：LLM 与规则兜底两条路都要过，否则规则句式里那些固定项
+    # （「哪一段最危险」）照样会在用户刚问过时原样弹回来。
+    chips = _dedup(chips, avoid)[:count]
+
+    # 兜底也凑不满时，宁可少给也不要拿空胶囊糊弄用户
+    return {"chips": chips, "source": source}

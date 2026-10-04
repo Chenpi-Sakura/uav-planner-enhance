@@ -717,15 +717,36 @@ export const SITE_REASON_TEXT: Record<string, string> = {
   iteration_limit: '搜索未收敛，结论尚未确定',
 };
 
-/** 站表与机型能力包：进程内取一次（站表是随仓库版本化的静态数据，不会自己变） */
-export async function fetchSiteCatalog(): Promise<void> {
-  try {
-    const response = await fetch(`${API_BASE}/api/meta/sites`);
-    if (!response.ok) return;
-    store.siteCatalog = await response.json();
-  } catch (error) {
-    console.error('站点表请求失败:', error);
-  }
+/**
+ * 站表与机型能力包：进程内取一次（站表是随仓库版本化的静态数据，不会自己变）。
+ *
+ * 这次请求是**Agent 能不能认出地名**的唯一依据，所以它失败时不能只是
+ * console.error 一下就翻篇 —— 那会让 resolvePlace 把「还没拿到站表」
+ * 判成「站表里没这个地点」，于是工具回一句**事实错误的**「站表里没有曲松县」，
+ * 用户照着改任务就改错了。返回布尔值就是为了让调用方能把这两种情况分开说。
+ *
+ * 并发调用共享同一个 in-flight promise：侧栏与多航点面板都会在 onMounted 里
+ * 各触发一次，没有去重就是两次并发请求。
+ */
+let _catalogInFlight: Promise<boolean> | null = null;
+
+export function fetchSiteCatalog(): Promise<boolean> {
+  if (store.siteCatalog) return Promise.resolve(true);
+  if (_catalogInFlight) return _catalogInFlight;
+  _catalogInFlight = (async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/meta/sites`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      store.siteCatalog = await response.json();
+      return true;
+    } catch (error) {
+      console.error('站点表请求失败:', error);
+      return false;
+    } finally {
+      _catalogInFlight = null;
+    }
+  })();
+  return _catalogInFlight;
 }
 
 /**
@@ -980,12 +1001,20 @@ export async function queryWeather(
   return await response.json();
 }
 
-/** 后续建议胶囊：站在用户视角预测下一步 */
+/**
+ * 后续建议胶囊：站在用户视角预测下一步。
+ *
+ * `history` 传**完整对话**（用户+助手文字，不含工具轨迹与图片）——
+ * 判断「哪些角度还没被问到」只有它够用。
+ * `keep` 是用户点胶囊后**原样留在屏幕上**的那几条，新生成的必须与它们不同。
+ * `count` = 1 表示只补被点掉的那一条，= 3 表示整排重生成（用户自己打字时）。
+ */
 export async function suggestChips(body: {
   task: string;
   payload: Record<string, any> | null;
-  last_assistant: string;
-  recent: string[];
+  history: { role: 'user' | 'assistant'; text: string }[];
+  keep: { label: string; prompt: string }[];
+  count: number;
   state: Record<string, any>;
 }): Promise<{ chips: SuggestChip[]; source: 'llm' | 'rule' }> {
   const response = await fetch(`${API_BASE}/api/assess/suggest`, {

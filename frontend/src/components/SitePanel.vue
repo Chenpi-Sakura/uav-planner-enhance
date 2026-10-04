@@ -173,6 +173,7 @@ const planFrom = async (o: SiteOption) => {
   await runPlan();
 };
 
+// 站表在 main.ts 里就随应用启动发出去了；这里是启动期那次失败后的重试入口。
 onMounted(() => {
   if (!store.siteCatalog) void fetchSiteCatalog();
 });

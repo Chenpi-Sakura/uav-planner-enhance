@@ -42,9 +42,9 @@
 ## Testing Guidelines（测试规范）
 
 - 后端测试在 `backend/tests/`：19 个 `test_*.py` + 一个基准数据助手 `golden_plan.py`。用**标准库 `unittest`**，不是 pytest——`pytest` 既不在 `requirements.txt` 里也没装，别去找它。
-  运行：在 `backend/` 目录下执行 `python -m unittest discover -s tests -t .`（当前 316 个用例，约 6 s）。
+  运行：在 `backend/` 目录下执行 `python -m unittest discover -s tests -t .`（当前 356 个用例，约 5 s）。
 - 有 3 个用例默认跳过：`test_grid_cache.py::TestRealDataEquivalence` 要拿真实 NetCDF 做新旧取数路径的逐比特比对（约 20 s），需显式设 `UAV_REAL_DATA_TESTS=1` 才跑。**动 `data_loader` 的取数/缓存路径时必须带这个环境变量复跑一次**——它守的就是「优化不改结论」这条底线。
-- 前端只有一个测试文件 `frontend/tests/simClock.test.mjs`（推演时钟的跨天、折线与游标取数），用 `node:test` + `node:assert/strict`，需 Node ≥ 22.18（它直跑 `.ts`）。运行：`cd frontend && npm test`（等价于 `node tests/simClock.test.mjs`）。
+- 前端测试在 `frontend/tests/*.test.mjs`：`simClock.test.mjs`（推演时钟的跨天、折线与游标取数）与 `chips.test.mjs`（建议胶囊的保留/合并算子），用 `node:test` + `node:assert/strict`，需 Node ≥ 22.18（它们直跑 `.ts`）。运行：`cd frontend && npm test`（等价于 `node --test tests/*.test.mjs`，新增测试文件不用改脚本）。
 - 重点覆盖：A* 路径正确性（栅格阶梯拉直与平局决胜）、气象阈值硬/软约束、NaN/数据缺失区处理。
 - 前端改动需通过 `npm run build`，并在本地地图界面手工验证。
 - 改动涉及同源/托管链路时，补一步：`npm run build` 后请求 `http://127.0.0.1:<后端端口>/` 应返回页面，`/api/meta/cities` 仍返回 JSON（根路径挂载会兜走所有请求，注册顺序错了就找不到）。
