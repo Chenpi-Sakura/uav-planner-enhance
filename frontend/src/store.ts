@@ -172,6 +172,8 @@ export interface StoreState {
   waypoints: Point[];
   plannedPath: Point[];
   overlays: string[];
+  /** 底图样式。放在 store 而不是 App.vue 的局部 ref：AI 也要能切，且只认这一份状态 */
+  baseMap: 'street' | 'satellite' | 'terrain';
   targetDate: string;
   targetTime: string;
   uavSpeed: number;
@@ -423,6 +425,7 @@ export const store = reactive<StoreState>({
   waypoints: [],
   plannedPath: [],
   overlays: [],
+  baseMap: 'satellite',
   targetDate: '2022-07-01',
   targetTime: '08:00',
   uavSpeed: 60,

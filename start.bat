@@ -16,7 +16,6 @@ if /i "%~1"=="public" set "PUBLIC_MODE=1"
 REM PIDs are appended by PowerShell: a cmd `>>` redirect handle is inherited by the
 REM spawned service and then locks the file, so later appends fail silently.
 set "PIDFILE=%TEMP%\uav_planner_pids.txt"
-if exist "%PIDFILE%" del "%PIDFILE%" >nul 2>&1
 
 REM Backend port is read from config.json at repo root (single source of truth)
 for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "$c = Get-Content -Raw '%~dp0config.json' | ConvertFrom-Json; Write-Output $c.backend.port"`) do set "BACKEND_PORT=%%P"
@@ -24,6 +23,15 @@ if not defined BACKEND_PORT (
     echo [WARN] Could not read backend port from config.json, using default 9090.
     set "BACKEND_PORT=9090"
 )
+
+REM Clean slate first. The PID file is shared by every run and the previous start
+REM window's watcher kills whatever it lists, so an older watcher that outlives this
+REM point would tear down the stack launched below. A leftover backend also keeps the
+REM port and makes the new uvicorn fail to bind, which looks exactly like "start.bat
+REM never started the backend".
+echo [pre] Stopping services left over from the previous run...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\stop_previous.ps1" -PidFile "%PIDFILE%" -BackendPort %BACKEND_PORT%
+echo.
 
 REM Resolve Python interpreter as ABSOLUTE path so it works regardless of
 REM the new window's working directory set by `start /D` below.
@@ -48,13 +56,16 @@ echo.
 
 REM The StaticFiles mount is decided once when main.py is imported, so a missing
 REM dist would leave the public entry serving 404 until the backend restarts.
+REM This build is BLOCKING and runs before the backend launches: `npm run
+REM build:watch` empties dist/ while it rebuilds, and if uvicorn imports main.py in
+REM that window there is no index.html to mount and "/" stays 404 for the whole run
+REM (observed 2026-10-11: API healthy, every page request 404).
 if defined PUBLIC_MODE (
-    if not exist "frontend\dist\index.html" (
-        echo [public] No frontend build found, running npm run build first...
-        pushd frontend
-        call npm run build
-        popd
-    )
+    echo [public] Building frontend before the backend starts...
+    pushd frontend
+    call npm run build
+    popd
+    echo.
 )
 
 REM Use start /D to set working dir for the new window.

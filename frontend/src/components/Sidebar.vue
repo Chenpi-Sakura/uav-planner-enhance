@@ -361,6 +361,7 @@ const handleBaseClick = (base: BaseStation) => {
 .sidebar-content {
   width: var(--rail-w);
   height: 100%;
+  background-size: var(--panel-noise-tile) var(--panel-noise-tile);
   display: flex;
   flex-direction: column;
   overflow: hidden;

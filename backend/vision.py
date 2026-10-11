@@ -27,9 +27,10 @@ JPEG_QUALITY = 60
 # 单次渲染出的 JPEG 上限（MB）。超了就不是「看不清」而是「根本读不动」了。
 MAX_BYTES = 900 * 1024
 
-# 前端能点的图层键 -> get_overlay_image 认识的图层名
-_LAYER_ALIAS = {"tke": "TKE", "edr": "EDR", "wind": "wind", "temp": "tc",
-                "rh": "rh", "q": "q"}
+# 能渲染的图层键：与界面上那六个复选框同源（见 tools.OVERLAY_KEYS）
+_LAYER_KEYS = {"tke", "edr", "flow", "temp", "humidity", "qvapor"}
+# 旧键名照单收下并折算，别一不认就回退成 TKE 图（那是另一张图的形态）
+_LAYER_LEGACY = {"wind": "flow", "rh": "humidity", "q": "qvapor"}
 
 
 def _shrink(png_bytes: bytes) -> str:
@@ -110,14 +111,14 @@ def _render_field(lat: float, lon: float, km: float, layer: str,
         vals, lats, lons, _ = r
         return vals, lats, lons
 
-    if layer in ("wind", "temp", "rh", "q"):
-        var = {"wind": "u", "temp": "tc", "rh": "rh", "q": "qvapor"}[layer]
+    if layer in ("temp", "humidity", "qvapor"):
+        var = {"temp": "tc", "humidity": "rh", "qvapor": "qvapor"}[layer]
         vals, lats, lons = slab(var)
         if vals is None:
             return None, "读不到该区域数据"
         field = np.asarray(vals)[half]          # 取目标时刻那一帧
-        label = {"wind": "风速分量 u (m/s)", "temp": "温度 (℃)",
-                 "rh": "相对湿度 (%)", "q": "水汽 (g/kg)"}[layer]
+        label = {"temp": "温度 (℃)", "humidity": "相对湿度 (%)",
+                 "qvapor": "水汽 (g/kg)"}[layer]
         cmap = "viridis"
     else:
         u, lats, lons = slab("u")
@@ -125,15 +126,22 @@ def _render_field(lat: float, lon: float, km: float, layer: str,
         w, _, _ = slab("w")
         if u is None or v is None or w is None:
             return None, "读不到该区域的风场数据"
-        tke = pulsation_tke(np.asarray(u), np.asarray(v), np.asarray(w))
-        if layer == "edr":
-            field = edr_from_tke(tke)[half]
-            label = "EDR (m^(2/3)/s)"
-            cmap = "magma"
+        if layer == "flow":
+            # 与地图上那张 flow 同一个量：三维模长，不是 u 分量
+            field = np.sqrt(np.asarray(u)[half] ** 2 + np.asarray(v)[half] ** 2
+                            + np.asarray(w)[half] ** 2)
+            label = "风速 |V| (m/s)"
+            cmap = "viridis"
         else:
-            field = tke[half]
-            label = "TKE (m²/s²)"
-            cmap = "inferno"
+            tke = pulsation_tke(np.asarray(u), np.asarray(v), np.asarray(w))
+            if layer == "edr":
+                field = edr_from_tke(tke)[half]
+                label = "EDR (m^(2/3)/s)"
+                cmap = "magma"
+            else:
+                field = tke[half]
+                label = "TKE (m²/s²)"
+                cmap = "inferno"
 
     field = np.asarray(field, dtype=float)
     if not np.isfinite(field).any():
@@ -194,7 +202,8 @@ def render_region_image(lat: float, lon: float, km: float, layer: str,
     if not getattr(data_loader, "_loaded", False):
         return {"ok": False, "reason": "气象数据尚未加载完成，看不了图。"}
 
-    if layer not in _LAYER_ALIAS:
+    layer = _LAYER_LEGACY.get(layer, layer)
+    if layer not in _LAYER_KEYS:
         layer = "tke"      # 端点公网无鉴权，图层名不能让前端随便传
 
     try:
