@@ -13,7 +13,7 @@ import {
   store, runPlan, runSitePlan, runTimeWindowScan, queryWeather, resolvePlace,
   activateRouteTier,
 } from './store';
-import type { AiMark, ChatTarget, SiteCatalogSite } from './store';
+import type { AiMark, ChatTarget, SiteCatalogSite, StoreState } from './store';
 import { API_BASE } from './config';
 
 export interface ToolResult {
@@ -54,9 +54,14 @@ const OK = (tool: string, label: string, detail?: string, data?: unknown): ToolR
 const FAIL = (tool: string, label: string, detail?: string, data?: unknown): ToolResult =>
   ({ tool, ok: false, label, detail, data });
 
+/** 键名就是界面上那六个复选框的 id（见 Sidebar.vue 的 overlayOptions），一个都不能多。 */
 const OVERLAY_NAMES: Record<string, string> = {
-  tke: 'TKE（湍动能）', edr: 'EDR（湍动耗散率）', wind: '综合风速',
-  temp: '温度', rh: '相对湿度', q: '水汽混合比',
+  tke: 'TKE（湍动能）', edr: 'EDR（湍动耗散率）', flow: '综合风速',
+  temp: '温度', humidity: '相对湿度', qvapor: '水汽混合比',
+};
+/** 同理，与 LayerSelector 那三个按钮一一对应 */
+const BASE_MAP_NAMES: Record<string, string> = {
+  street: '街道图', satellite: '卫星图', terrain: '地形图',
 };
 const TAB_NAMES: Record<string, string> = {
   plan: '路径规划', timeWindow: '时间窗口', site: '多航点',
@@ -95,6 +100,7 @@ export function buildAgentState(): Record<string, unknown> {
   return {
     tab: store.sidebarTab,
     overlays: [...store.overlays],
+    base_map: store.baseMap,
     // 端点**必须带地名**。只给坐标的话，模型分不清 (29.66, 94.36) 是林芝还是昌都，
     // 于是会拿现存的林芝当昌都去规划，再把林芝的结论说成昌都的 ——
     // 数字是真的、结论完全错，比编数字更难被发现。
@@ -173,14 +179,24 @@ export async function invokeTool(tool: string, args: Record<string, any> = {}): 
     // ---------------- 界面操作 ----------------
     case 'toggle_overlay': {
       const key = args.layer as string;
-      const name = OVERLAY_NAMES[key] ?? key;
-      if (!name) return FAIL(tool, '图层名不认得');
+      // 只认界面上有复选框的那六个键。放一个陌生键过去等于造出幽灵图层：
+      // 图上画出来了、复选框却没勾上，用户关不掉，再手动勾同一层还叠两张热图。
+      const name = OVERLAY_NAMES[key];
+      if (!name) return FAIL(tool, '图层名不认得', `界面里没有「${key || '（空）'}」这个叠加层`);
       const on = args.on !== false;
       const has = store.overlays.includes(key);
       if (on && !has) store.overlays.push(key);
       if (!on && has) store.overlays.splice(store.overlays.indexOf(key), 1);
       return OK(tool, `${on ? '已开启' : '已关闭'}${name}叠加层`,
         `${store.overlays.length} 个图层当前开启`, { overlays: [...store.overlays] });
+    }
+
+    case 'set_base_map': {
+      const key = args.map as string;
+      const name = BASE_MAP_NAMES[key];
+      if (!name) return FAIL(tool, '底图不认得', '界面里只有街道图、卫星图、地形图三种底图');
+      store.baseMap = key as StoreState['baseMap'];
+      return OK(tool, `底图已切到${name}`, undefined, { base_map: key });
     }
 
     case 'focus_region': {

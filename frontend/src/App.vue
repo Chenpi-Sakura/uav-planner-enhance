@@ -1,6 +1,6 @@
 <template>
   <div class="app-container">
-    <MapContainer :active-layer="activeLayer" />
+    <MapContainer :active-layer="store.baseMap" />
     
     <!-- Top Header -->
     <div class="top-header glass-panel">
@@ -10,7 +10,7 @@
 
     <Sidebar />
     <DataChartPanel />
-    <LayerSelector v-model="activeLayer" />
+    <LayerSelector v-model="store.baseMap" />
     <!-- 与图层切换同为 z 1000，靠文档顺序压在它上面：右栏展开时整块盖住底图按钮 -->
     <AiSidebar />
     <OverlayLegend />
@@ -19,7 +19,6 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
 import { Plane } from 'lucide-vue-next';
 import MapContainer from './components/MapContainer.vue';
 import Sidebar from './components/Sidebar.vue';
@@ -28,9 +27,7 @@ import DataChartPanel from './components/DataChartPanel.vue';
 import LayerSelector from './components/LayerSelector.vue';
 import OverlayLegend from './components/OverlayLegend.vue';
 import NoticeDialog from './components/NoticeDialog.vue';
-
-// Default map layer set to satellite
-const activeLayer = ref<'street' | 'satellite' | 'terrain'>('satellite');
+import { store } from './store';
 </script>
 
 <style>

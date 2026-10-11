@@ -20,22 +20,37 @@ from typing import Any, Dict, List, Optional
 
 import re
 
-# 叠加层可选值：与前端 store.overlays 里存的一致（见 MapContainer 的 layers）
+# 叠加层可选值：**必须与界面上那六个复选框的 id 一字不差**
+# （见 Sidebar.vue 的 overlayOptions、OverlayLegend.vue 的 legendConfigs、
+# 以及 data_loader.get_overlay_image 里的图层分支）。
+# 键名对不上会在 store.overlays 里留下一个复选框管不到的键：图层画出来了但勾没勾上，
+# 用户既关不掉它，再手动勾同一个图层还会叠出两张半透明热图。
 OVERLAY_KEYS = {
     "tke": "TKE（湍动能）",
     "edr": "EDR（湍动耗散率）",
-    "wind": "综合风速",
+    "flow": "综合风速",
     "temp": "温度",
-    "rh": "相对湿度",
-    "q": "水汽混合比",
+    "humidity": "相对湿度",
+    "qvapor": "水汽混合比",
 }
 OVERLAY_ALIASES = {
     "动能": "tke", "湍动能": "tke", "湍流动能": "tke", "扰动": "tke",
     "耗散": "edr", "湍动耗散率": "edr",
-    "风": "wind", "风速": "wind", "风场": "wind",
+    "风": "flow", "风速": "flow", "风场": "flow", "综合风速": "flow",
     "气温": "temp", "温度": "temp",
-    "湿度": "rh", "相对湿度": "rh",
-    "水汽": "q", "水汽混合比": "q",
+    "湿度": "humidity", "相对湿度": "humidity",
+    "水汽": "qvapor", "水汽混合比": "qvapor",
+    # 旧键名（这套键和复选框对不上，才造成过关不掉的幽灵图层）：照单收下并折算，
+    # 免得模型沿用时又开出一个野图层。
+    "wind": "flow", "rh": "humidity", "q": "qvapor",
+}
+
+# 底图：与右下角那三个底图按钮一一对应（键见 frontend/src/store.ts 的 baseMap）
+BASE_MAPS = {"street": "街道图", "satellite": "卫星图", "terrain": "地形图"}
+BASE_MAP_ALIASES = {
+    "街道": "street", "街道图": "street", "路网": "street", "普通地图": "street",
+    "卫星": "satellite", "卫星图": "satellite", "影像": "satellite", "航拍": "satellite",
+    "地形": "terrain", "地形图": "terrain", "地貌": "terrain", "等高线": "terrain",
 }
 
 TABS = {
@@ -89,6 +104,7 @@ def _tool(name: str, desc: str, layer: str, props: Dict[str, Any], required: Lis
 
 _P = {
     "layer": {"type": "string", "enum": sorted(OVERLAY_KEYS), "description": "图层键"},
+    "map": {"type": "string", "enum": sorted(BASE_MAPS), "description": "底图键"},
     "on": {"type": "boolean", "description": "true 开启，false 关闭"},
     "name": {"type": "string", "description": "地名或站点名（照抄站表，不要自己造）"},
     "lat": {"type": "number", "description": "纬度"},
@@ -136,6 +152,9 @@ TOOLS: List[Dict[str, Any]] = [
     _tool("toggle_overlay", "开启/关闭气象叠加层（TKE、EDR、风速、温度、湿度、水汽）。"
            "用户想看某个气象要素时必须先开对应图层，否则他在地图上看不到。",
           "ui", {k: _P[k] for k in ("layer", "on")}, ["layer", "on"]),
+    _tool("set_base_map", "切换底图样式：街道图 / 卫星图 / 地形图。"
+          "用户说「换成卫星图」「我要看地形，切地形图」时用它。切底图不影响已开的气象叠加层。",
+          "ui", {"map": _P["map"]}, ["map"]),
     _tool("focus_region", "把地图视野移到某个地点并设定缩放。用户要看某个位置时用它。",
           "ui", {k: _P[k] for k in ("name", "lat", "lon", "zoom", "km")}, []),
     _tool("mark_regions",
@@ -268,6 +287,10 @@ def validate_args(tool: str, raw: Any) -> Dict[str, Any]:
         if isinstance(on, str):
             on = on.strip().lower() in ("true", "1", "on", "yes", "开", "开启", "打开")
         return {"layer": layer, "on": bool(on)} if layer else {}
+
+    if tool == "set_base_map":
+        m = _alias(a.get("map"), BASE_MAPS, BASE_MAP_ALIASES)
+        return {"map": m} if m else {}
 
     if tool in ("focus_region",):
         lat, lon = _num(a.get("lat"), -90, 90), _num(a.get("lon"), -180, 180)

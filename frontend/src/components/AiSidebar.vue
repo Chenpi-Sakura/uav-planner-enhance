@@ -170,7 +170,7 @@ import {
   Send, Loader, Eraser, AlertTriangle,
   Wrench, MapPin, Calculator, AlertCircle, Crosshair, Layers, PanelLeft,
   ChartLine, Play, SlidersHorizontal, Clock, Package, Plane, Users, Gauge,
-  CalendarDays, Trash2, Thermometer, Search, Paperclip, X,
+  CalendarDays, Trash2, Thermometer, Search, Paperclip, X, Globe,
 } from 'lucide-vue-next';
 import {
   store, suggestChips, fetchSiteCatalog,
@@ -375,12 +375,14 @@ const TOOL_ICONS: Record<string, Component> = {
   run_plan: Calculator, run_site_plan: Calculator, run_time_window: Calculator,
   query_weather: Thermometer, search_sites: Search,
   toggle_overlay: Layers, switch_tab: PanelLeft, toggle_chart: ChartLine,
+  set_base_map: Globe,
   play_simulation: Play, set_priority: SlidersHorizontal, set_time: Clock,
   set_payload_kg: Package, set_aircraft: Plane, set_mission: Users,
   set_speed: Gauge, set_forecast_days: CalendarDays, clear_route: Trash2,
 };
 const TOOL_VERBS: Record<string, string> = {
   toggle_overlay: '切换图层', focus_region: '移动地图', switch_tab: '切换页签',
+  set_base_map: '切换底图',
   set_time: '修改时间', set_priority: '切换档位', set_payload_kg: '修改载重',
   set_aircraft: '切换机型', set_mission: '修改任务类型', set_speed: '修改速度',
   set_forecast_days: '修改推演天数', toggle_chart: '切换剖面图',
@@ -992,6 +994,8 @@ onBeforeUnmount(() => {
 .ai-content {
   width: var(--rail-w);
   height: 100%;
+  /* 拖宽时只让颗粒平铺、不跟着拉伸，粗糙度才和左栏对得上 */
+  background-size: var(--panel-noise-tile) var(--panel-noise-tile);
   display: flex;
   flex-direction: column;
   overflow: hidden;

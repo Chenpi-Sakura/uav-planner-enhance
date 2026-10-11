@@ -17,6 +17,7 @@
 - `setup.bat`（Windows 推荐）或 `setup.sh`：检测 Python 3.12+（必要时自动下载便携版）并安装后端依赖。依赖走 `pip install -r backend/requirements.txt` 装进该解释器，**不用 conda**（仓库没有 conda 环境文件）。
 - `start.bat`：启动后端（`python -m uvicorn main:app --reload`，端口由根目录 `config.json` 决定，默认 9090）与前端（`npm run dev`，端口 5173），自动打开浏览器。
 - `start.bat public`：同上，额外做两件事——`npm run build:watch` 持续产出 dist、启动 `frp\frpc.exe` 把服务挂到公网（关闭本窗口会一并停掉隧道）。不带 `public` 时任何端口都不对外，日常开发默认走这条。
+  两种模式都会**先清场再起服务**：`scripts\stop_previous.ps1` 杀掉上一轮残留（含 `start_watcher.ps1` —— 它读的是共享的 `%TEMP%\uav_planner_pids.txt`，晚一步退出就会把新栈整棵带走）并等后端端口释放；public 模式还会在起后端**之前**阻塞跑一次 `npm run build`（`build:watch` 头一遍会清空 dist，而 `/` 的静态挂载只在后端 import 时判一次，撞上就是整轮页面 404）。因此旧窗口关掉后不再影响新起的栈，停服务只关最新那个窗口。
 - 手动开发：后端先 `pip install -r backend/requirements.txt`，再运行 `python main.py`（API 文档见 `/docs`，端口由 `config.json` 决定）；前端先 `npm install`，再 `npm run dev`。
 - 后端热更新靠 `--reload` + `watchfiles`（已列入 `requirements.txt`）。**没装 watchfiles 时 `--reload` 是空转的**：uvicorn 退回轮询实现，实测改了 `backend/*.py` 也不会重启，进程一直跑旧代码——2026-09 那次湍流公式换口径后公网仍在出旧刻度就是这个原因。
   **装上 watchfiles 也不等于可靠**：2026-09-24 实测，用 `Start-Process`（日志重定向到文件）起的实例，改/新增 `backend/*.py` 会在 1~2 s 内打出 `WatchFiles detected changes ... Reloading...` 并重启 worker；而 `start.bat`（`cmd /k` 可见窗口）起的实例改了 `config.py`、新建 `.py` 都不触发，worker PID 不变、配置值不刷新，原因未查清。
@@ -41,11 +42,11 @@
 
 ## Testing Guidelines（测试规范）
 
-- 后端测试在 `backend/tests/`：19 个 `test_*.py` + 一个基准数据助手 `golden_plan.py`。用**标准库 `unittest`**，不是 pytest——`pytest` 既不在 `requirements.txt` 里也没装，别去找它。
-  运行：在 `backend/` 目录下执行 `python -m unittest discover -s tests -t .`（当前 356 个用例，约 5 s）。
+- 后端测试在 `backend/tests/`：20 个 `test_*.py` + 一个基准数据助手 `golden_plan.py`。用**标准库 `unittest`**，不是 pytest——`pytest` 既不在 `requirements.txt` 里也没装，别去找它。
+  运行：在 `backend/` 目录下执行 `python -m unittest discover -s tests -t .`（当前 363 个用例，约 5 s）。
 - 有 3 个用例默认跳过：`test_grid_cache.py::TestRealDataEquivalence` 要拿真实 NetCDF 做新旧取数路径的逐比特比对（约 20 s），需显式设 `UAV_REAL_DATA_TESTS=1` 才跑。**动 `data_loader` 的取数/缓存路径时必须带这个环境变量复跑一次**——它守的就是「优化不改结论」这条底线。
 - 前端测试在 `frontend/tests/*.test.mjs`：`simClock.test.mjs`（推演时钟的跨天、折线与游标取数）与 `chips.test.mjs`（建议胶囊的保留/合并算子），用 `node:test` + `node:assert/strict`，需 Node ≥ 22.18（它们直跑 `.ts`）。运行：`cd frontend && npm test`（等价于 `node --test tests/*.test.mjs`，新增测试文件不用改脚本）。
-- 重点覆盖：A* 路径正确性（栅格阶梯拉直与平局决胜）、气象阈值硬/软约束、NaN/数据缺失区处理。
+- 重点覆盖：A* 路径正确性（栅格阶梯拉直与平局决胜）、气象阈值硬/软约束、NaN/数据缺失区处理、Agent 工具契约与界面控件的键表一致（`test_overlay_keys.py` 按文本比对前端，界面改 id 要同步它）。
 - 前端改动需通过 `npm run build`，并在本地地图界面手工验证。
 - 改动涉及同源/托管链路时，补一步：`npm run build` 后请求 `http://127.0.0.1:<后端端口>/` 应返回页面，`/api/meta/cities` 仍返回 JSON（根路径挂载会兜走所有请求，注册顺序错了就找不到）。
 
