@@ -1,0 +1,480 @@
+{
+ "1712.03608": {
+  "abs_url": "https://arxiv.org/abs/1712.03608",
+  "authors": [
+   "Oettershagen, Philipp",
+   "Achermann, Florian",
+   "Müller, Benjamin",
+   "Schneider, Daniel",
+   "Siegwart, Roland"
+  ],
+  "date": "2017/12/10",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/1712.03608",
+  "record": "verified",
+  "title": "Towards Fully Environment-Aware UAVs: Real-Time Path Planning with Online 3D Wind Field Prediction in Complex Terrain",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "1811.11328": {
+  "abs_url": "https://arxiv.org/abs/1811.11328",
+  "authors": [
+   "Fukami, Kai",
+   "Fukagata, Koji",
+   "Taira, Kunihiko"
+  ],
+  "date": "2018/11/28",
+  "http_status": 200,
+  "latest_version": 2,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/1811.11328",
+  "record": "verified",
+  "title": "Super-resolution reconstruction of turbulent flows with machine learning",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "1911.02543": {
+  "abs_url": "https://arxiv.org/abs/1911.02543",
+  "authors": [
+   "Berning Jr., Andrew W.",
+   "Girard, Anouck",
+   "Kolmanovsky, Ilya",
+   "D'Souza, Sarah N."
+  ],
+  "date": "2019/11/06",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/1911.02543",
+  "record": "verified",
+  "title": "Rapid Uncertainty Propagation and Chance-Constrained Path Planning for Small Unmanned Aerial Vehicles",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2002.10999": {
+  "abs_url": "https://arxiv.org/abs/2002.10999",
+  "authors": [
+   "Wang, Allen",
+   "Jasour, Ashkan",
+   "Williams, Brian"
+  ],
+  "date": "2020/02/25",
+  "http_status": 200,
+  "latest_version": 4,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2002.10999",
+  "record": "verified",
+  "title": "Non-Gaussian Chance-Constrained Trajectory Planning for Autonomous Vehicles under Agent Uncertainty",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2010.07068": {
+  "abs_url": "https://arxiv.org/abs/2010.07068",
+  "authors": [
+   "Guo, Yijun",
+   "You, Changsheng",
+   "Yin, Changchuan",
+   "Zhang, Rui"
+  ],
+  "date": "2020/10/14",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2010.07068",
+  "record": "verified",
+  "title": "UAV Trajectory and Communication Co-design: Flexible Path Discretization and Path Compression",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2106.11405": {
+  "abs_url": "https://arxiv.org/abs/2106.11405",
+  "authors": [
+   "Qi, Dongping",
+   "Dhillon, Adam",
+   "Vladimirsky, Alexander"
+  ],
+  "date": "2021/06/21",
+  "http_status": 200,
+  "latest_version": 3,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2106.11405",
+  "record": "verified",
+  "title": "Optimality and robustness in path-planning under initial uncertainty",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2109.04606": {
+  "abs_url": "https://arxiv.org/abs/2109.04606",
+  "authors": [
+   "Wu, Pengcheng",
+   "Li, Lin",
+   "Xie, Junfei",
+   "Chen, Jun"
+  ],
+  "date": "2021/09/10",
+  "http_status": 200,
+  "latest_version": 2,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2109.04606",
+  "record": "verified",
+  "title": "Probabilistic Guaranteed Path Planning for Safe Urban Air Mobility Using Chance Constrained RRT",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2306.01358": {
+  "abs_url": "https://arxiv.org/abs/2306.01358",
+  "authors": [
+   "Liu, Jing",
+   "Tang, Xiaofan",
+   "Xia, Junji",
+   "Zhu, Fengrong"
+  ],
+  "date": "2023/06/02",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2306.01358",
+  "record": "verified",
+  "title": "Variation of the Atmospheric Boundary Layer Height at the Eastern Edge of the Tibetan Plateau",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2306.04518": {
+  "abs_url": "https://arxiv.org/abs/2306.04518",
+  "authors": [
+   "Luo, Xihaier",
+   "Kareem, Ahsan",
+   "Yoo, Shinjae"
+  ],
+  "date": "2023/06/07",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2306.04518",
+  "record": "verified",
+  "title": "Optimal sensor placement for reconstructing wind pressure field around buildings using compressed sensing",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2310.00135": {
+  "abs_url": "https://arxiv.org/abs/2310.00135",
+  "authors": [
+   "Yu, Yue",
+   "Gao, Zhenyu",
+   "Li, Sarah H. Q.",
+   "Wei, Qinshuang",
+   "Clarke, John-Paul",
+   "Topcu, Ufuk"
+  ],
+  "date": "2023/09/29",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2310.00135",
+  "record": "verified",
+  "title": "Alpha-Fair Routing in Urban Air Mobility with Risk-Aware Constraints",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2401.10519": {
+  "abs_url": "https://arxiv.org/abs/2401.10519",
+  "authors": [
+   "Xu, Jian",
+   "Dai, Hua"
+  ],
+  "date": "2024/01/19",
+  "http_status": 200,
+  "latest_version": 2,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2401.10519",
+  "record": "verified",
+  "title": "A Wind-Aware Path Planning Method for UAV-Asisted Bridge Inspection",
+  "verified_at": "2026-10-12",
+  "withdrawn": true
+ },
+ "2406.12298": {
+  "abs_url": "https://arxiv.org/abs/2406.12298",
+  "authors": [
+   "Liu, Haoxing",
+   "Xie, Renjie",
+   "Qin, Haoshen",
+   "Li, Yizhou"
+  ],
+  "date": "2024/06/18",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2406.12298",
+  "record": "verified",
+  "title": "Research on Dangerous Flight Weather Prediction based on Machine Learning",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2412.08009": {
+  "abs_url": "https://arxiv.org/abs/2412.08009",
+  "authors": [
+   "Dang, Hiep Vo",
+   "Nguyen, Phong C. H."
+  ],
+  "date": "2024/12/11",
+  "http_status": 200,
+  "latest_version": 6,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2412.08009",
+  "record": "verified",
+  "title": "Deep Operator Learning for High-Fidelity Fluid Flow Field Reconstruction from Sparse Sensor Measurements",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2501.09338": {
+  "abs_url": "https://arxiv.org/abs/2501.09338",
+  "authors": [
+   "Mao, Junteng",
+   "Jia, Ziye",
+   "Gu, Hanzhi",
+   "Shi, Chenyu",
+   "Shi, Haomin",
+   "He, Lijun",
+   "Wu, Qihui"
+  ],
+  "date": "2025/01/16",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2501.09338",
+  "record": "verified",
+  "title": "Robust UAV Path Planning with Obstacle Avoidance for Emergency Rescue",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2503.06779": {
+  "abs_url": "https://arxiv.org/abs/2503.06779",
+  "authors": [
+   "Ren, Kai",
+   "Ahn, Heejin",
+   "Kamgarpour, Maryam"
+  ],
+  "date": "2025/03/09",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2503.06779",
+  "record": "verified",
+  "title": "Chance-Constrained Trajectory Planning with Multimodal Environmental Uncertainty",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2504.05366": {
+  "abs_url": "https://arxiv.org/abs/2504.05366",
+  "authors": [
+   "Lancia, G.",
+   "Falanga, D.",
+   "Alam, S.",
+   "Lulli, G."
+  ],
+  "date": "2025/04/07",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2504.05366",
+  "record": "verified",
+  "title": "Handling Weather Uncertainty in Air Traffic Prediction through an Inverse Approach",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2508.09304": {
+  "abs_url": "https://arxiv.org/abs/2508.09304",
+  "authors": [
+   "Vivaldini, Kelen C. Teixeira",
+   "Pěnička, Robert",
+   "Saska, Martin"
+  ],
+  "date": "2025/08/12",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2508.09304",
+  "record": "verified",
+  "title": "Decision-Making-Based Path Planning for Autonomous UAVs: A Survey",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2508.14957": {
+  "abs_url": "https://arxiv.org/abs/2508.14957",
+  "authors": [
+   "Naskar, Anurup",
+   "Wong, Nathanael Zhixin",
+   "Shamekh, Sara"
+  ],
+  "date": "2025/08/20",
+  "http_status": 200,
+  "latest_version": 2,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2508.14957",
+  "record": "verified",
+  "title": "CuMoLoS-MAE: A Masked Autoencoder for Remote Sensing Data Reconstruction",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2509.08752": {
+  "abs_url": "https://arxiv.org/abs/2509.08752",
+  "authors": [
+   "Oommen, Vivek",
+   "Khodakarami, Siavash",
+   "Bora, Aniruddha",
+   "Wang, Zhicheng",
+   "Karniadakis, George Em"
+  ],
+  "date": "2025/09/10",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2509.08752",
+  "record": "verified",
+  "title": "Learning Turbulent Flows with Generative Models: Super-resolution, Forecasting, and Sparse Flow Reconstruction",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2602.21770": {
+  "abs_url": "https://arxiv.org/abs/2602.21770",
+  "authors": [
+   "Foudad, Mohamed",
+   "Teixeira, Miguel A. C.",
+   "Williams, Paul D.",
+   "Kaluza, Thorsten"
+  ],
+  "date": "2026/02/25",
+  "http_status": 200,
+  "latest_version": 2,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2602.21770",
+  "record": "verified",
+  "title": "A Generalized Richardson Number Diagnostic for Turbulence in the Free Atmosphere",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2603.21544": {
+  "abs_url": "https://arxiv.org/abs/2603.21544",
+  "authors": [
+   "Chen, Kesheng",
+   "Luo, Wenjian",
+   "Lin, Xin",
+   "Song, Zhen",
+   "Chang, Yatong"
+  ],
+  "date": "2026/03/23",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2603.21544",
+  "record": "verified",
+  "title": "Evolutionary Biparty Multiobjective UAV Path Planning: Problems and Empirical Comparisons",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2604.13441": {
+  "abs_url": "https://arxiv.org/abs/2604.13441",
+  "authors": [
+   "Li, Tianshun",
+   "Lu, Hongliang",
+   "Sheng, Yanggang",
+   "Wang, Zhongzhen",
+   "Li, Haoang",
+   "Zheng, Xinhu"
+  ],
+  "date": "2026/04/15",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2604.13441",
+  "record": "verified",
+  "title": "Robust Energy-Aware Routing for Air-Ground Cooperative Multi-UAV Delivery in Wind-Uncertain Environments",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2606.30575": {
+  "abs_url": "https://arxiv.org/abs/2606.30575",
+  "authors": [
+   "Petit, Louis",
+   "Desbiens, Alexis Lussier"
+  ],
+  "date": "2026/06/29",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2606.30575",
+  "record": "verified",
+  "title": "MOAR Planner: Multi-Objective and Adaptive Risk-Aware Path Planning for Infrastructure Inspection with a UAV",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2607.11899": {
+  "abs_url": "https://arxiv.org/abs/2607.11899",
+  "authors": [
+   "Gokdeniz, Kadir",
+   "Ulku, Irem"
+  ],
+  "date": "2026/06/16",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2607.11899",
+  "record": "verified",
+  "title": "Predictive Modeling of High-Altitude Clear Air Turbulence in the United States: A Machine Learning Approach",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2607.15690": {
+  "abs_url": "https://arxiv.org/abs/2607.15690",
+  "authors": [
+   "Devkar, Prasad",
+   "Chati, Yashovardhan S.",
+   "Vasan, Arunchandar"
+  ],
+  "date": "2026/07/17",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2607.15690",
+  "record": "verified",
+  "title": "Obstacle-Aware Four-Dimensional Trajectory Design for Urban Air Mobility",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "2609.36056": {
+  "abs_url": "https://arxiv.org/abs/2609.36056",
+  "authors": [
+   "Qin, Shaoxiang",
+   "Zhao, Yucheng",
+   "Lyu, Fuyuan",
+   "Zhou, Di",
+   "Yao, Jiachen",
+   "Liu, Xue",
+   "Anandkumar, Anima",
+   "Wang, Liangzhu Leon"
+  ],
+  "date": "2026/09/28",
+  "http_status": 200,
+  "latest_version": 1,
+  "note": "",
+  "pdf_url": "https://arxiv.org/pdf/2609.36056",
+  "record": "verified",
+  "title": "GeoWind2Plan: Mission-Time 3D Urban Wind Prediction for Energy-Efficient UAV Planning",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ },
+ "id": {
+  "abs_url": "https://arxiv.org/abs/id",
+  "authors": [],
+  "date": "",
+  "http_status": 404,
+  "latest_version": null,
+  "note": "arxiv.org has no paper with this ID",
+  "status": "NOT_FOUND",
+  "title": "",
+  "verified_at": "2026-10-12",
+  "withdrawn": false
+ }
+}
