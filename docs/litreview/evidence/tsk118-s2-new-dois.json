@@ -1,0 +1,65 @@
+[
+ {
+  "doi": "10.1007/s10546-007-9219-0",
+  "title": [
+   "Time Scales in the Unstable Atmospheric Surface Layer"
+  ],
+  "authors": [
+   "Meredith Metzger",
+   "Heather Holmes"
+  ],
+  "container": [
+   "Boundary-Layer Meteorology"
+  ],
+  "volume": "126",
+  "issue": "1",
+  "page": "29-50",
+  "year": 2007,
+  "cites": 32,
+  "abstract": ""
+ },
+ {
+  "doi": "10.5194/amt-13-969-2020",
+  "title": [
+   "Comparison of turbulence measurements by a CSAT3B sonic anemometer and a high-resolution bistatic Doppler lidar"
+  ],
+  "authors": [
+   "Matthias Mauder",
+   "Michael Eggert",
+   "Christian Gutsmuths",
+   "Stefan Oertel",
+   "Paul Wilhelm",
+   "Ingo Voelksch"
+  ],
+  "container": [
+   "Atmospheric Measurement Techniques"
+  ],
+  "volume": "13",
+  "issue": "2",
+  "page": "969-983",
+  "year": 2020,
+  "cites": 19,
+  "abstract": "<jats:p>\n                    Accurate measurements of turbulence statistics in the atmosphere are important for eddy-covariance measurements, wind energy research, and the\nvalidation of atmospheric numerical models. Sonic anemometers are widely used for these applications. However, these instruments are prone to\nprobe-induced flow distortion effects, and the magnitude of the resulting errors has been debated due to the lack of an absolute reference\ninstrument under field conditions. Here, we present the results of an intercomparison experiment between a CSAT3B sonic anemometer and\na high-resol"
+ },
+ {
+  "doi": "10.1007/s00348-018-2622-0",
+  "title": [
+   "Bias in particle tracking acceleration measurement"
+  ],
+  "authors": [
+   "John M. Lawson",
+   "Eberhard Bodenschatz",
+   "Cristian C. Lalescu",
+   "Michael Wilczek"
+  ],
+  "container": [
+   "Experiments in Fluids"
+  ],
+  "volume": "59",
+  "issue": "11",
+  "page": null,
+  "year": 2018,
+  "cites": 25,
+  "abstract": ""
+ }
+]

@@ -1,0 +1,620 @@
+{
+ "wes1433.html": {
+  "label": "[1] Archer 2025 WES 10:1433-1438",
+  "url": "https://wes.copernicus.org/articles/10/1433/2025/",
+  "doi": "https://doi.org/10.5194/wes-10-1433-2025",
+  "meta": {
+   "citation_fulltext_world_readable": [
+    ""
+   ],
+   "citation_publisher": [
+    "Copernicus GmbH"
+   ],
+   "citation_title": [
+    "Brief communication: A note on the variance of wind speed and turbulence intensity"
+   ],
+   "citation_abstract": [
+    "<p><strong class=\"journal-contentHeaderColor\">Abstract.</strong> This paper addresses the issue that several papers in the peer-reviewed literature on wind energy applications have used an incorrect equation that equals the variance of wind speed (<span class=\"inline-formula\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\" id=\"M1\" display=\"inline\" overflow=\"scroll\" dspmath=\"mathml\"><mrow><msubsup><mi mathvariant=\"italic\">σ</mi><mi>U</mi><mn mathvariant=\"normal\">2</mn></msubsup></mrow></math><span><svg:svg xmlns:svg=\"http://www.w3.org/2000/svg\" width=\"14pt\" height=\"17pt\" class=\"svg-formula\" dspmath=\"mathimg\" md5hash=\"ab93dfa066842608c6807060c30aca4b\"><svg:image xmlns:xlink=\"http://www.w3.org/1999/xlink\" xlink:href=\"wes-10-1433-2025-ie00001.svg\" width=\"14pt\" height=\"17pt\" src=\"wes-10-1433-2025-ie00001.png\"/></svg:svg></span></span>) to the sum of the variances of the wind components. This incorrect equation is often used to calculate turbulence intensity (TI), which, as a consequence, is often incorrectly estimated too. While exact analytical equations do not exist, here two approximate analytical equations are derived for <span class=\"inline-formula\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\" id=\"M2\" display=\"inline\" overflow=\"scroll\" dspmath=\"mathml\"><mrow><msubsup><mi mathvariant=\"italic\">σ</mi><mi>U</mi><mn mathvariant=\"normal\">2</mn></msubsup></mrow></math><span><svg:svg xmlns:svg=\"http://www.w3.org/2000/svg\" width=\"14pt\" height=\"17pt\" class=\"svg-formula\" dspmath=\"mathimg\" md5hash=\"6a6952f5d2f57c6363234639c04617b1\"><svg:image xmlns:xlink=\"http://www.w3.org/1999/xlink\" xlink:href=\"wes-10-1433-2025-ie00002.svg\" width=\"14pt\" height=\"17pt\" src=\"wes-10-1433-2025-ie00002.png\"/></svg:svg></span></span> and TI as functions of the variances and means of the wind components. Both formulations are validated with samples from a prior field campaign and perform satisfactorily.</p>"
+   ],
+   "citation_publication_date": [
+    "2025/07/21"
+   ],
+   "citation_online_date": [
+    "2025/07/21"
+   ],
+   "citation_journal_title": [
+    "Wind Energy Science"
+   ],
+   "citation_volume": [
+    "10"
+   ],
+   "citation_issue": [
+    "7"
+   ],
+   "citation_issn": [
+    "2366-7443"
+   ],
+   "citation_doi": [
+    "https://doi.org/10.5194/wes-10-1433-2025"
+   ],
+   "citation_firstpage": [
+    "1433"
+   ],
+   "citation_lastpage": [
+    "1438"
+   ],
+   "citation_author": [
+    "Archer, Cristina Lozej"
+   ],
+   "citation_author_institution": [
+    "Center for Research in Wind (CReW), University of Delaware, Newark, Delaware, USA",
+    "Department of Environmental, Land, and Infrastructure Engineering (DIATI), Politecnico di Torino, Turin, Italy"
+   ],
+   "citation_author_orcid": [
+    "0000-0002-7837-7575"
+   ],
+   "citation_author_email": [
+    "carcher@udel.edu"
+   ],
+   "citation_reference": [
+    "Ackermann, G. R.: Means and standard deviations of horizontal wind components, J. Clim. Appl. Meteorol., 22, 959–961, 1983. a",
+    "Baird, D. C.: Experimentation: An introduction to measurement theory and experiment design, Prentice Hall, New Jersey, ISBN 978-0132953450, 1962. a",
+    "International Electrotechnical Commission: Wind energy generation systems – Part 1: Design requirements, Tech. Rep. IEC 61400-1 Ed. 4.0 B:2019, IEC, Denmark, https://webstore.ansi.org/standards/iec/iec61400ed2019-2419167?source=blog (last access: 23 April 2025), 2019. a",
+    "Joffre, S. M. and Laurila, T.: Standard deviations of wind speed and direction from observations over a smooth surface, J. Appl. Meteorol. Clim., 27, 550–561, https://doi.org/10.1175/1520-0450(1988)027&lt;0550:SDOWSA&gt;2.0.CO;2, 1988. a",
+    "Kaimal, J. C. and Finnigan, J. J.: Atmospheric boundary layer flows: Their structure and measurement, Oxford University Press, https://doi.org/10.1093/oso/9780195062397.001.0001, 1994. a",
+    "Kristensen, L.: Cup anemometer behavior in turbulent environments, J. Atmos. Ocean. Tech., 15, 5–17, https://doi.org/10.1175/1520-0426(1998)015&lt;0005:CABITE&gt;2.0.CO;2, 1998. a"
+   ],
+   "citation_pdf_url": [
+    "https://wes.copernicus.org/articles/10/1433/2025/wes-10-1433-2025.pdf"
+   ],
+   "citation_xml_url": [
+    "https://wes.copernicus.org/articles/10/1433/2025/wes-10-1433-2025.xml"
+   ],
+   "citation_language": [
+    "English"
+   ],
+   "twitter:title": [
+    "Brief communication: A note on the variance of wind speed and turbulence intensity"
+   ],
+   "_title": [
+    "WES - Brief communication: A note on the variance of wind speed and turbulence intensity"
+   ]
+  },
+  "chars": 27310,
+  "probes": [
+   {
+    "name": "判词1 TI 命名禁令",
+    "keywords": [
+     "should not be called a turbulence intensity"
+    ],
+    "n": 1,
+    "hits": [
+     {
+      "quote": "In such cases, the ratio of the wind speed standard deviation over the mean, calculated over longer time intervals (i.e., hours to days), can still be obtained, but it should not be called a turbulence intensity.",
+      "lead_in": "By contrast, wind fluctuations associated with mesoscale or synoptic-scale features belong to the left of the spectral gap and should not be called turbulent."
+     }
+    ]
+   },
+   {
+    "name": "判词2 谱隙与湍流定义",
+    "keywords": [
+     "spectral gap",
+     "left of",
+     "not be called turbulent"
+    ],
+    "n": 2,
+    "hits": [
+     {
+      "quote": "Strictly speaking, TI should refer only to fluctuations of the wind at the microscale (i.e., time averages of the order of minutes) and thus to the right of the spectral gap in the wind spectrum.",
+      "lead_in": "The third problem is the temporal scales that should be considered in the calculation of TI and σ U 2 ."
+     },
+     {
+      "quote": "By contrast, wind fluctuations associated with mesoscale or synoptic-scale features belong to the left of the spectral gap and should not be called turbulent.",
+      "lead_in": "The IEC standard is clear in this respect: turbulence is defined as \"random variations in the wind velocity from 10 min averages\"."
+     }
+    ]
+   },
+   {
+    "name": "判词3 处置建议",
+    "keywords": [
+     "extreme caution or avoided altogether"
+    ],
+    "n": 1,
+    "hits": [
+     {
+      "quote": "Therefore, using these mesoscale or synoptic-scale fluctuations in the calculation of TI for wind energy applications, especially to comply with the IEC standard, should be done with extreme caution or avoided altogether.",
+      "lead_in": "deviation over the mean, calculated over longer time intervals (i.e., hours to days), can still be obtained, but it should not be called a turbulence intensity."
+     }
+    ]
+   },
+   {
+    "name": "判词4 IEC 10-min 定义",
+    "keywords": [
+     "IEC",
+     "10-min",
+     "10 min"
+    ],
+    "n": 13,
+    "hits": [
+     {
+      "quote": "In the International Electrotechnical Commission (IEC) standard ( International Electrotechnical Commission ,  2019 ) that wind turbines must comply with, the standard deviation of wind speed is part of the definition of turbulence intensity (TI), which is the \"ratio of the wind speed standard devia",
+      "lead_in": " which is the square root of the variance, is an important parameter in meteorology and in wind energy applications because it is a measure of wind variability."
+     },
+     {
+      "quote": "The rotated system is also adopted in the IEC standard, which defines the three components of the turbulent wind velocity vector as longitudinal (along the direction of the mean wind velocity), lateral (horizontal and normal to the longitudinal direction), and upward (normal to both the longitudinal",
+      "lead_in": "tion is also adopted in boundary-layer meteorology, micrometeorology, and air pollution science due to the focus on turbulence ( Kaimal and Finnigan ,  1994 ) ."
+     },
+     {
+      "quote": "With this convention, the variance of wind speed ( σ U 2 ) is accurately approximated as (but not exactly equal to) the variance of the u component of the wind, i.e., σ u 2 (or σ 1 2 in the IEC standard).",
+      "lead_in": "tion), and upward (normal to both the longitudinal and the lateral directions), with \"turbulence standard deviations\" called σ 1 , σ 2 , and σ 3 , respectively."
+     }
+    ]
+   },
+   {
+    "name": "判词5 中尺度/天气尺度扰动",
+    "keywords": [
+     "mesoscale",
+     "synoptic"
+    ],
+    "n": 5,
+    "hits": [
+     {
+      "quote": "By contrast, in mesoscale meteorology and, more broadly, in geophysical applications, such as meteorological field campaigns or simulations of weather events, the convention is to align the x axis along the east–west direction (and the y axis along the north–south direction).",
+      "lead_in": "peed ( σ U 2 ) is accurately approximated as (but not exactly equal to) the variance of the u component of the wind, i.e., σ u 2 (or σ 1 2 in the IEC standard)."
+     },
+     {
+      "quote": "By contrast, wind fluctuations associated with mesoscale or synoptic-scale features belong to the left of the spectral gap and should not be called turbulent.",
+      "lead_in": "The IEC standard is clear in this respect: turbulence is defined as \"random variations in the wind velocity from 10 min averages\"."
+     },
+     {
+      "quote": "Therefore, using these mesoscale or synoptic-scale fluctuations in the calculation of TI for wind energy applications, especially to comply with the IEC standard, should be done with extreme caution or avoided altogether.",
+      "lead_in": "deviation over the mean, calculated over longer time intervals (i.e., hours to days), can still be obtained, but it should not be called a turbulence intensity."
+     }
+    ]
+   }
+  ]
+ },
+ "blm2008.html": {
+  "label": "[3] Treviño & Andreas 2008 BLM 128:303-311",
+  "url": "https://link.springer.com/article/10.1007/s10546-008-9288-8",
+  "doi": "https://doi.org/10.1007/s10546-008-9288-8",
+  "meta": {
+   "twitter:title": [
+    "On Reynolds Averaging of Turbulence Time Series"
+   ],
+   "dc.title": [
+    "On Reynolds Averaging of Turbulence Time Series"
+   ],
+   "dc.source": [
+    "Boundary-Layer Meteorology 2008 128:2"
+   ],
+   "dc.format": [
+    "text/html"
+   ],
+   "dc.publisher": [
+    "Springer"
+   ],
+   "dc.date": [
+    "2008-07-04"
+   ],
+   "dc.type": [
+    "OriginalPaper"
+   ],
+   "dc.language": [
+    "En"
+   ],
+   "dc.copyright": [
+    "2008 Springer Science+Business Media B.V."
+   ],
+   "dc.rights": [
+    "2008 Springer Science+Business Media B.V."
+   ],
+   "dc.rightsAgent": [
+    "journalpermissions@springernature.com"
+   ],
+   "dc.description": [
+    "We show that validity of Reynolds averaging for estimating the (ensemble) mean of a turbulence time series requires that the series values be both stationary and uncorrelated. In strict statistical terminology, these two conditions are jointly designated as independent identically distributed (i.i.d.). Moreover, we show that when the series values are correlated, knowledge of the correlation between the values is needed to obtain a reliable estimate of the mean. Last, we contend that a viable averaging algorithm must be Reynolds number (Re) dependent, requiring one version for low Re (Gaussian) turbulence and another for high Re (non-Gaussian) turbulence. Alternatively the median (as opposed to the mean) is recommended as a measure of the central tendency of the turbulence probability density function."
+   ],
+   "prism.issn": [
+    "1573-1472"
+   ],
+   "prism.publicationName": [
+    "Boundary-Layer Meteorology"
+   ],
+   "prism.publicationDate": [
+    "2008-07-04"
+   ],
+   "prism.volume": [
+    "128"
+   ],
+   "prism.number": [
+    "2"
+   ],
+   "prism.section": [
+    "OriginalPaper"
+   ],
+   "prism.startingPage": [
+    "303"
+   ],
+   "prism.endingPage": [
+    "311"
+   ],
+   "prism.copyright": [
+    "2008 Springer Science+Business Media B.V."
+   ],
+   "prism.rightsAgent": [
+    "journalpermissions@springernature.com"
+   ],
+   "prism.url": [
+    "https://link.springer.com/article/10.1007/s10546-008-9288-8"
+   ],
+   "prism.doi": [
+    "doi:10.1007/s10546-008-9288-8"
+   ],
+   "citation_pdf_url": [
+    "https://link.springer.com/content/pdf/10.1007/s10546-008-9288-8.pdf"
+   ],
+   "citation_fulltext_html_url": [
+    "https://link.springer.com/article/10.1007/s10546-008-9288-8"
+   ],
+   "citation_journal_title": [
+    "Boundary-Layer Meteorology"
+   ],
+   "citation_journal_abbrev": [
+    "Boundary-Layer Meteorol"
+   ],
+   "citation_publisher": [
+    "Springer Netherlands"
+   ],
+   "citation_issn": [
+    "1573-1472"
+   ],
+   "citation_title": [
+    "On Reynolds Averaging of Turbulence Time Series"
+   ],
+   "citation_volume": [
+    "128"
+   ],
+   "citation_issue": [
+    "2"
+   ],
+   "citation_publication_date": [
+    "2008/08"
+   ],
+   "citation_online_date": [
+    "2008/07/04"
+   ],
+   "citation_firstpage": [
+    "303"
+   ],
+   "citation_lastpage": [
+    "311"
+   ],
+   "citation_article_type": [
+    "Original Paper"
+   ],
+   "citation_language": [
+    "en"
+   ],
+   "dc.identifier": [
+    "doi:10.1007/s10546-008-9288-8"
+   ],
+   "citation_doi": [
+    "10.1007/s10546-008-9288-8"
+   ],
+   "citation_springer_api_url": [
+    "http://api.springer.com/xmldata/jats?q=doi:10.1007/s10546-008-9288-8&api_key="
+   ],
+   "description": [
+    "We show that validity of Reynolds averaging for estimating the (ensemble) mean of a turbulence time series requires that the series values be both stationa"
+   ],
+   "dc.creator": [
+    "Treviño, George",
+    "Andreas, Edgar L."
+   ],
+   "dc.subject": [
+    "Atmospheric Sciences",
+    "Meteorology",
+    "Atmospheric Protection/Air Quality Control/Air Pollution"
+   ],
+   "citation_reference": [
+    "citation_title=Theory of homogeneous turbulence; citation_publication_date=1967; citation_id=CR1; citation_author=GK Batchelor; citation_publisher=Cambridge University Press",
+    "citation_title=Wind energy; citation_publication_date=2001; citation_id=CR2; citation_author=T Burton; citation_author=D Sharpe; citation_author=N Jenkins; citation_author=E Bossanyi; citation_publisher=Wiley",
+    "citation_journal_title=Stat Med; citation_title=What can go wrong when you assume that correlated data are independent; citation_author=MJ Cannon, L Warner, JA Taddei, DG Kleinbaum; citation_volume=20; citation_publication_date=2001; citation_pages=1461-1467; citation_doi=10.1002/sim.682; citation_id=CR3",
+    "citation_journal_title=Metrika; citation_title=Conditional distributions and the bivariate normal distribution; citation_author=E Castillo, J Galambos; citation_volume=36; citation_publication_date=1989; citation_pages=209-214; citation_doi=10.1007/BF02614094; citation_id=CR4",
+    "citation_title=Analysis of longitudinal data; citation_publication_date=2002; citation_id=CR5; citation_author=PJ Diggle; citation_author=PJ Heagerty; citation_author=K-Y Liang; citation_author=SL Zeger; citation_publisher=Oxford University Press",
+    "citation_title=Statistical distributions; citation_publication_date=2000; citation_id=CR6; citation_author=M Evans; citation_author=N Hasting; citation_author=B Peacock; citation_publisher=Wiley"
+   ],
+   "citation_author": [
+    "Treviño, George",
+    "Andreas, Edgar L."
+   ],
+   "citation_author_email": [
+    "trevinochires@mac.com",
+    "eandreas@nwra.com"
+   ],
+   "citation_author_institution": [
+    "CHIRES, Inc., San Antonio, USA",
+    "North West Research Associates, Inc. (Seattle Division), Lebanon, USA"
+   ],
+   "citation_cover_date": [
+    "2008/08/01"
+   ],
+   "_title": [
+    "On Reynolds Averaging of Turbulence Time Series | Boundary-Layer Meteorology | Springer Nature Link"
+   ]
+  },
+  "chars": 8119,
+  "probes": [
+   {
+    "name": "判词 平稳+不相关条件",
+    "keywords": [
+     "stationary",
+     "uncorrelated",
+     "independent"
+    ],
+    "n": 3,
+    "hits": [
+     {
+      "quote": "We show that validity of Reynolds averaging for estimating the (ensemble) mean of a turbulence time series requires that the series values be both stationary and uncorrelated.",
+      "lead_in": "Abstract"
+     },
+     {
+      "quote": "In strict statistical terminology, these two conditions are jointly designated as independent identically distributed ( i .",
+      "lead_in": "lidity of Reynolds averaging for estimating the (ensemble) mean of a turbulence time series requires that the series values be both stationary and uncorrelated."
+     },
+     {
+      "quote": "Cannon MJ, Warner L, Taddei JA, Kleinbaum DG (2001) What can go wrong when you assume that correlated data are independent.",
+      "lead_in": "Google Scholar"
+     }
+    ]
+   },
+   {
+    "name": "判词 中位数",
+    "keywords": [
+     "median"
+    ],
+    "n": 1,
+    "hits": [
+     {
+      "quote": "Alternatively the median (as opposed to the mean ) is recommended as a measure of the central tendency of the turbulence probability density function.",
+      "lead_in": "ng algorithm must be Reynolds number ( Re ) dependent, requiring one version for low Re (Gaussian) turbulence and another for high Re (non-Gaussian) turbulence."
+     }
+    ]
+   },
+   {
+    "name": "判词 Reynolds 平均合法性",
+    "keywords": [
+     "Reynolds averaging",
+     "reliable estimate of the mean"
+    ],
+    "n": 5,
+    "hits": [
+     {
+      "quote": "On Reynolds Averaging of Turbulence Time Series | Boundary-Layer Meteorology | Springer Nature Link",
+      "lead_in": ""
+     },
+     {
+      "quote": "On Reynolds Averaging of Turbulence Time Series",
+      "lead_in": "Article"
+     },
+     {
+      "quote": "We show that validity of Reynolds averaging for estimating the (ensemble) mean of a turbulence time series requires that the series values be both stationary and uncorrelated.",
+      "lead_in": "Abstract"
+     }
+    ]
+   }
+  ]
+ },
+ "blm2000.html": {
+  "label": "[2] Treviño & Andreas 2000 BLM 95:231-247",
+  "url": "https://link.springer.com/article/10.1023/A:1002632004254",
+  "doi": "https://doi.org/10.1023/A:1002632004254",
+  "meta": {
+   "twitter:title": [
+    "Averaging Intervals For Spectral Analysis Of Nonstationary Turbulence"
+   ],
+   "dc.title": [
+    "Averaging Intervals For Spectral Analysis Of Nonstationary Turbulence"
+   ],
+   "dc.source": [
+    "Boundary-Layer Meteorology 2000 95:2"
+   ],
+   "dc.format": [
+    "text/html"
+   ],
+   "dc.publisher": [
+    "Springer"
+   ],
+   "dc.type": [
+    "OriginalPaper"
+   ],
+   "dc.language": [
+    "En"
+   ],
+   "dc.copyright": [
+    "2000 Kluwer Academic Publishers"
+   ],
+   "dc.rights": [
+    "2000 Kluwer Academic Publishers"
+   ],
+   "dc.rightsAgent": [
+    "journalpermissions@springernature.com"
+   ],
+   "dc.description": [
+    "We formulate a method for determining the smallest time interval Δ Tover which a turbulence time series can be averaged to decompose it intoinstantaneous mean and random components. From the random part the method defines the optimal interval (or averaging window) AW over which this part should be averaged to obtain the instantaneous spectrum. Both Δ T and AW vary randomly with time and depend on physical properties of the turbulence. Δ T also depends on the accuracy of the measurements and is thus independent of AW. Interesting features of the method are its real-time capability and the non-equality between AW and Δ T."
+   ],
+   "prism.issn": [
+    "1573-1472"
+   ],
+   "prism.publicationName": [
+    "Boundary-Layer Meteorology"
+   ],
+   "prism.volume": [
+    "95"
+   ],
+   "prism.number": [
+    "2"
+   ],
+   "prism.section": [
+    "OriginalPaper"
+   ],
+   "prism.startingPage": [
+    "231"
+   ],
+   "prism.endingPage": [
+    "247"
+   ],
+   "prism.copyright": [
+    "2000 Kluwer Academic Publishers"
+   ],
+   "prism.rightsAgent": [
+    "journalpermissions@springernature.com"
+   ],
+   "prism.url": [
+    "https://link.springer.com/article/10.1023/A:1002632004254"
+   ],
+   "prism.doi": [
+    "doi:10.1023/A:1002632004254"
+   ],
+   "citation_pdf_url": [
+    "https://link.springer.com/content/pdf/10.1023/A:1002632004254.pdf"
+   ],
+   "citation_fulltext_html_url": [
+    "https://link.springer.com/article/10.1023/A:1002632004254"
+   ],
+   "citation_journal_title": [
+    "Boundary-Layer Meteorology"
+   ],
+   "citation_journal_abbrev": [
+    "Boundary-Layer Meteorology"
+   ],
+   "citation_publisher": [
+    "Kluwer Academic Publishers"
+   ],
+   "citation_issn": [
+    "1573-1472"
+   ],
+   "citation_title": [
+    "Averaging Intervals For Spectral Analysis Of Nonstationary Turbulence"
+   ],
+   "citation_volume": [
+    "95"
+   ],
+   "citation_issue": [
+    "2"
+   ],
+   "citation_publication_date": [
+    "2000/05"
+   ],
+   "citation_firstpage": [
+    "231"
+   ],
+   "citation_lastpage": [
+    "247"
+   ],
+   "citation_article_type": [
+    "Article"
+   ],
+   "citation_language": [
+    "en"
+   ],
+   "dc.identifier": [
+    "doi:10.1023/A:1002632004254"
+   ],
+   "citation_doi": [
+    "10.1023/A:1002632004254"
+   ],
+   "citation_springer_api_url": [
+    "http://api.springer.com/xmldata/jats?q=doi:10.1023/A:1002632004254&api_key="
+   ],
+   "description": [
+    "We formulate a method for determining the smallest time interval Δ Tover which a turbulence time series can be averaged to decompose it intoinstantane"
+   ],
+   "dc.creator": [
+    "Treviño, George",
+    "Andreas, Edgar L."
+   ],
+   "dc.subject": [
+    "Atmospheric Sciences",
+    "Meteorology",
+    "Atmospheric Protection/Air Quality Control/Air Pollution"
+   ],
+   "citation_reference": [
+    "citation_journal_title=J. Appl. Meteorol.; citation_title=Estimating Averaging Times for Point and Path-Averaged Measurements of Turbulence Spectra; citation_author=E. L. Andreas; citation_volume=27; citation_publication_date=1988; citation_pages=295-304; citation_id=CR1",
+    "citation_journal_title=J. Atmos. Oceanic Tech.; citation_title=Using Wavelets to Detect Trends; citation_author=E. L. Andreas, G. Treviño; citation_volume=14; citation_publication_date=1997; citation_pages=554-564; citation_id=CR2",
+    "citation_journal_title=Boundary-Layer Meteorol.; citation_title=Statistics of Surface-Layer Turbulence over Terrain with Metre-Scale Heterogeneity; citation_author=E. L. Andreas, R. J. Hill, J. R. Gosz, D. I. Moore, W. D. Otto, A. D. Sarma; citation_volume=86; citation_publication_date=1998; citation_pages=379-408; citation_id=CR3",
+    "citation_title=Random Data: Analysis and Measurement Procedures; citation_publication_date=1971; citation_id=CR4; citation_author=J. S. Bendat; citation_author=A. G. Piersol; citation_publisher=Wiley-Interscience",
+    "citation_journal_title=J. Fluid Mech.; citation_title=On the Wall Structure of the Turbulent Boundary Layer; citation_author=R. F. Blackwelder, R. E. Kaplan; citation_volume=76; citation_publication_date=1976; citation_pages=89-113; citation_id=CR5",
+    "citation_title=An Introduction to Turbulence and Its Measurement; citation_publication_date=1971; citation_id=CR6; citation_author=P. Bradshaw; citation_publisher=Pergamon Press"
+   ],
+   "citation_author": [
+    "Treviño, George",
+    "Andreas, Edgar L."
+   ],
+   "citation_author_institution": [
+    "CHIRES Incorporated, San Antonio, U.S.A.",
+    "U. S. Army Cold Regions Research and Engineering Laboratory, Hanover, U.S.A."
+   ],
+   "citation_cover_date": [
+    "2000/05/01"
+   ],
+   "_title": [
+    "Averaging Intervals For Spectral Analysis Of Nonstationary Turbulence | Boundary-Layer Meteorology | Springer Nature Link"
+   ]
+  },
+  "chars": 8356,
+  "probes": [
+   {
+    "name": "判词 最小可平均区间",
+    "keywords": [
+     "minimum averaging interval",
+     "least averaging time",
+     "delta T"
+    ],
+    "n": 0,
+    "hits": []
+   },
+   {
+    "name": "判词 最优平均窗",
+    "keywords": [
+     "optimum averaging window",
+     "optimal averaging window",
+     "averaging window"
+    ],
+    "n": 2,
+    "hits": [
+     {
+      "quote": "From the random part the method defines the optimal interval (or averaging window) AW over which this part should be averaged to obtain the instantaneous spectrum.",
+      "lead_in": " for determining the smallest time interval Δ Tover which a turbulence time series can be averaged to decompose it intoinstantaneous mean and random components."
+     },
+     {
+      "quote": "Averaging windows",
+      "lead_in": "Real-time"
+     }
+    ]
+   },
+   {
+    "name": "判词 非平稳",
+    "keywords": [
+     "nonstationary"
+    ],
+    "n": 7,
+    "hits": [
+     {
+      "quote": "Averaging Intervals For Spectral Analysis Of Nonstationary Turbulence | Boundary-Layer Meteorology | Springer Nature Link",
+      "lead_in": ""
+     },
+     {
+      "quote": "Averaging Intervals For Spectral Analysis Of Nonstationary Turbulence",
+      "lead_in": "Article"
+     },
+     {
+      "quote": "Andreas (eds.), Current Topics in Nonstationary Analysis , World Scientific, Singapore.",
+      "lead_in": "L."
+     }
+    ]
+   }
+  ]
+ }
+}

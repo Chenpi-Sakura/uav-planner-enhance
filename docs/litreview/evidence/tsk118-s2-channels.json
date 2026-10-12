@@ -1,0 +1,412 @@
+{
+ "task": "TSK-118 face2 Semantic Scholar retry",
+ "ran_at": "2026-10-13",
+ "endpoint_primary": {
+  "url": "https://api.semanticscholar.org/graph/v1/paper/search",
+  "status": "BLOCKED",
+  "evidence": {
+   "channel": "semanticscholar",
+   "ran_at": "2026-10-13T02:19:57",
+   "queries": 1,
+   "queries_returning_data": 0,
+   "results": [
+    {
+     "query": "turbulent kinetic energy estimated from hourly wind speed standard deviation reanalysis",
+     "source": "tsk-117/s1.json verbatim",
+     "hits": [],
+     "status": "BLOCKED",
+     "trace": [
+      "attempt 0 HTTP 429 Retry-After=None",
+      "attempt 1 HTTP 429 Retry-After=None",
+      "attempt 2 HTTP 429 Retry-After=None",
+      "attempt 3 HTTP 429 Retry-After=None"
+     ]
+    }
+   ]
+  }
+ },
+ "endpoint_bulk": {
+  "url": "https://api.semanticscholar.org/graph/v1/paper/search/bulk",
+  "status": "OK"
+ },
+ "endpoint_openalex": {
+  "status": "BLOCKED_429"
+ },
+ "queries": [
+  {
+   "query": "turbulent kinetic energy estimated from hourly wind speed standard deviation reanalysis",
+   "source": "tsk-117/s1.json verbatim"
+  },
+  {
+   "query": "turbulence intensity derived from numerical weather prediction model time series",
+   "source": "tsk-117/s1.json verbatim"
+  },
+  {
+   "query": "grid point wind variance as turbulence proxy model climatology",
+   "source": "tsk-117/s1.json verbatim"
+  },
+  {
+   "query": "mesoscale wind variance interpreted as turbulence underestimate",
+   "source": "tsk-117/s1.json verbatim"
+  },
+  {
+   "query": "temporal resolution too coarse turbulence statistics underestimate",
+   "source": "tsk-117/s1.json verbatim"
+  },
+  {
+   "query": "eddy covariance flux averaging time period sensitivity",
+   "source": "recovered: s2.err prefix averaging + TSK-117 report section 7 sub-face"
+  },
+  {
+   "query": "sampling error of turbulence statistics temporal resolution",
+   "source": "recovered: s2.err prefix sampling + TSK-117 report section 7 sub-face"
+  }
+ ],
+ "per_query": [
+  {
+   "query": "turbulent kinetic energy estimated from hourly wind speed standard deviation reanalysis",
+   "source": "tsk-117/s1.json verbatim",
+   "s2_bulk": {
+    "status": "OK",
+    "trace": [],
+    "hits": []
+   },
+   "openalex": {
+    "status": "BLOCKED",
+    "trace": [
+     "attempt 0 HTTP 429",
+     "attempt 1 HTTP 429",
+     "attempt 2 HTTP 429"
+    ],
+    "hits": []
+   }
+  },
+  {
+   "query": "turbulence intensity derived from numerical weather prediction model time series",
+   "source": "tsk-117/s1.json verbatim",
+   "s2_bulk": {
+    "status": "OK",
+    "trace": [],
+    "hits": []
+   },
+   "openalex": {
+    "status": "BLOCKED",
+    "trace": [
+     "attempt 0 HTTP 429",
+     "attempt 1 HTTP 429",
+     "attempt 2 HTTP 429"
+    ],
+    "hits": []
+   }
+  },
+  {
+   "query": "grid point wind variance as turbulence proxy model climatology",
+   "source": "tsk-117/s1.json verbatim",
+   "s2_bulk": {
+    "status": "OK",
+    "trace": [],
+    "hits": []
+   },
+   "openalex": {
+    "status": "BLOCKED",
+    "trace": [
+     "attempt 0 HTTP 429",
+     "attempt 1 HTTP 429",
+     "attempt 2 HTTP 429"
+    ],
+    "hits": []
+   }
+  },
+  {
+   "query": "mesoscale wind variance interpreted as turbulence underestimate",
+   "source": "tsk-117/s1.json verbatim",
+   "s2_bulk": {
+    "status": "OK",
+    "trace": [],
+    "hits": []
+   },
+   "openalex": {
+    "status": "BLOCKED",
+    "trace": [
+     "attempt 0 HTTP 429",
+     "attempt 1 HTTP 429",
+     "attempt 2 HTTP 429"
+    ],
+    "hits": []
+   }
+  },
+  {
+   "query": "temporal resolution too coarse turbulence statistics underestimate",
+   "source": "tsk-117/s1.json verbatim",
+   "s2_bulk": {
+    "status": "OK",
+    "trace": [],
+    "hits": []
+   },
+   "openalex": {
+    "status": "BLOCKED",
+    "trace": [
+     "attempt 0 HTTP 429",
+     "attempt 1 HTTP 429",
+     "attempt 2 HTTP 429"
+    ],
+    "hits": []
+   }
+  },
+  {
+   "query": "eddy covariance flux averaging time period sensitivity",
+   "source": "recovered: s2.err prefix averaging + TSK-117 report section 7 sub-face",
+   "s2_bulk": {
+    "status": "OK",
+    "trace": [],
+    "hits": [
+     {
+      "title": "Institutional Knowledge at Singapore Management University Institutional Knowledge at Singapore Management University A multi-method and multi-scale approach for estimating city-wide A multi-method and multi-scale approach for estimating city-wide anthropogenic heat fluxes anthropogenic heat fluxes",
+      "year": null,
+      "venue": "",
+      "doi": null,
+      "cites": 0,
+      "abs": ""
+     },
+     {
+      "title": "A simple net ecosystem productivity model for gap filling of tower-based fluxes: An extension of Landsberg's equation with modifications to the light interception term",
+      "year": 2007,
+      "venue": "",
+      "doi": "10.1016/J.ECOLMODEL.2007.03.031",
+      "cites": 12,
+      "abs": ""
+     },
+     {
+      "title": "Time Scales in the Unstable Atmospheric Surface Layer",
+      "year": 2007,
+      "venue": "",
+      "doi": "10.1007/S10546-007-9219-0",
+      "cites": 39,
+      "abs": ""
+     },
+     {
+      "title": "Simultaneous detection of ozone and nitrogen dioxide by oxygen anion chemical ionization mass spectrometry: a fast-time-response sensor suitable for eddy covariance measurements",
+      "year": 2020,
+      "venue": "",
+      "doi": "10.5194/AMT-13-1887-2020",
+      "cites": 19,
+      "abs": "Abstract. We report on the development, characterization, and field\ndeployment of a fast-time-response sensor for measuring ozone ( O3 ) and\nnitrogen dioxide ( NO2 ) concentrations utilizing chemical ionization\ntime-of-flight mass spectrometry (CI-ToFMS) with oxygen anion\n( O 2 - ) reagent ion chemistry. We\ndemonstrate that the oxygen anion chemical ionization mass spectrometer\n(Ox-CIMS) is highly"
+     },
+     {
+      "title": "Simultaneous Detection of Ozone and Nitrogen Dioxide by Oxygen Anion Chemical Ionization Mass Spectrometry: A Fast Time Response Sensor Suitable for Eddy Covariance Measurements",
+      "year": 2019,
+      "venue": "",
+      "doi": "10.5194/amt-2019-445",
+      "cites": 15,
+      "abs": "We report on the development, characterization, and field deployment of a fast time response sensor for measuring ozone (O3) and nitrogen dioxide (NO2) concentrations utilizing chemical ionization time-of-flight mass spectrometry (CIToFMS) with oxygen anion (O ) reagent ion chemistry. We demonstrate that the oxygen anion chemical ionization mass spectrometer (Ox-CIMS) is highly sensitive to both O"
+     },
+     {
+      "title": "Measurement Specifications Sample Rate : 10 Hz Averaging Period : 0",
+      "year": 2002,
+      "venue": "",
+      "doi": null,
+      "cites": 0,
+      "abs": ""
+     },
+     {
+      "title": "Environmental controls on seasonal ecosystem-scale carbon exchange in a northern temperate forest",
+      "year": null,
+      "venue": "",
+      "doi": null,
+      "cites": 0,
+      "abs": ""
+     },
+     {
+      "title": "ESTIMATING LANDSCAPE-LEVEL CARBON FLUXES FROM TOWER CO 2 MIXING RATIO DATA",
+      "year": 2005,
+      "venue": "",
+      "doi": null,
+      "cites": 0,
+      "abs": ""
+     },
+     {
+      "title": "An eddy correlation technique with extended applicability to non-simple terrain",
+      "year": 1988,
+      "venue": "",
+      "doi": "10.1007/BF00128405",
+      "cites": 853,
+      "abs": ""
+     },
+     {
+      "title": "Estimating Canopy Interception Water Storage with GNSS-Transmissometry",
+      "year": 2024,
+      "venue": "IEEE International Geoscience and Remote Sensing Symposium",
+      "doi": "10.1109/IGARSS53475.2024.10641964",
+      "cites": 4,
+      "abs": "Storage of interception water in the canopy (Sc) heavily affects measurements of vegetation optical depth (VOD) from rain, dew and fog, impeding the direct retrieval of tree physiological parameters such as biomass and plant water content. This study presents a time series decomposition of VOD from Global Navigation Satellite System-Transmissometry (GNSS-T) into biomass, plant moisture content (Mg"
+     },
+     {
+      "title": "Net ecosystem productivity and its environmental controls in a mature Scots pine stand in north-western Poland",
+      "year": 2016,
+      "venue": "",
+      "doi": null,
+      "cites": 0,
+      "abs": ""
+     },
+     {
+      "title": "An Interannual Comparative Study on Ecosystem Carbon Exchange Characteristics in the Dinghushan Biosphere Reserve, a Dominant Subtropical Evergreen Forest Ecosystem",
+      "year": 2021,
+      "venue": "Frontiers in Plant Science",
+      "doi": "10.3389/fpls.2021.715340",
+      "cites": 10,
+      "abs": "Compared with other forest systems, research interest in the potential for a stronger ecosystem carbon sequestration of evergreen forests throughout subtropical China has greatly increased. The eddy covariance technique is widely employed to determine accurate forest-atmosphere carbon dioxide (CO2) flux, which is subsequently used to determine forest ecosystem carbon exchange characteristics. The "
+     },
+     {
+      "title": "DThe estimation for temporal and spatial ﬂuctuations of forest ﬁre hazard index",
+      "year": 2013,
+      "venue": "",
+      "doi": null,
+      "cites": 0,
+      "abs": ""
+     },
+     {
+      "title": "Net ecosystem productivity and its environmental controls in a mature Scots pine stand in north-western Poland",
+      "year": 2016,
+      "venue": "",
+      "doi": "10.1016/J.AGRFORMET.2016.05.022",
+      "cites": 23,
+      "abs": "Abstract Although there have been many studies of the net ecosystem productivity (NEP) of different types of forests around the world, the CO 2 dynamics in afforested pine stands of Central Europe are poorly understood. To fill this gap, continuous eddy-covariance (EC) measurements of net ecosystem exchange (NEE) were made from January 2008 to December 2013 in a 62-year-old temperate afforested Sc"
+     },
+     {
+      "title": "Lagrangian dispersion of 222Rn, H2O and CO2 within Amazonian rain forest",
+      "year": 2005,
+      "venue": "",
+      "doi": "10.1016/J.AGRFORMET.2005.08.004",
+      "cites": 19,
+      "abs": ""
+     },
+     {
+      "title": "Predominance of precipitation event controls ecosystem CO2 exchange in an Inner Mongolian desert grassland, China",
+      "year": 2018,
+      "venue": "Journal of Cleaner Production",
+      "doi": "10.1016/J.JCLEPRO.2018.06.107",
+      "cites": 40,
+      "abs": "Abstract The intensity and frequency of precipitation events, especially extreme precipitation events (EPE), are increasingly recognized for their importance in regulating ecosystem functions (e.g., C fluxes). Here we assessed the effects of precipitation events on ecosystem carbon exchange following the precipitation events. Naturally occurring precipitation events and CO2 exchange were measured "
+     },
+     {
+      "title": "Proceedings of the 19th IAHR-APD Congress 2014, Hanoi, Vietnam",
+      "year": 2014,
+      "venue": "",
+      "doi": null,
+      "cites": 0,
+      "abs": "A sensitivity analysis to different eddy—covariance data processing algorithms is presented for a dataset collected in an Alpine environment with complex topography. In Summer 2012 a micrometeorological station was installed at Cividate Camuno (274 m a.s.l., Oglio river basin, Central Italian Alps), in a flat and rectangular grass-covered lawn. The grass was 0.6 m tall during most of the field cam"
+     },
+     {
+      "title": "The variation of the Siberian cryosphere in the Last Millennium experiment using MIROC-ESM",
+      "year": 2013,
+      "venue": "",
+      "doi": null,
+      "cites": 0,
+      "abs": ""
+     }
+    ]
+   },
+   "openalex": {
+    "status": "BLOCKED",
+    "trace": [
+     "attempt 0 HTTP 429",
+     "attempt 1 HTTP 429",
+     "attempt 2 HTTP 429"
+    ],
+    "hits": []
+   }
+  },
+  {
+   "query": "sampling error of turbulence statistics temporal resolution",
+   "source": "recovered: s2.err prefix sampling + TSK-117 report section 7 sub-face",
+   "s2_bulk": {
+    "status": "OK",
+    "trace": [],
+    "hits": [
+     {
+      "title": "INTERMITTENCY OF SOLAR WIND ION FLUX AT THE SCALE RANGE TILL TENS OF HZ",
+      "year": 2010,
+      "venue": "",
+      "doi": null,
+      "cites": 0,
+      "abs": ""
+     },
+     {
+      "title": "Comparison of turbulence measurements by a CSAT3B sonic anemometer and a high-resolution bistatic Doppler lidar",
+      "year": 2020,
+      "venue": "",
+      "doi": "10.5194/AMT-13-969-2020",
+      "cites": 14,
+      "abs": "Abstract. Accurate measurements of turbulence statistics in the atmosphere are important for eddy-covariance measurements, wind energy research, and the\nvalidation of atmospheric numerical models. Sonic anemometers are widely used for these applications. However, these instruments are prone to\nprobe-induced flow distortion effects, and the magnitude of the resulting errors has been debated due to "
+     },
+     {
+      "title": "Comparison of turbulence measurements by a CSAT3B sonic anemometer and a high-resolution bistatic Doppler lidar",
+      "year": 2019,
+      "venue": "",
+      "doi": "10.5194/amt-2019-133",
+      "cites": 11,
+      "abs": "Abstract. Accurate measurements of turbulence statistics in the atmosphere are important for eddy-covariance measurements, wind energy research, and the validation of atmospheric numerical models. Sonic anemometers are widely used for these applications. However, these instruments are prone to probe-induced flow distortion effects, and the magnitude of the resulting errors has been debated due to "
+     },
+     {
+      "title": "Bias in particle tracking acceleration measurement",
+      "year": 2018,
+      "venue": "Experiments in Fluids",
+      "doi": "10.1007/s00348-018-2622-0",
+      "cites": 23,
+      "abs": "We investigate sources of systematic error (bias) in acceleration statistics derived from Lagrangian particle tracking data and demonstrate techniques to eliminate or minimise these bias errors introduced during processing. Numerical simulations of particle tracking experiments in isotropic turbulence show that the main sources of bias error arise from noise due to random position errors and selec"
+     },
+     {
+      "title": "Stable Fine-Time-Step Long-Horizon Turbulence Prediction with a Multi-Stepsize Mixture-of-Experts Neural Operator",
+      "year": 2026,
+      "venue": "",
+      "doi": null,
+      "cites": 1,
+      "abs": "Neural operators have been increasingly used as data-driven surrogates for time-marching predictions of turbulent flows. However, long-horizon autoregressive prediction is sensitive to error accumulation and the choice of prediction interval. Excessively small time increments may increase temporal redundancy and lengthen rollouts, which can degrade the stability of neural operators in turbulence f"
+     },
+     {
+      "title": "Nouvelle génération d'optique adaptative pour l'astronomie. Problème Inverse à grands nombres de degrés de liberté New generation adaptive optics for astronomy. An inverse problem with large number of degrees of freedom",
+      "year": 2007,
+      "venue": "",
+      "doi": null,
+      "cites": 0,
+      "abs": ""
+     },
+     {
+      "title": "Profiles of second- to fourth-order moments of turbulent temperature fluctuations in the convective boundary layer: first measurements with rotational Raman lidar",
+      "year": 2014,
+      "venue": "",
+      "doi": "10.5194/ACP-15-5485-2015",
+      "cites": 91,
+      "abs": "Abstract. The rotational Raman lidar (RRL) of the University of Hohenheim (UHOH) measures atmospheric temperature profiles with high resolution (10 s, 109 m). The data contain low-noise errors even in daytime due to the use of strong UV laser light (355 nm, 10 W, 50 Hz) and a very efficient interference-filter-based polychromator. In this paper, the first profiling of the second- to fourth-order m"
+     },
+     {
+      "title": "Measurement of High Reynolds Number Turbulence in the Atmospheric Boundary Layer Using Unmanned Aerial Vehicles",
+      "year": 2017,
+      "venue": "",
+      "doi": null,
+      "cites": 4,
+      "abs": ""
+     },
+     {
+      "title": "Bias in particle tracking acceleration measurement",
+      "year": 2018,
+      "venue": "Experiments in Fluids",
+      "doi": "10.1007/s00348-018-2622-0",
+      "cites": 0,
+      "abs": "We investigate sources of systematic error (bias) in acceleration statistics derived from Lagrangian particle tracking data and demonstrate techniques to eliminate or minimise these bias errors introduced during processing. Numerical simulations of particle tracking experiments in isotropic turbulence show that the main sources of bias error arise from noise due to random position errors and selec"
+     }
+    ]
+   },
+   "openalex": {
+    "status": "BLOCKED",
+    "trace": [
+     "attempt 0 HTTP 429",
+     "attempt 1 HTTP 429",
+     "attempt 2 HTTP 429"
+    ],
+    "hits": []
+   }
+  }
+ ],
+ "note": "bulk endpoint = lexical boolean match, no citationCount/venue sorting; 0 hits proves the token combination is unwritten, not that the concept is unstudied."
+}

@@ -1,0 +1,100 @@
+=== wes1433.html | [1] Archer 2025 WES 10:1433-1438
+    url: https://wes.copernicus.org/articles/10/1433/2025/
+    citation_fulltext_world_readable = 
+    citation_publisher = Copernicus GmbH
+    citation_title = Brief communication: A note on the variance of wind speed and turbulence intensity
+    citation_abstract = <p><strong class="journal-contentHeaderColor">Abstract.</strong> This paper addresses the issue that several papers in the peer-reviewed literature on wind energy applications have used an incorrect equation that equals 
+    citation_publication_date = 2025/07/21
+    citation_online_date = 2025/07/21
+    citation_journal_title = Wind Energy Science
+    citation_volume = 10
+    citation_issue = 7
+    citation_issn = 2366-7443
+    citation_doi = https://doi.org/10.5194/wes-10-1433-2025
+    citation_firstpage = 1433
+    citation_lastpage = 1438
+    citation_author = Archer, Cristina Lozej
+    citation_author_institution = Center for Research in Wind (CReW), University of Delaware, Newark, Delaware, USA; Department of Environmental, Land, and Infrastructure Engineering (DIATI), Politecnico di Torino, Turin, Italy
+    citation_author_orcid = 0000-0002-7837-7575
+    citation_author_email = carcher@udel.edu
+    citation_reference = Ackermann, G. R.: Means and standard deviations of horizontal wind components, J. Clim. Appl. Meteorol., 22, 959–961, 1983. a; Baird, D. C.: Experimentation: An introduction to measurement theory and experiment design, P
+    citation_pdf_url = https://wes.copernicus.org/articles/10/1433/2025/wes-10-1433-2025.pdf
+    citation_xml_url = https://wes.copernicus.org/articles/10/1433/2025/wes-10-1433-2025.xml
+    citation_language = English
+    _title = WES - Brief communication: A note on the variance of wind speed and turbulence intensity
+  [判词1 TI 命名禁令] kw=should not be called a turbulence intensity -> 1 hit(s)
+      QUOTE: "In such cases, the ratio of the wind speed standard deviation over the mean, calculated over longer time intervals (i.e., hours to days), can still be obtained, but it should not be called a turbulence intensity."
+  [判词2 谱隙与湍流定义] kw=spectral gap,left of,not be called turbulent -> 2 hit(s)
+      QUOTE: "Strictly speaking, TI should refer only to fluctuations of the wind at the microscale (i.e., time averages of the order of minutes) and thus to the right of the spectral gap in the wind spectrum."
+      QUOTE: "By contrast, wind fluctuations associated with mesoscale or synoptic-scale features belong to the left of the spectral gap and should not be called turbulent."
+  [判词3 处置建议] kw=extreme caution or avoided altogether -> 1 hit(s)
+      QUOTE: "Therefore, using these mesoscale or synoptic-scale fluctuations in the calculation of TI for wind energy applications, especially to comply with the IEC standard, should be done with extreme caution or avoided altogether."
+  [判词4 IEC 10-min 定义] kw=IEC,10-min,10 min -> 13 hit(s)
+      QUOTE: "In the International Electrotechnical Commission (IEC) standard ( International Electrotechnical Commission ,  2019 ) that wind turbines must comply with, the standard deviation of wind speed is part of the definition of turbulence intensity (TI), which is the "ratio of the wind speed standard devia"
+      QUOTE: "The rotated system is also adopted in the IEC standard, which defines the three components of the turbulent wind velocity vector as longitudinal (along the direction of the mean wind velocity), lateral (horizontal and normal to the longitudinal direction), and upward (normal to both the longitudinal"
+  [判词5 中尺度/天气尺度扰动] kw=mesoscale,synoptic -> 5 hit(s)
+      QUOTE: "By contrast, in mesoscale meteorology and, more broadly, in geophysical applications, such as meteorological field campaigns or simulations of weather events, the convention is to align the x axis along the east–west direction (and the y axis along the north–south direction)."
+      QUOTE: "By contrast, wind fluctuations associated with mesoscale or synoptic-scale features belong to the left of the spectral gap and should not be called turbulent."
+=== blm2008.html | [3] Treviño & Andreas 2008 BLM 128:303-311
+    url: https://link.springer.com/article/10.1007/s10546-008-9288-8
+    citation_pdf_url = https://link.springer.com/content/pdf/10.1007/s10546-008-9288-8.pdf
+    citation_fulltext_html_url = https://link.springer.com/article/10.1007/s10546-008-9288-8
+    citation_journal_title = Boundary-Layer Meteorology
+    citation_journal_abbrev = Boundary-Layer Meteorol
+    citation_publisher = Springer Netherlands
+    citation_issn = 1573-1472
+    citation_title = On Reynolds Averaging of Turbulence Time Series
+    citation_volume = 128
+    citation_issue = 2
+    citation_publication_date = 2008/08
+    citation_online_date = 2008/07/04
+    citation_firstpage = 303
+    citation_lastpage = 311
+    citation_article_type = Original Paper
+    citation_language = en
+    citation_doi = 10.1007/s10546-008-9288-8
+    citation_springer_api_url = http://api.springer.com/xmldata/jats?q=doi:10.1007/s10546-008-9288-8&api_key=
+    citation_reference = citation_title=Theory of homogeneous turbulence; citation_publication_date=1967; citation_id=CR1; citation_author=GK Batchelor; citation_publisher=Cambridge University Press; citation_title=Wind energy; citation_publicat
+    citation_author = Treviño, George; Andreas, Edgar L.
+    citation_author_email = trevinochires@mac.com; eandreas@nwra.com
+    citation_author_institution = CHIRES, Inc., San Antonio, USA; North West Research Associates, Inc. (Seattle Division), Lebanon, USA
+    citation_cover_date = 2008/08/01
+    _title = On Reynolds Averaging of Turbulence Time Series | Boundary-Layer Meteorology | Springer Nature Link
+  [判词 平稳+不相关条件] kw=stationary,uncorrelated,independent -> 3 hit(s)
+      QUOTE: "We show that validity of Reynolds averaging for estimating the (ensemble) mean of a turbulence time series requires that the series values be both stationary and uncorrelated."
+      QUOTE: "In strict statistical terminology, these two conditions are jointly designated as independent identically distributed ( i ."
+  [判词 中位数] kw=median -> 1 hit(s)
+      QUOTE: "Alternatively the median (as opposed to the mean ) is recommended as a measure of the central tendency of the turbulence probability density function."
+  [判词 Reynolds 平均合法性] kw=Reynolds averaging,reliable estimate of the mean -> 5 hit(s)
+      QUOTE: "On Reynolds Averaging of Turbulence Time Series | Boundary-Layer Meteorology | Springer Nature Link"
+      QUOTE: "On Reynolds Averaging of Turbulence Time Series"
+=== blm2000.html | [2] Treviño & Andreas 2000 BLM 95:231-247
+    url: https://link.springer.com/article/10.1023/A:1002632004254
+    citation_pdf_url = https://link.springer.com/content/pdf/10.1023/A:1002632004254.pdf
+    citation_fulltext_html_url = https://link.springer.com/article/10.1023/A:1002632004254
+    citation_journal_title = Boundary-Layer Meteorology
+    citation_journal_abbrev = Boundary-Layer Meteorology
+    citation_publisher = Kluwer Academic Publishers
+    citation_issn = 1573-1472
+    citation_title = Averaging Intervals For Spectral Analysis Of Nonstationary Turbulence
+    citation_volume = 95
+    citation_issue = 2
+    citation_publication_date = 2000/05
+    citation_firstpage = 231
+    citation_lastpage = 247
+    citation_article_type = Article
+    citation_language = en
+    citation_doi = 10.1023/A:1002632004254
+    citation_springer_api_url = http://api.springer.com/xmldata/jats?q=doi:10.1023/A:1002632004254&api_key=
+    citation_reference = citation_journal_title=J. Appl. Meteorol.; citation_title=Estimating Averaging Times for Point and Path-Averaged Measurements of Turbulence Spectra; citation_author=E. L. Andreas; citation_volume=27; citation_publication
+    citation_author = Treviño, George; Andreas, Edgar L.
+    citation_author_institution = CHIRES Incorporated, San Antonio, U.S.A.; U. S. Army Cold Regions Research and Engineering Laboratory, Hanover, U.S.A.
+    citation_cover_date = 2000/05/01
+    _title = Averaging Intervals For Spectral Analysis Of Nonstationary Turbulence | Boundary-Layer Meteorology | Springer Nature Link
+  [判词 最小可平均区间] kw=minimum averaging interval,least averaging time,delta T -> 0 hit(s)
+  [判词 最优平均窗] kw=optimum averaging window,optimal averaging window,averaging window -> 2 hit(s)
+      QUOTE: "From the random part the method defines the optimal interval (or averaging window) AW over which this part should be averaged to obtain the instantaneous spectrum."
+      QUOTE: "Averaging windows"
+  [判词 非平稳] kw=nonstationary -> 7 hit(s)
+      QUOTE: "Averaging Intervals For Spectral Analysis Of Nonstationary Turbulence | Boundary-Layer Meteorology | Springer Nature Link"
+      QUOTE: "Averaging Intervals For Spectral Analysis Of Nonstationary Turbulence"
