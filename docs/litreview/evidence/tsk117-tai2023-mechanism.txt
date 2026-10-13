@@ -1,0 +1,43 @@
+TSK-117 · evidence 增量 · [19] Tai 2023 WES 机制读穿（2026-10-13）
+======================================================================
+取证动作：打开该 DOI 自身的全文页（任务书本轮唯一允许的两处取页之一）。
+  https://doi.org/10.5194/wes-8-433-2023  →  https://wes.copernicus.org/articles/8/433/2023/wes-8-433-2023.html
+（Copernicus 开放获取全文 HTML，非摘要页。）
+
+## 1. 取到的事实（逐字，标注所在节）
+
+- §3.2（模式侧 TI 计算）："extract the wind variation and mean wind speed over a 10 min window"
+- §3.2："running means and variances of the horizontal velocity components ... within a 10 min window"
+  该窗内的量 "are then used to compute and output the resolved TI"
+- §2（观测参照）："calculate TI from the Doppler lidar ... over 10 min"
+- §4.1（结果）："slightly underestimates TI with a bias of -0.0061"
+- Introduction（立论缺口句，此前已引）："TI derivation from atmospheric models has not been well examined"
+- 设置：水平网格距 "2 km"；边界层方案 "MYNN"
+
+## 2. 对 TSK-117 报告的影响（本轮不改判定格，只记录待改点）
+
+[19] 的机制与我们的 k **同类**：都是取**格点风场的滑动时间方差**（running variances of the horizontal
+velocity components）来导出 TI。差别只在**窗长**（他们 10 min，我们 ±half_hours 的小时级滑动窗）
+与**网格距**（2 km vs ~5 km）。
+
+因此 TSK-117 §1 判定表 ① 行里那句
+
+  「未检索到「小时级格点场时间方差 = TKE/TI」的直接先例」
+
+需要精确化为两截：**合法 10-min 窗一侧有同行评审先例（即 [19]）；小时–天窗一侧没有先例、且有 [1] 点名质疑。**
+注意这不推翻 Q1 的总判定 ②（已被质疑需正面回应）——反而强化它：先例恰好站在 IEC 合法窗那一侧，
+我们的窗长落在被点名的那一侧。
+
+§2 先例表里 [19] 那行的取证方式应相应从「仅元数据命中」升级为「一手正文命中」。
+
+## 3. 顺带取得的一条可用弹药
+
+即便在**合法 10-min 窗 + 2 km + MYNN** 下，模式导出的 TI 相对 LiDAR 仍**低估，bias = −0.0061**。
+→ 写正文时可用作：合法窗内已存在系统性残余偏差，我们量的是该偏差在更长窗上的延续，
+而不是在定义一个新湍流量。（该句是 R1 改名令的正面支撑，暂记为 R3 候选，待下一轮决定是否入表。）
+
+## 4. 未取到的部分（如实）
+
+被问及「是否讨论过 TI 对平均窗长／采样频率的敏感性」「是否声明模式不能分辨湍流子区」两处，
+该轮取页回答均为 not stated；不接受其为「文中无此内容」的否证（工具读页不完备 ≠ 原文没有），
+需要下一轮按章节定向复核。
