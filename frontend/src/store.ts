@@ -61,6 +61,10 @@ export interface CoverageBox {
   lat_max: number;
   lon_min: number;
   lon_max: number;
+  // 可选日期区间（YYYY-MM-DD）。只有子集在用时就是子集那一段，全量加载完毕切换后自动变宽。
+  // 日期控件按它设 min/max，「选得到的就一定答得了」这条才成立。
+  time_min?: string;
+  time_max?: string;
 }
 
 /**
@@ -426,7 +430,9 @@ export const store = reactive<StoreState>({
   plannedPath: [],
   overlays: [],
   baseMap: 'satellite',
-  targetDate: '2022-07-01',
+  // 初值留空：真正的默认日由 /api/meta/coverage 带回（见 fetchCoverage），
+  // 空串发给后端会被当成「没给日期」，由数据时间轴解析，不会再钉在一个没数据的日子上。
+  targetDate: '',
   targetTime: '08:00',
   uavSpeed: 60,
   sidebarCollapsed: false,
@@ -436,7 +442,7 @@ export const store = reactive<StoreState>({
   simulationSpeed: 500,
   simulationIndex: 0,
   simulationTime: '08:00',
-  simulationDate: '2022-07-01',
+  simulationDate: '',
   bases: [
     { name: '拉萨', lat: '29.650000', lng: '91.130000', alt: '600' },
     { name: '日喀则', lat: '29.270000', lng: '88.880000', alt: '600' },
@@ -559,7 +565,16 @@ export async function fetchCoverage(): Promise<void> {
       store.coverage = {
         lat_min: Number(result.lat_min), lat_max: Number(result.lat_max),
         lon_min: Number(result.lon_min), lon_max: Number(result.lon_max),
+        time_min: result.time_min ? String(result.time_min) : undefined,
+        time_max: result.time_max ? String(result.time_max) : undefined,
       };
+      // 默认日期由数据时间轴决定（后端 DataLoader.resolve_default_date）：换成只 cut 了
+      // 三天的演示子集时界面自动落到数据里真正可用的那天，不必再改这里的前端字面量。
+      // 拿不到就留空串 —— 后端的 date 字段把空串也当作「没给」，同样会解析出默认日。
+      if (result.default_date) {
+        store.targetDate = String(result.default_date);
+        store.simulationDate = String(result.default_date);
+      }
     }
   } catch (error) {
     console.error('覆盖范围请求失败:', error);

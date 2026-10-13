@@ -182,7 +182,7 @@ def _llm_chips(task: str, state: Dict[str, Any], history: List[Dict[str, str]],
 
     user = (
         _SUGGEST_SYSTEM
-        + f"\n\n{tools.SYSTEM_BOUNDARY}\n"
+        + f"\n\n{tools.system_boundary()}\n"
         + lead
         + f"【对话对象】{task}\n"
         + f"【当前状态】{state_line}\n"

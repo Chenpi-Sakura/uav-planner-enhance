@@ -45,7 +45,9 @@ def _loader(field_shape=(31, 5, 6)):
         lons = np.linspace(bbox[2], bbox[3], lo)
         return tke, edr, lats, lons, times
 
-    dl.read_turbulence_field = fake_field
+    # 打的是内部读取：路由只在 read_turbulence_field 这一层定源，
+    # get_meteorology_grid 定完源后走 _read_turbulence_field_local。
+    dl._read_turbulence_field_local = fake_field
     return dl, calls
 
 
@@ -203,8 +205,14 @@ class TestRealDataEquivalence(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from data_loader import data_loader
-        cls.dl = data_loader
+        from config import settings
+        from data_loader import DataLoader
+        # 这条守卫比的是「新旧取数路径不改结论」，两侧必须吃**同一份数据**，所以这里
+        # 自建一个绑到 DATA_DIR 的实例，而不是用单例：配了 backend.demo_dir 时单例的
+        # 活动源是只 cut 三天的子集，下面三个日期（07-01 / 08-10 / 05-07）全在子集之外，
+        # 新路径按自己的轴判「无数据」返回空、旧路径却仍能从子集句柄切出一块，
+        # 报出来的差异是「源不同」而不是「路径不同」，守卫就失去意义了。
+        cls.dl = DataLoader(settings.DATA_DIR)
         cls.dl.load_data()
         if cls.dl.ds_u is None:
             raise unittest.SkipTest("数据文件不存在")

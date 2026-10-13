@@ -46,14 +46,21 @@ MAX_CHARS = 1200
 MAX_IMAGES = 3
 MAX_IMAGE_CHARS = 2_500_000
 
-SYSTEM_PROMPT = f"""你是无人机气象航线规划系统里的操作助手。你可以通过调用工具来真正操作界面，而不只是聊天。
+def system_prompt() -> str:
+    """agent 的 system 提示词，每次请求现拼。
+
+    原来这是一个模块级 f-string，在 import 时就把内容定死了。而里面的「系统信息边界」
+    现在要报出这批数据真实的时间范围与覆盖框（只 cut 三天的演示子集与全年场说的不是一件事），
+    import 时数据还没加载，所以整段改成函数。
+    """
+    return f"""你是无人机气象航线规划系统里的操作助手。你可以通过调用工具来真正操作界面，而不只是聊天。
 
 【可用工具】
 {catalog_text()}
 
 想改变界面或数据就调用工具；只是解释、回答、复述已有结果就直接说话。工具由系统以结构化方式提供，不要自己把工具调用写成 JSON 文本。
 
-{tools.SYSTEM_BOUNDARY}
+{tools.system_boundary()}
 
 【铁律】
 1. 用户看到的每一条动作记录都对应一次真实的工具调用，所以**不要只在文字里描述你会怎么做**——要做就调工具。
@@ -181,7 +188,7 @@ def _build_messages(state: Dict[str, Any],
                     tool_results: List[Dict[str, Any]],
                     images: Optional[List[str]] = None,
                     said: str = "") -> List[Dict[str, Any]]:
-    system = SYSTEM_PROMPT
+    system = system_prompt()
     if state:
         system += "\n\n【当前界面状态】\n" + json.dumps(state, ensure_ascii=False)[:1200]
 

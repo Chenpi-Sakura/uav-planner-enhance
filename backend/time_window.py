@@ -534,6 +534,15 @@ def assess_time_window(req, run_planner: bool = True, deadline=None) -> Dict[str
     if tke is None:
         return _empty_response(req, REASON_DATA_MISSING, meta)
 
+    # 推演天数不能超过数据实际给得出的小时数：read_slab 会把越界的结束下标夹到轴尾，
+    # 于是只 cut 了三天的演示子集在 TW_FORECAST_DAYS=7 下拿到的是一块**短 slab**，
+    # 后面几天不是「没有好窗口」而是「根本没有数据」，界面上会排出一串空窗。
+    # 每退一天就从 total_hours 减 24h，与上面那条公式同一个来源，不留两套口径。
+    avail_h = int(len(slab_times))
+    while forecast_days > 0 and total_hours > avail_h:
+        forecast_days -= 1
+        total_hours -= 24
+
     # 3b) 构造采样点
     #     规划路径 -> 直接用其网格节点（避免插值吸附到未经过的邻格，见 sample_along_path）
     #     直线兜底 -> 插值后吸附到真实格点

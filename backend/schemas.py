@@ -1,7 +1,33 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any, Tuple
+from pydantic import BaseModel, BeforeValidator, Field
+from typing import Annotated, List, Optional, Dict, Any, Tuple
 
 from config import settings
+
+
+def default_date() -> str:
+    """请求没带 date 时的默认演示日：由气象数据的时间轴决定，不写死字面量。
+
+    原来这里 7 个模型各写一份 '2022-07-01'。换成只有三天的演示子集（`data_demo/`）
+    之后，默认值会指向一段根本没有数据的日期 —— 接口老实返回「无数据」，看着像功能坏了。
+    「哪天整天可用」的判据与前后余量都收在 `DataLoader.resolve_default_date()`，
+    这里只做一次转发；全量数据下解析结果仍是 2022-07-01，与改前逐字相同。
+
+    延迟 import：`schemas` 会被单测单独导入，不该顺带拉起 xarray / matplotlib。
+    """
+    from data_loader import data_loader
+    return data_loader.resolve_default_date()
+
+
+def _fill_date(value):
+    """「没给 date」与「给了空串」归成一件事：都交给数据时间轴定默认日。
+
+    前端在拿到 `/api/meta/coverage` 之前 `targetDate` 是空串，那一次请求发过来的就是
+    `date: ''`；留着它等于把请求钉在一段可能根本没数据的日期上。
+    """
+    return default_date() if value in (None, '') else value
+
+
+DateField = Annotated[str, BeforeValidator(_fill_date)]
 
 # ==================== 结论四态（功能一 / 功能二共用） ====================
 # feasible=False 不等于「飞不了」。verdict 是给前端的机器码（选色、选图标），
@@ -89,7 +115,7 @@ class Point(BaseModel):
 
 class ProfileRequest(BaseModel):
     waypoints: List[Point]
-    date: str = '2022-07-01'
+    date: DateField = Field(default_factory=default_date)
     start_time: str = '08:00'
     # 用于把每个采样点的累计里程换算成到达时刻（4D 口径：沿程不是同一瞬间）
     speed: float = 60.0
@@ -115,7 +141,7 @@ class PlanRequest(BaseModel):
     start: Point
     end: Point
     waypoints: List[Point] = []
-    date: str = '2022-07-01'
+    date: DateField = Field(default_factory=default_date)
     start_time: str = '08:00'
     speed: float = 60.0  # UAV speed in km/h
     # 任务优先级：决定 A* 湍流软惩罚倍率（urgent/normal/economy）
@@ -176,7 +202,7 @@ class FeasibilityRequest(BaseModel):
     waypoints: List[Point] = []
     # 任务档位：urgent 紧急 / normal 平衡 / economy 安全（JSON 键名沿用 economy，只有文案改）
     priority: str = "normal"
-    date: str = '2022-07-01'
+    date: DateField = Field(default_factory=default_date)
     start_time: str = '08:00'
     speed: float = 60.0
     # 期望飞行窗口（可选，用于报告中说明）
@@ -299,7 +325,7 @@ class TimeWindowRequest(BaseModel):
     start: Point
     end: Point
     waypoints: List[Point] = []
-    date: str = '2022-07-01'
+    date: DateField = Field(default_factory=default_date)
     start_time: str = '08:00'
     speed: float = 60.0
     # 当日无窗口时向前推演天数（0 表示不推演）
@@ -431,7 +457,7 @@ class SitePlanRequest(BaseModel):
     start: Point
     end: Point
     waypoints: List[Point] = []
-    date: str = '2022-07-01'
+    date: DateField = Field(default_factory=default_date)
     start_time: str = '08:00'
     # 为空 = 按该机能力包的巡航速度推算时间轴（段长与航时必须同一把尺，见 §3.4）
     speed: Optional[float] = None
@@ -529,7 +555,7 @@ class WeatherPoint(BaseModel):
 
 class WeatherQueryRequest(BaseModel):
     points: List[WeatherPoint] = []
-    date: str = '2022-07-01'
+    date: DateField = Field(default_factory=default_date)
     time: str = '08:00'
 
 
@@ -551,7 +577,7 @@ class RegionPreviewRequest(BaseModel):
     lon: float
     km: float = 30.0
     layer: str = 'tke'
-    date: str = '2022-07-01'
+    date: DateField = Field(default_factory=default_date)
     time: str = '08:00'
 
 

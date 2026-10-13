@@ -61,7 +61,7 @@ def _make_loader():
         vals = np.stack([float(g) * np.ones((LATS.size, LONS.size)) for g in idx])
         return vals, LATS, LONS, times[idx]
 
-    ld.read_slab = read_slab
+    ld._read_slab_local = read_slab
     return ld
 
 
@@ -139,7 +139,7 @@ class TestPlaceholderFallback(unittest.TestCase):
         图上什么都不剩。所以常量保留，但**必须**由判定函数识别出来。
         """
         ld = _make_loader()
-        ld.read_slab = lambda *a, **kw: (None, None, None, None)
+        ld._read_slab_local = lambda *a, **kw: (None, None, None, None)
         out = ld.get_meteorology_at_points([29.5], [90.5], [T0])
         self.assertEqual(float(out['u'][0]), 5.0)
         self.assertEqual(float(out['tke'][0]), 0.0)

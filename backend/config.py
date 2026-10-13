@@ -58,6 +58,20 @@ class Settings(BaseModel):
 
     # Data directory
     DATA_DIR: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+
+    # 默认日期的**兜底值**：正常情况下默认日由 DataLoader.resolve_default_date() 按数据
+    # 时间轴解析（覆盖 07-01 就用 07-01，否则取第一个整天可用的日期），这样换成
+    # data_demo/ 那种只有三天的子集时不必再改一串字面量。
+    # 只有气象数据完全读不到时才用这里的字符串 —— 那时取数路径本来就全部返回无数据，
+    # 给一个能被 np.datetime64 解析的值比抛异常好诊断。
+    DEFAULT_DATE: str = "2022-07-01"
+
+    # 最小演示子集目录（`scripts/make_demo_subset.py` 的产物）。空 = 不启用。
+    # 启用时它是**主源**：启动只等它（秒级），界面默认日、可选时间段、覆盖框全按它来；
+    # DATA_DIR 的全量在后台加载，加载完毕那一刻取数源整体切过去且不再回头
+    # （见 data_loader._active / warm_full）。不存在"子集答一半、全量补一半"。
+    # 覆盖方式与环境变量 `UAV_DEMO_DIR` 或 config.json 的 `backend.demo_dir` 同一条链。
+    DEMO_DIR: str = ""
     
     # Files
     U_FILE: str = "tibet_2022_upper_u.nc"
@@ -296,13 +310,27 @@ class Settings(BaseModel):
 
 
 def _load_backend_config() -> dict:
-    """从仓库根目录 config.json 读取后端配置（host / port 等）。"""
+    """从仓库根目录 config.json 的 `backend` 段与环境变量读取后端配置（host / port / data_dir）。
+
+    键名在这里统一转成大写才能对上 `Settings` 的字段名：`Settings` 是 pydantic
+    `BaseModel`，对不认识的键按 `extra='ignore'` 静默丢掉，而 config.json 写的是小写
+    `host` / `port`。原样 `**` 展开时这两项**从来没进过** `HOST` / `PORT`，只是默认值
+    碰巧也是 `0.0.0.0:9090` 才一直没露馅（实测 `Settings(**{'port': 1234}).PORT` 仍是 9090）。
+
+    优先级：环境变量 `UAV_DATA_DIR` > config.json 的 `backend.data_dir` > Settings 默认值。
+    """
+    cfg: dict = {}
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data.get("backend", {})
-    except (OSError, ValueError):
-        return {}
+        cfg = {str(k).upper(): v for k, v in (data.get("backend", {}) or {}).items()}
+    except (OSError, ValueError, AttributeError):
+        cfg = {}
+    if os.environ.get("UAV_DATA_DIR"):
+        cfg["DATA_DIR"] = os.environ["UAV_DATA_DIR"]
+    if os.environ.get("UAV_DEMO_DIR"):
+        cfg["DEMO_DIR"] = os.environ["UAV_DEMO_DIR"]
+    return cfg
 
 
 def _load_ai_config() -> dict:

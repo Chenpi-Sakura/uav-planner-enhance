@@ -129,7 +129,12 @@ def _resample_overlay_grid(values: np.ndarray, lat_asc: np.ndarray,
 
 
 class DataLoader:
-    def __init__(self):
+    def __init__(self, data_dir: Optional[str] = None):
+        # 一个实例只认一个目录。缓存、轴边界、句柄全都挂在实例上，
+        # 所以子集与全量两份不会互相污染 —— 见底部的主源/全量源装配。
+        self.data_dir = data_dir or settings.DATA_DIR
+        # 全量那一份。它加载完毕后取数源整体切过去；None = 只有单源，行为与改动前一致。
+        self.full_source = None
         self.ds_u = None
         self.ds_v = None
         self.ds_w = None
@@ -198,17 +203,47 @@ class DataLoader:
             self.load_data()
         return self._loaded
 
+    @property
+    def full_ready(self) -> bool:
+        """全量源是否已经加载完毕。只有它就绪了才允许整体切换过去。"""
+        fs = self.full_source
+        return fs is not None and fs._loaded and fs.ds_u is not None
+
+    def _active(self) -> "DataLoader":
+        """这次取数由哪个源回答：**全量加载完了就整体用全量，没完就整体用子集**。
+
+        切换是全局的、单向的，刻意不做「逐请求判断谁覆盖得住」——那会让同一轮规划里
+        一半时刻取自子集、一半取自全量，两边轴长不同，±6h 脉动窗与越界守卫都会算错。
+
+        只有子集这段时间里，界面给出的可选范围就是子集那一段（见 `/api/meta/coverage`
+        的 `time_min` / `time_max` / `default_date`），所以「用户问到子集以外」这件事在
+        设计上不发生；真被手工请求打到（比如 curl 一个 07-01），本源按自己的轴老实判成
+        **无数据**，而不是拿框内的半截冒充答完。没有全量源时恒返回 ``self``，
+        与单源时代逐字一致。
+        """
+        return self.full_source if self.full_ready else self
+
+    def warm_full(self) -> bool:
+        """后台把全量源加载完；成功那一刻起 :meth:`_active` 自动整体切过去。"""
+        fs = self.full_source
+        if fs is None:
+            return False
+        ok = fs._ensure_loaded()
+        print(f"[data] 取数源{'已切换到全量 ' + fs.data_dir if ok else f'仍是 {self.data_dir}（全量未就绪）'}",
+              flush=True)
+        return ok
+
     def load_data(self):
         """打开 6 个数据集。**调用方应走 :meth:`_ensure_loaded`，不要直接调这里。**
 
         直接调用本身是安全的（open 全程在锁内），但会绕过「已加载就返回」
         和失败退避这两道判断。
         """
-        u_path = os.path.join(settings.DATA_DIR, settings.U_FILE)
-        v_path = os.path.join(settings.DATA_DIR, settings.V_FILE)
-        w_path = os.path.join(settings.DATA_DIR, settings.W_FILE)
-        tc_path = os.path.join(settings.DATA_DIR, settings.TC_FILE)
-        rh_path = os.path.join(settings.DATA_DIR, settings.RH_FILE)
+        u_path = os.path.join(self.data_dir, settings.U_FILE)
+        v_path = os.path.join(self.data_dir, settings.V_FILE)
+        w_path = os.path.join(self.data_dir, settings.W_FILE)
+        tc_path = os.path.join(self.data_dir, settings.TC_FILE)
+        rh_path = os.path.join(self.data_dir, settings.RH_FILE)
 
         with self._load_lock:
             if self._loaded:          # 已有可用句柄就不重开
@@ -224,7 +259,7 @@ class DataLoader:
                 print("  TC (temp) OK", flush=True)
                 self.ds_rh = xr.open_dataset(rh_path, chunks={'time': 24, 'lev': 1, 'lat': 80, 'lon': 80})
                 print("  RH (humidity) OK", flush=True)
-                self.ds_q = xr.open_dataset(os.path.join(settings.DATA_DIR, settings.Q_FILE), chunks={'time': 24, 'lev': 1, 'lat': 80, 'lon': 80})
+                self.ds_q = xr.open_dataset(os.path.join(self.data_dir, settings.Q_FILE), chunks={'time': 24, 'lev': 1, 'lat': 80, 'lon': 80})
                 print("  Q (qvapor) OK", flush=True)
                 self._loaded = True
                 self._load_failed_at = 0.0
@@ -248,7 +283,7 @@ class DataLoader:
 
         返回 (values, ilat, ilon, itime)；取不到时返回 None。
         """
-        vals, sl, so, ts = self.read_slab(var, t0, hours, bbox)
+        vals, sl, so, ts = self._read_slab_local(var, t0, hours, bbox)
         if vals is None:
             return None
         ilat = np.abs(sl[:, None] - la[None, :]).argmin(axis=0)
@@ -277,6 +312,10 @@ class DataLoader:
         都必须先用 ``is_placeholder_sample`` 挡一道**，否则一次读盘失败会被
         ``classify_point`` 判成「零湍流、低风险、可以飞」。
         """
+        src = self._active()
+        if src is not self:
+            return src.get_meteorology_at_points(lats, lons, times)
+
         if not self._ensure_loaded():
             return out
 
@@ -383,6 +422,79 @@ class DataLoader:
             }
         return self._axis_bounds_cache
 
+    def resolve_default_date(self) -> str:
+        """默认演示日：数据覆盖 07-01 就用 07-01，否则取第一个「整天可用」的日期。
+
+        判据不是「时间轴上有这一格」，而是「这一天在各条消费路径上都读得到数」：
+
+        - 前垫 ``DATA_TZ_OFFSET_HOURS + TURB_WINDOW_HALF_HOURS``（当前口径 14h）：
+          时间窗口扫描把北京时间 00:00 换算成数据标签要往前 8h，脉动方差窗再往前 6h。
+        - 后垫 ``24 + 2*TURB_WINDOW_HALF_HOURS + DATA_TZ_OFFSET_HOURS``（当前口径 44h）：
+          :meth:`get_meteorology_grid` 从 ``date T08:00`` 起读 24+6+1 帧，尾窗还要 ±6h。
+
+        两头留不足的后果不是报错而是难看：演示日首尾的格点会成片判成「窗口有效样本
+        不足」，地图上一圈空洞，而档位数字本身是对的。所以宁可往后多要一天。
+
+        这条方法存在的原因是**演示子集里没有 07-01**：把默认日期写成代码里的字面量，
+        换一套数据就得改一遍 `schemas.py`。全量数据下解析结果仍是 2022-07-01，
+        与改前逐字相同；`data_demo/` 那种子集（05-16T00Z..05-18T23Z）解析成 2022-05-17。
+
+        返回 :data:`settings.DEFAULT_DATE` 只有一种情况：气象数据完全读不到。
+        那时所有取数路径本来就返回无数据，留一个能被 ``np.datetime64`` 解析的字符串
+        比抛异常更好诊断。
+
+        以**当前活动源**定日：只有子集时是子集里那个整天可用的日子，全量加载完毕切过去
+        之后就回到这条规则本身（覆盖 07-01 就用 07-01）。
+        """
+        src = self._active()
+        if src is not self:
+            return src.resolve_default_date()
+        if not self._ensure_loaded() or self.ds_u is None:
+            return settings.DEFAULT_DATE
+
+        t0, t1 = self._axis_bounds()["time"]
+        lead = np.timedelta64(int(settings.DATA_TZ_OFFSET_HOURS
+                                  + settings.TURB_WINDOW_HALF_HOURS), 'h')
+        tail = np.timedelta64(int(24 + 2 * settings.TURB_WINDOW_HALF_HOURS
+                                  + settings.DATA_TZ_OFFSET_HOURS), 'h')
+
+        def usable(day) -> bool:
+            return bool((day - lead) >= t0 and (day + tail) <= t1)
+
+        # 年份取时间轴两端：子集跨年时两端都试一遍。
+        for year in (str(t0)[:4], str(t1)[:4]):
+            cand = np.datetime64(f'{year}-07-01', 'ns')
+            if usable(cand):
+                return str(cand)[:10]
+
+        day = np.datetime64(str(t0)[:10], 'ns')
+        last = np.datetime64(str(t1)[:10], 'ns')
+        while day <= last:
+            if usable(day):
+                return str(day)[:10]
+            day = day + np.timedelta64(1, 'D')
+        return str(np.datetime64(str(t0)[:10], 'ns'))[:10]
+
+    def _own_time_range(self) -> Optional[Tuple]:
+        if self.ds_u is None:
+            return None
+        t0, t1 = self._axis_bounds()["time"]
+        return t0, t1, int(self.ds_u.time.size)
+
+    def time_range(self) -> Optional[Tuple]:
+        """**当前活动源**的时间轴首末与帧数 ``(t0, t1, frames)``。
+
+        给 `/api/meta/coverage` 与 AI 提示词用：界面能选哪几天、助手敢说哪天有数，
+        都必须以「现在真在用哪个源」为准。只有子集时就是子集那一段；全量加载完毕、
+        整体切过去之后就是全量那条全年轴。
+        """
+        src = self._active()
+        if src is not self:
+            return src.time_range()
+        if self.ds_u is None:
+            self._ensure_loaded()
+        return self._own_time_range()
+
     @staticmethod
     def _empty_grid():
         """覆盖不足时的返回值，必须是空数组而不是 None。
@@ -394,8 +506,11 @@ class DataLoader:
                 np.empty((0,)), np.empty((0,)),
                 np.empty((0,), dtype='datetime64[ns]'))
 
-    def get_meteorology_grid(self, min_lat: float, max_lat: float, min_lon: float, max_lon: float, date: str = '2022-07-01'):
+    def get_meteorology_grid(self, min_lat: float, max_lat: float, min_lon: float, max_lon: float,
+                             date: Optional[str] = None):
         """A* 用的整块 TKE / EDR 场，时间轴 [date, date+30h] 逐小时。
+
+        ``date`` 不给时走 :meth:`resolve_default_date`，由数据时间轴决定。
 
         帧数 = 24 + TURB_WINDOW_HALF_HOURS + 1：旧实现用 label 化
         ``.sel(time=slice(t-6h, t+24h+6h))``（两端含），裁掉前 pad 后尾巴自然
@@ -406,12 +521,18 @@ class DataLoader:
         缓存：三档规划的 bbox 只由起终点决定、date 也相同，是逐比特一样的三次读；
         带途经点的航线原本每段各读一次，现在也收敛成一次。
         """
+        # 全量就绪后整块场都由它回答；委派排在最前面，两边的轴长与越界守卫不能混着用。
+        src = self._active()
+        if src is not self:
+            return src.get_meteorology_grid(min_lat, max_lat, min_lon, max_lon, date)
+
         if not self._ensure_loaded():
             return self._empty_grid()
 
         if self.ds_u is None:
             return None, None, None, None, None
 
+        date = date or self.resolve_default_date()
         target_time = np.datetime64(date) if 'T' in date else np.datetime64(f"{date}T08:00:00")
         target_time = np.datetime64(target_time, 'ns')
         frames = 24 + int(settings.TURB_WINDOW_HALF_HOURS) + 1
@@ -433,7 +554,7 @@ class DataLoader:
                 or target_time > b['time'][1] or end_time < b['time'][0]):
             return self._empty_grid()
 
-        tke, edr, lats, lons, times = self.read_turbulence_field(target_time, frames, bbox)
+        tke, edr, lats, lons, times = self._read_turbulence_field_local(target_time, frames, bbox)
         if tke is None:
             return self._empty_grid()
 
@@ -455,9 +576,22 @@ class DataLoader:
         attr = self._VAR_FILES.get(var)
         if attr is None:
             raise ValueError(f"unknown variable: {var}")
-        return os.path.join(settings.DATA_DIR, getattr(settings, attr))
+        return os.path.join(self.data_dir, getattr(settings, attr))
 
     def read_slab(self, var: str, start_time, hours: int, bbox):
+        """对外入口：先定源，再读。
+
+        路由**只在这一层**发生。内层（``_gather_slab``、``read_turbulence_field``）一律走
+        :meth:`_read_slab_local` —— 否则一次取数里 u 落在子集、v/w 落在刚切换好的全量，
+        两边帧数或格点数不同，``pulsation_tke`` 会直接 ``ValueError: u/v/w 形状必须一致``
+        （实测：切换瞬间的那一次规划请求 500）。
+        """
+        src = self._active()
+        if src is not self:
+            return src.read_slab(var, start_time, hours, bbox)
+        return self._read_slab_local(var, start_time, hours, bbox)
+
+    def _read_slab_local(self, var: str, start_time, hours: int, bbox):
         """读取某个变量在 500hPa 上的 (hours, lat, lon) 数据块。
 
         参数
@@ -550,6 +684,17 @@ class DataLoader:
             self._slab_bytes -= int(dropped[0].nbytes)
 
     def read_turbulence_field(self, start_time, hours: int, bbox):
+        """对外入口：先定源，再读整块 TKE / EDR 场。
+
+        与 :meth:`read_slab` 同一条理由 —— 一次场级读取里的 u/v/w 必须来自同一个源，
+        所以路由只在这里做一次，内层走 :meth:`_read_turbulence_field_local`。
+        """
+        src = self._active()
+        if src is not self:
+            return src.read_turbulence_field(start_time, hours, bbox)
+        return self._read_turbulence_field_local(start_time, hours, bbox)
+
+    def _read_turbulence_field_local(self, start_time, hours: int, bbox):
         """读取 [start_time, +hours) 的 TKE / EDR 场。
 
         返回 (tke, edr, lats, lons, times)，失败时 tke 为 None。
@@ -561,7 +706,7 @@ class DataLoader:
         t0 = np.datetime64(start_time, 'ns') - np.timedelta64(half, 'h')
         arrs, times, lats, lons = [], None, None, None
         for var in ('u', 'v', 'w'):
-            vals, la, lo, ts = self.read_slab(var, t0, hours + 2 * half, bbox)
+            vals, la, lo, ts = self._read_slab_local(var, t0, hours + 2 * half, bbox)
             if vals is None:
                 return None, None, None, None, None
             arrs.append(np.asarray(vals))
@@ -572,39 +717,34 @@ class DataLoader:
         return tke[idx], edr[idx], lats, lons, times[idx]
 
     def check_coverage(self, lat: float, lon: float, tol: float = 0.25) -> bool:
-        """判断坐标是否落在气象数据覆盖范围内（带容差）。全仓唯一实现。
+        """判断坐标是否落在**任一数据源**的覆盖范围内（带容差）。全仓唯一实现。
+
+        以**当前活动源**为准：只有子集时，子集框外的坐标确实答不了，判 False 是对的；
+        全量加载完毕、整体切过去之后，同一个坐标判 True 并且真能算出数。这个答案必须跟着
+        切换走 —— 报旧范围会把算得了的地方说成没数据，报新范围则会在只有子集时发假通行证。
 
         数据未加载时返回 True —— 这里只回答「坐标是否在数据域内」，不回答
         「数据是否可用」。放行之后真正的取数失败会由上游按「未算出」处理
         （compute_path_turbulence 返回 NaN、端点判为不安全），不会退化成
-        「查不到就算安全」。
-
-        真正读轴失败（如 dataset 已损坏）不能与「确实在范围内」混为一谈，
-        所以记一条告警而不是静默吞掉。注意本方法**仍然返回 True**：
-        它只回答「坐标是否在数据域内」，不回答「数据是否可用」——
-        轴读不出来与「坐标在域内」是两件事，把后者说成前者会让一次
-        数据集损坏冒充成一次正常的覆盖检查。取数失败由上游按「未算出」处理。
+        「查不到就算安全」。读轴真的失败（数据集损坏）不能与「确实在范围内」混为一谈，
+        所以记一条告警而不是静默吞掉。
         """
+        src = self._active()
+        if src is not self:
+            return src.check_coverage(lat, lon, tol)
         try:
-            ds = self.ds_u
-            if ds is None:
+            b = self._own_coverage_bbox()
+            if b is None:
                 return True
-            lats = ds.lat.values
-            lons = ds.lon.values
-            lat_lo, lat_hi = float(np.min(lats)), float(np.max(lats))
-            lon_lo, lon_hi = float(np.min(lons)), float(np.max(lons))
-            return bool((lat_lo - tol <= lat <= lat_hi + tol)
-                        and (lon_lo - tol <= lon <= lon_hi + tol))
+            return bool(b["lat_min"] - tol <= lat <= b["lat_max"] + tol
+                        and b["lon_min"] - tol <= lon <= b["lon_max"] + tol)
         except Exception as e:
             print(f"Warning: coverage check failed for ({lat}, {lon}): "
                   f"{type(e).__name__}: {e}", flush=True)
             return True
 
-    def coverage_bbox(self) -> Optional[Dict[str, float]]:
-        """气象数据在经纬度上的覆盖框（按格点边缘，不是格点中心），读不到时返回 None。
-
-        给地图用：没有这条边界，「框外=没数据」和「框内=安全」在屏幕上长得一样，
-        用户会把缺测区读成可飞区。
+    def _own_coverage_bbox(self) -> Optional[Dict[str, float]]:
+        """本源自己的覆盖框（按格点边缘，不是格点中心），读不到时返回 None。
 
         取格点边缘（轴极值 ± 半步长）而不是格点中心：热图的着色区本来就铺到最外圈
         格点的边缘，用中心值画框会让框比热图窄半格，看上去"框和数据对不齐"。
@@ -623,6 +763,19 @@ class DataLoader:
             }
         except Exception:
             return None
+
+    def coverage_bbox(self) -> Optional[Dict[str, float]]:
+        """**当前活动源**的覆盖框，给地图那个「框外=没数据」图层与 `/api/meta/coverage`。
+
+        只有子集时报子集那块，全量加载完毕切过去之后就报全量那块 —— 它必须与「现在
+        真答得了哪儿」一致，否则要么把能算的地方画成没数据，要么发一张算不出来的假框。
+        前端在日期控件获得焦点时会重取一次（见 store.ts 的 fetchCoverage），切换后
+        不必刷新页面就能拿到新框。
+        """
+        src = self._active()
+        if src is not self:
+            return src.coverage_bbox()
+        return self._own_coverage_bbox()
 
     def _read_overlay_slice(self, file_path, var_name, target_time, lat_slice, lon_slice):
         """Read a 2D slice (time+lev resolved) without dask for fast overlay."""
@@ -701,10 +854,20 @@ class DataLoader:
             fig.savefig(buf, format='png', transparent=True)
             return buf.getvalue()
 
-    def get_overlay_image(self, min_lat: float, max_lat: float, min_lon: float, max_lon: float, layer_type: str, date: str = '2022-05-30', time_slot: str = 'morning') -> bytes:
+    def get_overlay_image(self, min_lat: float, max_lat: float, min_lon: float, max_lon: float, layer_type: str, date: Optional[str] = None, time_slot: str = 'morning') -> bytes:
         """
         Generate a transparent PNG heatmap for the given bounding box and layer type.
+
+        ``date`` 不给时走 :meth:`resolve_default_date`（原来这里写死过一个与别处
+        不同口径的 '2022-05-30'，属于第三个、第四个默认日期各说各话的地方）。
         """
+        # 全量就绪后整张图都由它画。委派排在**建画布之前** —— 已经开出来的 matplotlib
+        # figure 在这种提前返回里不会走到 plt.close()，每委派一次就漏一张。
+        src = self._active()
+        if src is not self:
+            return src.get_overlay_image(min_lat, max_lat, min_lon, max_lon,
+                                         layer_type, date, time_slot)
+
         dpi = int(settings.OVERLAY_DPI)
         figsize, (px_w, px_h) = self._overlay_canvas(min_lat, max_lat, min_lon, max_lon,
                                                      dpi, int(settings.OVERLAY_MAX_PX))
@@ -718,14 +881,15 @@ class DataLoader:
         # （0..cols-1, 0..rows-1），不再用经纬度当轴——PNG 像素是按投影平面线性铺的，
         # 只有行在索引上等距、且每行纬度按 Mercator 反插值，贴图才不漂。
 
-        u_path = os.path.join(settings.DATA_DIR, settings.U_FILE)
-        v_path = os.path.join(settings.DATA_DIR, settings.V_FILE)
-        w_path = os.path.join(settings.DATA_DIR, settings.W_FILE)
-        tc_path = os.path.join(settings.DATA_DIR, settings.TC_FILE)
-        rh_path = os.path.join(settings.DATA_DIR, settings.RH_FILE)
-        q_path = os.path.join(settings.DATA_DIR, settings.Q_FILE)
+        u_path = os.path.join(self.data_dir, settings.U_FILE)
+        v_path = os.path.join(self.data_dir, settings.V_FILE)
+        w_path = os.path.join(self.data_dir, settings.W_FILE)
+        tc_path = os.path.join(self.data_dir, settings.TC_FILE)
+        rh_path = os.path.join(self.data_dir, settings.RH_FILE)
+        q_path = os.path.join(self.data_dir, settings.Q_FILE)
 
         try:
+            date = date or self.resolve_default_date()
             target_time = np.datetime64(date) if 'T' in date else np.datetime64(f"{date}T08:00:00")
             pad = 0.5
 
@@ -900,5 +1064,25 @@ class DataLoader:
         plt.close(fig)
         return png
 
-# Singleton instance
-data_loader = DataLoader()
+def _demo_ready(path: str) -> bool:
+    """子集目录是否六个文件齐全。
+
+    缺任何一个都不能当主源 —— 那样整个应用会指着半空目录，把所有请求都答成无数据，
+    而看起来像是「数据坏了」。宁可退回全量单源。
+    """
+    if not path:
+        return False
+    return all(os.path.exists(os.path.join(path, getattr(settings, attr)))
+               for attr in ("U_FILE", "V_FILE", "W_FILE", "TC_FILE", "RH_FILE", "Q_FILE"))
+
+
+# 主源 / 全量源装配。
+#   UAV_DEMO_DIR 配了且六个文件齐全 -> 子集当主源：启动只等它（秒级），界面可选范围、
+#     默认日期、覆盖框全按子集那段来；全量那份在后台加载（main.py 的 startup），
+#     加载完毕的那一刻起 _active() 整体切到全量，此后不再回子集。
+#   没配、目录不存在或子集不全 -> 单源：`full_source` 为 None，`_active()` 恒返回 self，
+#     取数行为与这次改动前逐字一致。
+_PRIMARY_DIR = settings.DEMO_DIR if _demo_ready(settings.DEMO_DIR) else settings.DATA_DIR
+data_loader = DataLoader(_PRIMARY_DIR)
+if _PRIMARY_DIR != settings.DATA_DIR:
+    data_loader.full_source = DataLoader(settings.DATA_DIR)

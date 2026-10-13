@@ -118,7 +118,12 @@ def _require_valid_od(request) -> None:
 async def startup_event():
     print("\n=== Pre-loading weather data... ===")
     loop = asyncio.get_event_loop()
+    # 顺序是刻意的：先等主源到位（配了 UAV_DEMO_DIR 时就是那 36 MB 子集，秒级），
+    # 服务立刻能回答；再把全量丢进后台加载，它加载完的那一刻 _active() 整体切过去。
+    # 反过来 await 全量，第一个请求就要等六份 103 GB 的句柄开完 —— 演示现场是白屏几十秒。
     await loop.run_in_executor(None, data_loader.load_data)
+    if data_loader.full_source is not None:
+        app.state.full_warm = loop.run_in_executor(None, data_loader.warm_full)
     print("=== Server ready! ===\n")
 
 # Allow CORS for frontend
@@ -376,15 +381,22 @@ async def list_cities():
 
 @app.get("/api/meta/coverage")
 async def get_coverage():
-    """气象数据的经纬度覆盖框。
+    """气象数据的经纬度覆盖框，以及界面该默认显示哪一天。
 
     前端用它把「框外 = 这里没有数据」画出来；否则缺测区和低风险区在屏幕上无法区分。
+    `default_date` / `time_min` / `time_max` 让界面日期跟着数据走：换成只有三天的
+    演示子集（`data_demo/`）时不用改前端字面量，原来 `store.ts` 里写死过 2022-07-01。
     数据未加载时返回 available=False，前端跳过该图层（不猜一个框出来）。
     """
     bbox = data_loader.coverage_bbox()
     if bbox is None:
         return {"available": False}
-    return {"available": True, **bbox}
+    span = data_loader.time_range()
+    return {"available": True, **bbox,
+            "default_date": data_loader.resolve_default_date(),
+            "time_min": str(span[0])[:10] if span else None,
+            "time_max": str(span[1])[:10] if span else None,
+            "time_frames": int(span[2]) if span else None}
 
 @app.get("/api/meta/sites")
 async def list_sites():
@@ -528,12 +540,15 @@ async def plan_site_route(request: SitePlanRequest):
 
 
 @app.get("/api/weather/overlay")
-async def get_weather_overlay(min_lat: float, max_lat: float, min_lon: float, max_lon: float, layer: str = 'tke', date: str = '2022-07-01', start_time: str = '08:00'):
+async def get_weather_overlay(min_lat: float, max_lat: float, min_lon: float, max_lon: float, layer: str = 'tke', date: str = '', start_time: str = '08:00'):
     """
     Generate a transparent heatmap PNG for the given bounding box and time.
+
+    `date` 留空 = 用数据自己解析出来的默认日（见 `resolve_default_date`），
+    这样前端不必再记一个写死的 2022-07-01。
     """
     # 前端传入北京时间；数据标签为 UTC，查表前统一换算。
-    time_str = to_data_time_str(f"{date}T{start_time}")
+    time_str = to_data_time_str(f"{date or data_loader.resolve_default_date()}T{start_time}")
     loop = asyncio.get_event_loop()
     image_bytes = await loop.run_in_executor(None, data_loader.get_overlay_image, min_lat, max_lat, min_lon, max_lon, layer, time_str)
     # 同一 layer/date/整点/包围框的图是确定的，允许各级缓存复用；

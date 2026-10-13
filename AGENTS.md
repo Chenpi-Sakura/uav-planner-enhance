@@ -9,7 +9,7 @@
 - `data/` — 气象 NetCDF 文件（六个约 103 GB/个，实测共 614 GB）与 `data/srtm/*.hgt` 高程切片；已 gitignore，不提交。
 - `frp/` — 内网穿透隧道的二进制与含 auth token 的配置；已 gitignore，不提交（token 入库等于把隧道交出去）。
 - `scripts/setup_core.py` — 跨平台环境安装逻辑，由根目录 `setup.bat` / `setup.sh` 调用。
-- `config.json` — 根目录统一配置文件，后端 host/port 的唯一来源；`vite.config.ts` 的 dev 代理目标也从它读。
+- `config.json` — 根目录统一配置文件，后端 host/port 的唯一来源（可选的 `backend.demo_dir` 指定最小演示子集，环境变量 `UAV_DEMO_DIR` 覆盖它）；`vite.config.ts` 的 dev 代理目标也从它读。
   注意 `frp/frpc.toml` 里的 `localPort` 是**手工对齐**它的手写值，不会自动跟随。
 
 ## Build, Test, and Development Commands（构建、测试与开发命令）
@@ -42,9 +42,9 @@
 
 ## Testing Guidelines（测试规范）
 
-- 后端测试在 `backend/tests/`：20 个 `test_*.py` + 一个基准数据助手 `golden_plan.py`。用**标准库 `unittest`**，不是 pytest——`pytest` 既不在 `requirements.txt` 里也没装，别去找它。
-  运行：在 `backend/` 目录下执行 `python -m unittest discover -s tests -t .`（当前 363 个用例，约 5 s）。
-- 有 3 个用例默认跳过：`test_grid_cache.py::TestRealDataEquivalence` 要拿真实 NetCDF 做新旧取数路径的逐比特比对（约 20 s），需显式设 `UAV_REAL_DATA_TESTS=1` 才跑。**动 `data_loader` 的取数/缓存路径时必须带这个环境变量复跑一次**——它守的就是「优化不改结论」这条底线。
+- 后端测试在 `backend/tests/`：`test_*.py` 若干 + 一个基准数据助手 `golden_plan.py`。用**标准库 `unittest`**，不是 pytest——`pytest` 既不在 `requirements.txt` 里也没装，别去找它。
+  运行：在 `backend/` 目录下执行 `python -m unittest discover -s tests -t .`。**用例数与耗时不写进本文**：它们每轮都在涨，要多少以那次运行自己的输出为准。
+- 有一个类默认跳过：`test_grid_cache.py::TestRealDataEquivalence` 要拿真实 NetCDF 做新旧取数路径的逐比特比对，需显式设 `UAV_REAL_DATA_TESTS=1` 才跑。**动 `data_loader` 的取数/缓存路径时必须带这个环境变量复跑一次**——它守的就是「优化不改结论」这条底线。
 - 前端测试在 `frontend/tests/*.test.mjs`：`simClock.test.mjs`（推演时钟的跨天、折线与游标取数）与 `chips.test.mjs`（建议胶囊的保留/合并算子），用 `node:test` + `node:assert/strict`，需 Node ≥ 22.18（它们直跑 `.ts`）。运行：`cd frontend && npm test`（等价于 `node --test tests/*.test.mjs`，新增测试文件不用改脚本）。
 - 重点覆盖：A* 路径正确性（栅格阶梯拉直与平局决胜）、气象阈值硬/软约束、NaN/数据缺失区处理、Agent 工具契约与界面控件的键表一致（`test_overlay_keys.py` 按文本比对前端，界面改 id 要同步它）。
 - 前端改动需通过 `npm run build`，并在本地地图界面手工验证。

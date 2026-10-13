@@ -20,7 +20,9 @@
           <div class="fold-wrap" v-show="timeOpen"><div class="fold-body">
               <div class="form-group">
                 <label>具体日期</label>
-                <input type="date" class="capsule-input full-width" v-model="store.targetDate" />
+                <input type="date" class="capsule-input full-width" v-model="store.targetDate"
+                       :min="store.coverage?.time_min" :max="store.coverage?.time_max"
+                       @focus="fetchCoverage" />
               </div>
               <div class="input-row">
                 <div class="form-group" style="flex:1">
@@ -198,7 +200,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import { ChevronLeft, ChevronRight, ChevronDown, Clock, Navigation, Layers, Send, Plus, X, Crosshair, Loader, MapPin, CalendarClock, Route } from 'lucide-vue-next';
-import { store, runPlan } from '../store';
+import { store, runPlan, fetchCoverage } from '../store';
 import type { BaseStation } from '../store';
 import FeasibilityPanel from './FeasibilityPanel.vue';
 import RouteTierCards from './RouteTierCards.vue';
