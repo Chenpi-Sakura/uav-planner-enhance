@@ -36,7 +36,7 @@
 
 | 候选 | 盘上证据 | 排除/采信理由 |
 | --- | --- | --- |
-| ① 已有先例的常规做法 | **不采信** | 未检索到「小时级格点场时间方差 = TKE/TI」的直接先例（8 批检索式、约 160 条命中，无一命中该具体做法）。同族先例存在但**对象不同**：90 m LES 逐步长时间序列、1-min 杯式风速、模式自带的 subgrid TKE 预报量——都不是小时尺度格点方差 |
+| ① 已有先例的常规做法 | **不采信** | 拆两截判（2026-10-13 依 [19] 正文核读精确化，逐字记录见 `evidence/tsk117-tai2023-mechanism.txt`）：**合法 10-min 窗一侧有同行评审先例**——[19] 用 WRF 水平风速分量的 10-min running means and variances 导出 TI；**小时–天窗一侧未检索到先例**（8 批检索式、约 160 条命中，无一命中该具体做法）。其余同族先例**对象不同**：90 m LES 逐步长时间序列、1-min 杯式风速、模式自带的 subgrid TKE 预报量——都不是小时尺度格点方差。先例恰好站在 IEC 合法窗那一侧、我们的窗长落在被 [1] 点名的那一侧，故 ① 作为总判定仍不采信 |
 | ② **已被质疑需正面回应** | **采信** | [1] Archer 2025, *Wind Energy Science* 10:1433–1438（6 引用）全文正文明写：小时到天量级的窗算出的 σ/Ū「**不应被称为湍流强度**」，中尺度/天气尺度扰动在**谱隙左侧**、不叫湍流；并给出处置建议「extreme caution or avoided altogether」。[2][3] Treviño & Andreas（*BLM* 2000 / 2008）从平均窗合法性一侧质疑固定窗雷诺平均 |
 | ③ 无人做过需自证合理性 | **不采信为总判定，但 B 层成立** | B 层（抽稀→重算→相对偏差场→传播到分档）确实**未检索到直接先例**。但「无人做过」作为总判定是错的：概念层有人做且被公开质疑，我们的风险来自质疑方，不来自空白 |
 
@@ -54,7 +54,7 @@
 | --- | --- | --- | --- | --- |
 | [13] | Rohanizadegan, Petrone, Pomeroy & Kosovic, *JGR Atmos.* 130, 2025 | 「**turbulence kinetic energy (TKE)**」随高程与地形变化 | 三台**高频涡度相关**（在体）+ **LES 90 m** 网格 | **一手摘要命中**（Crossref abstract：high-frequency eddy-covariance systems / LES at 90 m / complex terrain） |
 | [14] | Kang & Ryu, *Earth and Space Science*, 2026 | 「**turbulence intensity (TI)**」= 24 h、**1-min** 序列的 σ/Ū | 杯式风速计 **1-min**（WMO 地面站） | **一手摘要命中**：原文 "cup anemometers are widely used but **limited by coarse sampling in representing turbulence**" |
-| [19] | Tai, Berg, Krishnamurthy, Newsom & Kirincich, *WES* 8:433–448, 2023 | 「**TI as simulated by WRF**」，提出在线算 TI 的算法 | WRF 模式场（近海） | **一手摘要命中**："the **TI derivation from atmospheric models has not been well examined**" |
+| [19] | Tai, Berg, Krishnamurthy, Newsom & Kirincich, *WES* 8:433–448, 2023 | 「**TI as simulated by WRF**」= 水平风速分量的 **10-min running means and variances**，再算 resolved TI | WRF **2 km** + MYNN（近海），对照 Doppler LiDAR 的 10-min TI | **一手正文命中**（2026-10-13 读穿全文，逐字见 `evidence/tsk117-tai2023-mechanism.txt`）：§3.2 "running means and variances of the horizontal velocity components… within a 10 min window"；结果 "slightly underestimates TI with a bias of -0.0061"；立论缺口句 "the **TI derivation from atmospheric models has not been well examined**" |
 | [15] | Frehlich & Sharman, *Mon. Wea. Rev.* 132:2308–2324, 2004 | 从 NWP 模式输出估湍流（诊断 + 数据同化） | NWP 输出 | **仅元数据命中**（标题/作者/卷页/45 引用）；**它是否用「时间方差」未核实**，不可当 Q1 的直接先例用 |
 | [17] | Szintai, Kaufmann & Rotach, *Adv. Sci. Res.* 3:79, 2009 | 模式**自带的 subgrid TKE 预报量**（1.5 阶闭合）→ 扩散应用 | COSMO 6.6 / 2.2 km | **一手摘要命中**：prognostic equation for TKE |
 | [16] | Shakina, Skriptunova & Zav'yalova, *Meteorol. i Gidrologiya*, 2021 | 地形湍流：重力波**临界振幅**法 + **wave drag** 定强度 | COSMO-Ru7 | **一手摘要命中**（未用时间方差） |
@@ -64,6 +64,7 @@
 是成熟做法，命名统一叫 TKE / TI。它们共同的口径依据是「**10-min 平均**才算湍流」的 IEC 61400-1 定义 `[21]`
 （该标准原文本轮**未核读**，转抄自 [1] 正文引述）；至于各先例论文是否逐条引用了该标准，**未核实**，不作事实使用。
 **不能下的结论**：不能说「把逐小时 5 km 格点场的时间方差称作 TKE」也有同行评审先例——**8 批检索式约 160 条命中里未检索到**。
+（[19] 属**合法 10-min 窗**一侧的先例，窗长与网格距都与我们不同，不在此条范围内。）
 这条空白既是我们的机会（B 层无人做过），也是我们的坑（A 层没有先例替我们背书）。
 
 ## 3. Q1 支撑清单 · 质疑侧（点名、有 venue、有论据）
@@ -152,6 +153,9 @@ TSK-113 §2 第 1 条现在写的是「这是可占的强位 / 方法学上站�
 ### 6.1 改写执行记录（2026-10-13 追加 · Chenpi 已裁决 R1／R2 认 · 本轮零新检索）
 
 **本节只记录改了什么、落在哪，不改 §1／§4 的任何判定格。**
+
+> **另记（2026-10-13 · Mika Mini 补 · 零新检索）**：上一轮交付回帖里 LitReview 记了一条「本轮不动、待派发」的待改点——[19] 正文读穿后 §1 ① 行那句「未检索到…直接先例」表述过宽。
+> 本节之外已落三处：§1 ① 行**改精确**（拆成「合法 10-min 窗有先例／小时–天窗未检索到」两截，**判定仍是不采信**、Q1 总判定 ② 未动）；§2 表 [19] 行取证方式由「一手摘要命中」**升级为「一手正文命中」**并补机制与 `bias −0.0061`；§2 末「不能下的结论」加一句括注划清 [19] 不在其范围内。逐字依据仍只指向 `evidence/tsk117-tai2023-mechanism.txt`，本轮未打开任何检索通道。
 
 | 项 | 执行位置 | 改法 |
 | --- | --- | --- |
